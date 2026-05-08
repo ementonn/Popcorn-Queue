@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { JobRepository } from "./jobs.js";
+import { normalizeLegacyJobState, normalizeLegacyPhaseState } from "./persistence.js";
 
 const candidate = {
   site: "mteam" as const,
@@ -57,5 +58,19 @@ describe("JobRepository pre-upload state machine", () => {
 
     expect(blocked.state).toBe("review");
     expect(blocked.events.at(0)?.message).toBe("Cannot start upload until blockers and required evidence are resolved.");
+  });
+});
+
+describe("legacy persisted job normalization", () => {
+  it("maps old job states onto durable states", () => {
+    expect(normalizeLegacyJobState("waiting", "intake")).toBe("preparing");
+    expect(normalizeLegacyJobState("queued", "metadata")).toBe("preparing");
+    expect(normalizeLegacyJobState("running", "upload")).toBe("uploading");
+    expect(normalizeLegacyJobState("running", "preflight")).toBe("preparing");
+  });
+
+  it("maps old phase states onto current phase states", () => {
+    expect(normalizeLegacyPhaseState("blocked")).toBe("warning");
+    expect(normalizeLegacyPhaseState("running")).toBe("running");
   });
 });

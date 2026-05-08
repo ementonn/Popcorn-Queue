@@ -1,6 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import type { CacheEntry, CacheStore, NormalizedPtpResponse, UploadReadiness } from "@popcorn-queue/core";
-import { JobRepository, type CreateJobInput, type Job, type JobPhase, type JobRepositoryOptions, type JobState } from "./jobs.js";
+import { JobRepository, type CreateJobInput, type Job, type JobPhase, type JobRepositoryOptions, type JobState, type PhaseState } from "./jobs.js";
 
 const DEFAULT_DATABASE_URL = "file:./popcorn-queue.db";
 
@@ -42,6 +42,17 @@ function stringifyOptional(value: unknown): string | null {
   return value === undefined ? null : JSON.stringify(value);
 }
 
+export function normalizeLegacyJobState(state: string, phase: string): JobState {
+  if (state === "waiting" || state === "queued") return "preparing";
+  if (state === "running") return phase === "upload" ? "uploading" : "preparing";
+  return state as JobState;
+}
+
+export function normalizeLegacyPhaseState(state: string): PhaseState {
+  if (state === "blocked") return "warning";
+  return state as PhaseState;
+}
+
 function createPrismaClient(): PrismaClient {
   process.env.DATABASE_URL ??= DEFAULT_DATABASE_URL;
   return new PrismaClient();
@@ -69,9 +80,13 @@ function serializeJob(job: Job) {
 }
 
 function deserializeJob(row: JobRow): Job {
+  const phases = parseJson<Job["phases"]>(row.phasesJson).map((phase) => ({
+    ...phase,
+    state: normalizeLegacyPhaseState(phase.state)
+  }));
   const job: Job = {
     id: row.id,
-    state: row.state as JobState,
+    state: normalizeLegacyJobState(row.state, row.phase),
     phase: row.phase as JobPhase,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -80,7 +95,7 @@ function deserializeJob(row: JobRow): Job {
     humanStep: row.humanStep ?? "Preparing upload package",
     artifacts: parseOptionalJson<Job["artifacts"]>(row.artifactsJson) ?? {},
     uploadPlan: parseJson<Job["uploadPlan"]>(row.uploadPlanJson),
-    phases: parseJson<Job["phases"]>(row.phasesJson),
+    phases,
     events: parseJson<Job["events"]>(row.eventsJson)
   };
 

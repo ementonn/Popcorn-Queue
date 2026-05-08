@@ -240,6 +240,12 @@ describe("API jobs", () => {
       job = start.json<{ job: Job }>().job;
       expect(job.state).toBe("review");
       expect(job.events.at(0)?.message).toBe("Cannot start upload until blockers and required evidence are resolved.");
+
+      const retry = await app.inject({ method: "POST", url: `/api/jobs/${job.id}/retry-failed` });
+      expect(retry.statusCode).toBe(200);
+      job = retry.json<{ job: Job }>().job;
+      expect(job.state).toBe("preparing");
+      expect(job.events.at(0)?.message).toBe("Retry queued.");
     });
   });
 });
