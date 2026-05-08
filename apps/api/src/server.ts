@@ -155,9 +155,21 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
     if (autoPrepare) preparation.enqueue(jobId);
   }
 
+  async function resumeInterruptedPreparation(): Promise<void> {
+    if (!autoPrepare) return;
+    const jobs = await jobRepository.list();
+    for (const job of jobs) {
+      if (job.state !== "preparing") continue;
+      await jobRepository.markPreparationResumed(job.id);
+      enqueuePreparation(job.id);
+    }
+  }
+
   app.addHook("onClose", async () => {
     await persistence.disconnect();
   });
+
+  app.addHook("onReady", resumeInterruptedPreparation);
 
   app.register(cors, {
     origin(origin, callback) {

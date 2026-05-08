@@ -323,6 +323,14 @@ export class JobRepository {
     return this.startUpload(id);
   }
 
+  markPreparationResumed(id: string): Job | null {
+    const job = this.jobs.get(id);
+    if (!job) return null;
+    job.state = "preparing";
+    job.humanStep = "Preparing upload package";
+    return this.record(job, "info", "Resuming preparation after API startup.", { phase: job.phase });
+  }
+
   pause(id: string): Job | null {
     const job = this.jobs.get(id);
     if (!job) return null;

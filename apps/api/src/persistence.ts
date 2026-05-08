@@ -234,6 +234,10 @@ export class PrismaJobRepository {
     return this.withJob(id, (repo) => repo.start(id));
   }
 
+  async markPreparationResumed(id: string): Promise<Job | null> {
+    return this.withJob(id, (repo) => repo.markPreparationResumed(id));
+  }
+
   async startUpload(id: string): Promise<Job | null> {
     return this.withJob(id, (repo) => repo.startUpload(id));
   }

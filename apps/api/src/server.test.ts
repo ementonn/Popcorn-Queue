@@ -1,12 +1,16 @@
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PtpClient } from "@popcorn-queue/integrations";
 import { buildServer } from "./server.js";
 import type { ApiConfig } from "./config.js";
 import type { BrowserCheckResult } from "@popcorn-queue/core";
 import type { Job } from "./jobs.js";
+
+const persistenceState = vi.hoisted(() => ({
+  initialJobs: [] as Job[]
+}));
 
 vi.mock("./persistence.js", async () => {
   const { MemoryCacheStore } = await import("@popcorn-queue/core");
@@ -18,7 +22,7 @@ vi.mock("./persistence.js", async () => {
       readonly ptpCache = new MemoryCacheStore();
 
       constructor(options: { jobs?: ConstructorParameters<typeof JobRepository>[1] } = {}) {
-        this.jobs = new JobRepository([], options.jobs);
+        this.jobs = new JobRepository(persistenceState.initialJobs, options.jobs);
       }
 
       async disconnect(): Promise<void> {}
@@ -116,6 +120,10 @@ function multipartBody(boundary: string, fields: Record<string, string>, file: {
 }
 
 describe("API cache contract", () => {
+  beforeEach(() => {
+    persistenceState.initialJobs = [];
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -168,6 +176,10 @@ describe("API cache contract", () => {
 });
 
 describe("API jobs", () => {
+  beforeEach(() => {
+    persistenceState.initialJobs = [];
+  });
+
   it("returns null download status for jobs without a download snapshot", async () => {
     await withServer(async (app) => {
       const create = await app.inject({
@@ -319,6 +331,28 @@ describe("API jobs", () => {
         const logs = await app.inject({ method: "GET", url: `/api/jobs/${created.id}/logs` });
         expect(logs.statusCode).toBe(200);
         expect(logs.json<{ lines: string[] }>().lines.join("\n")).toContain("Starting phase.");
+      },
+      { autoPrepare: true }
+    );
+  });
+
+  it("resumes persisted preparing jobs after API restart", async () => {
+    const { JobRepository } = await import("./jobs.js");
+    const persisted = new JobRepository().create({
+      candidate: {
+        site: "mteam",
+        title: "Restarted.Movie.2024.1080p.WEB-DL.x265-GROUP",
+        imdbId: "tt1234567"
+      }
+    });
+    persistenceState.initialJobs = [persisted];
+
+    await withServer(
+      async (app) => {
+        const resumed = await waitForJob(app, persisted.id, (job) => job.state === "review");
+
+        expect(resumed.phase).toBe("review");
+        expect(resumed.events.some((event) => event.message === "Resuming preparation after API startup.")).toBe(true);
       },
       { autoPrepare: true }
     );
