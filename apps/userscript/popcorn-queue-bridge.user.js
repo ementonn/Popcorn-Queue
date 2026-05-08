@@ -2,7 +2,7 @@
 // @name         Popcorn Queue Bridge
 // @namespace    https://popcorn-queue.local/
 // @description  Check PTP slots through Popcorn Queue and send source torrents into the upload service.
-// @version      0.1.0
+// @version      0.1.1
 // @author       emt
 // @match        https://tjupt.org/torrents.php*
 // @match        https://pterclub.net/torrents.php*
@@ -37,6 +37,9 @@
   const RESOLUTION_REGEX = /\b(2160p|1080p|1080i|720p|576p|576i|480p|480i|4K|UHD|NTSC|PAL)\b/i;
   const DEFAULT_SERVICE_URL = "http://localhost:3500";
   const DEFAULT_WEB_URL = "http://localhost:5173";
+  const CHECK_BATCH_SIZE = 5;
+  const API_TIMEOUT_MS = 120000;
+  let activeCheckRunId = 0;
 
   function getSetting(key, fallback) {
     const value = GM_getValue(key);
@@ -79,6 +82,7 @@
         url: serviceUrl() + path,
         data: payload instanceof FormData ? payload : payload ? JSON.stringify(payload) : undefined,
         responseType,
+        timeout: API_TIMEOUT_MS,
         headers: payload instanceof FormData ? { Authorization: "Bearer " + browserToken() } : {
           Authorization: "Bearer " + browserToken(),
           "Content-Type": "application/json",
@@ -488,6 +492,7 @@
   }
 
   async function runCheck(site, status, options) {
+    const runId = ++activeCheckRunId;
     const bypassCache = Boolean(options && options.bypassCache);
     if (!browserToken()) {
       setBridgeStatus(status, "Set browser token first", "warn");
@@ -495,6 +500,10 @@
     }
     document.querySelectorAll(".pq-bridge-control").forEach((node) => node.remove());
     const torrents = parseTorrents(site);
+    if (!torrents.length) {
+      setBridgeStatus(status, "No candidates found on this page", "warn");
+      return;
+    }
     setBridgeStatus(status, (bypassCache ? "Rechecking " : "Checking ") + torrents.length + " candidates", "loading");
     torrents.forEach((torrent) => {
       const badge = makeBadge("loading", "Queued for Popcorn Queue check");
@@ -502,34 +511,55 @@
       torrent.element.after(badge);
     });
     try {
-      const payload = { candidates: torrents.map(stripElement), bypassCache };
-      const response = await apiRequest("POST", "/api/browser/check/batch", payload);
-      response.results.forEach((result, index) => {
-        const torrent = torrents[index];
-        if (!torrent) return;
-        const tooltip = [
-          result.decision.reason,
-          result.decision.slotType ? "Slot: " + result.decision.slotType : "",
-          result.cache.hit ? "Cache hit: " + (result.cache.cachedAt || "") : "Checked live",
-          "Right-click to recheck this page without using the saved cache"
-        ].filter(Boolean).join("\n");
-        const badge = makeBadge(result.decision.status, tooltip);
-        torrent.badge.replaceWith(badge);
-        torrent.badge = badge;
-        if (result.decision.ptpUrl) {
-          badge.style.cursor = "pointer";
-          badge.addEventListener("click", () => window.open(result.decision.ptpUrl, "_blank"));
-        }
-        badge.addEventListener("contextmenu", async (event) => {
-          event.preventDefault();
-          await runCheck(site, status, { bypassCache: true });
+      let completed = 0;
+      for (let start = 0; start < torrents.length; start += CHECK_BATCH_SIZE) {
+        if (runId !== activeCheckRunId) return;
+        const chunk = torrents.slice(start, start + CHECK_BATCH_SIZE);
+        setBridgeStatus(status, (bypassCache ? "Rechecking " : "Checking ") + (start + 1) + "-" + (start + chunk.length) + " / " + torrents.length, "loading");
+        const payload = { candidates: chunk.map(stripElement), bypassCache };
+        const response = await apiRequest("POST", "/api/browser/check/batch", payload);
+        if (runId !== activeCheckRunId) return;
+        if (!Array.isArray(response.results)) throw new Error("Unexpected API response: missing results");
+        response.results.forEach((result, index) => {
+          const torrent = chunk[index];
+          if (!torrent) return;
+          renderCheckResult(site, status, torrent, result);
         });
-        if (isUploadable(result.decision.status)) addUploadButton(torrent, result, badge);
-      });
+        completed += chunk.length;
+        setBridgeStatus(status, "Checked " + Math.min(completed, torrents.length) + " / " + torrents.length, "loading");
+      }
       setBridgeStatus(status, bypassCache ? "Recheck complete" : "Check complete", "ok");
     } catch (error) {
+      const message = formatError(error);
+      torrents.forEach((torrent) => {
+        if (!torrent.badge || torrent.badge.textContent !== "PTP ...") return;
+        const badge = makeBadge("error", message);
+        torrent.badge.replaceWith(badge);
+        torrent.badge = badge;
+      });
       setBridgeStatus(status, formatError(error), "error");
     }
+  }
+
+  function renderCheckResult(site, status, torrent, result) {
+    const tooltip = [
+      result.decision.reason,
+      result.decision.slotType ? "Slot: " + result.decision.slotType : "",
+      result.cache.hit ? "Cache hit: " + (result.cache.cachedAt || "") : "Checked live",
+      "Right-click to recheck this page without using the saved cache"
+    ].filter(Boolean).join("\n");
+    const badge = makeBadge(result.decision.status, tooltip);
+    torrent.badge.replaceWith(badge);
+    torrent.badge = badge;
+    if (result.decision.ptpUrl) {
+      badge.style.cursor = "pointer";
+      badge.addEventListener("click", () => window.open(result.decision.ptpUrl, "_blank"));
+    }
+    badge.addEventListener("contextmenu", async (event) => {
+      event.preventDefault();
+      await runCheck(site, status, { bypassCache: true });
+    });
+    if (isUploadable(result.decision.status)) addUploadButton(torrent, result, badge);
   }
 
   registerSettings();

@@ -216,7 +216,10 @@ export function buildServer(config: ApiConfig) {
       const candidates = request.body?.candidates ?? [];
       const options: { bypassCache?: boolean } = {};
       if (request.body?.bypassCache !== undefined) options.bypassCache = request.body.bypassCache;
+      request.log.info({ candidateCount: candidates.length, bypassCache: Boolean(options.bypassCache) }, "browser check batch started");
       const results = await browserChecks.checkBatch(candidates, options);
+      const cacheHits = results.filter((result) => result.cache.hit).length;
+      request.log.info({ candidateCount: candidates.length, resultCount: results.length, cacheHits }, "browser check batch completed");
       return { results };
     }
   );

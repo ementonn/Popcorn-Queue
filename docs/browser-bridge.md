@@ -7,7 +7,9 @@ old `ptp_checker.js` workflow.
 
 - Detect supported sites: TJUPT, PTer, M-Team, HDBits, HHClub.
 - Parse torrent title, IMDb ID, resolution, source page URL, and download URL.
-- Submit candidates to `POST /api/browser/check/batch`.
+- Submit candidates to `POST /api/browser/check/batch` in small chunks so long
+  tracker pages show progressive badge updates instead of waiting for one large
+  PTP batch to finish.
 - Render PTP status badges and an `Up` action.
 - Offer a manual `Recheck` action that sends `bypassCache: true` for the current page.
 - Download the source torrent through the browser session.
