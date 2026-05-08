@@ -2,10 +2,13 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   buildJobWorkspacePaths,
+  buildReviewDraft,
   createJobManifest,
   computeUploadReadiness,
+  missingPtpDraftFields,
   type DownloadStatus,
   type EvidenceRequirement,
+  type ReviewDraft,
   type UploadPhase,
   type UploadReadiness
 } from "@popcorn-queue/core";
@@ -49,6 +52,13 @@ export interface PreparationServiceOptions {
     waitTimeoutMs?: number;
     waitIntervalMs?: number;
   };
+}
+
+export interface PreparationReviewStatus {
+  readiness: UploadReadiness;
+  blockers: string[];
+  warnings: string[];
+  evidence: EvidenceRequirement[];
 }
 
 function nowIso(): string {
@@ -243,7 +253,10 @@ export class PreparationService {
     const stoppedPhase = this.stoppedPhase(outputs);
     const reachedReview = Boolean(outputs.review);
     const preparedMedia = outputs["prepare-media"];
-    const readiness = this.computeReadiness(job, artifacts);
+    const reviewStatus = computePreparationReviewStatus(job, artifacts);
+    artifacts.reviewBlockers = reviewStatus.blockers;
+    artifacts.reviewWarnings = reviewStatus.warnings;
+    const readiness = reviewStatus.readiness;
     const failed = stoppedPhase ? outputStatus(outputs[stoppedPhase]) === "failed" : false;
     const state: JobState = failed ? "failed" : reachedReview ? "review" : "preparing";
     const phase = (reachedReview ? "review" : stoppedPhase ?? job.phase) as JobPhase;
@@ -301,8 +314,14 @@ export class PreparationService {
       if (screenshotFiles.length) artifacts.screenshots = screenshotFiles;
     }
 
-    const mediaInfo = outputs["inspect-media"]?.mediaInfo.result?.stdout;
-    if (mediaInfo) artifacts.mediainfo = mediaInfo;
+    const mediaInspection = outputs["inspect-media"];
+    const mediaInfoText = mediaInspection?.mediaInfoText?.result?.stdout ?? mediaInspection?.mediaInfo?.result?.stdout;
+    const mediaInfoJson = mediaInspection?.mediaInfoJson?.result?.stdout;
+    if (mediaInfoText) {
+      artifacts.mediaInfoText = mediaInfoText;
+      artifacts.mediainfo = mediaInfoText;
+    }
+    if (mediaInfoJson) artifacts.mediaInfoJson = mediaInfoJson;
     artifacts.releaseName = job.uploadPlan.releaseName.generated;
     if (job.checkResult?.decision.reason) artifacts.duplicateResult = job.checkResult.decision.reason;
 
@@ -355,16 +374,111 @@ export class PreparationService {
     await writeFile(path.join(jobRoot, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   }
 
-  private computeReadiness(job: Job, artifacts: Job["artifacts"]): UploadReadiness {
-    const evidence: EvidenceRequirement[] = [
-      {
-        id: "media",
-        label: "Upload media",
-        present: Boolean(artifacts.mediaFiles?.length),
-        blocksUpload: true,
-        detail: "Final upload media is missing."
-      }
-    ];
-    return computeUploadReadiness(job.uploadPlan.reviewGates, evidence);
+}
+
+function hostedPngCount(screenshots: string[] | undefined): number {
+  return (screenshots ?? []).filter((url) => /^https?:\/\//i.test(url) && /\.png(?:[?#]|$)/i.test(url)).length;
+}
+
+function reviewDraftForStatus(job: Pick<Job, "candidate" | "uploadPlan" | "artifacts" | "checkResult" | "reviewDraft">, artifacts: Job["artifacts"]): ReviewDraft | undefined {
+  if (!job.candidate) return job.reviewDraft;
+  const draftArtifacts: Parameters<typeof buildReviewDraft>[0]["artifacts"] = {};
+  if (artifacts.releaseName !== undefined) draftArtifacts.releaseName = artifacts.releaseName;
+  if (artifacts.description !== undefined) draftArtifacts.description = artifacts.description;
+  if (artifacts.mediaInfoText !== undefined) draftArtifacts.mediainfo = artifacts.mediaInfoText;
+  else if (artifacts.mediainfo !== undefined) draftArtifacts.mediainfo = artifacts.mediainfo;
+  const input: Parameters<typeof buildReviewDraft>[0] = {
+    candidate: job.candidate,
+    uploadPlan: job.uploadPlan,
+    artifacts: draftArtifacts
+  };
+  if (job.checkResult) input.checkResult = job.checkResult;
+  const generated = buildReviewDraft(input);
+  if (!job.reviewDraft) return generated;
+  return {
+    ...generated,
+    ...job.reviewDraft,
+    releaseName: job.reviewDraft.releaseName || generated.releaseName,
+    description: job.reviewDraft.description || generated.description,
+    groupId: job.reviewDraft.groupId ?? generated.groupId,
+    type: job.reviewDraft.type || generated.type,
+    codec: job.reviewDraft.codec || generated.codec,
+    container: job.reviewDraft.container || generated.container,
+    resolution: job.reviewDraft.resolution || generated.resolution,
+    source: job.reviewDraft.source || generated.source,
+    imdb: job.reviewDraft.imdb || generated.imdb || "",
+    title: job.reviewDraft.title || generated.title || "",
+    year: job.reviewDraft.year || generated.year || "",
+    subtitles: job.reviewDraft.subtitles.length ? job.reviewDraft.subtitles : generated.subtitles,
+    trumpable: job.reviewDraft.trumpable.length ? job.reviewDraft.trumpable : generated.trumpable,
+    artists: job.reviewDraft.artists?.length ? job.reviewDraft.artists : generated.artists ?? []
+  };
+}
+
+export function computePreparationReviewStatus(job: Pick<Job, "candidate" | "uploadPlan" | "artifacts" | "checkResult" | "reviewDraft">, artifacts: Job["artifacts"]): PreparationReviewStatus {
+  const blockers: string[] = [];
+  const warnings: string[] = [];
+  const hasMedia = Boolean(artifacts.mediaFiles?.length);
+  const hasTextInfo = Boolean(artifacts.mediaInfoText || artifacts.mediainfo || artifacts.bdinfo);
+  const hasHostedScreenshots = hostedPngCount(artifacts.screenshots) >= 3;
+  const hasUploadTorrent = Boolean(artifacts.uploadTorrent);
+  const draft = reviewDraftForStatus(job, artifacts);
+  const missingDraftFields = draft ? missingPtpDraftFields(draft) : ["reviewDraft"];
+
+  if (!hasMedia) blockers.push("Missing media file");
+  if (!hasTextInfo) blockers.push("Missing text MediaInfo or BDInfo");
+  if (!hasHostedScreenshots) blockers.push("Missing screenshot evidence");
+  if (!hasUploadTorrent) blockers.push("Missing upload torrent");
+  for (const field of missingDraftFields) blockers.push(`Missing draft field: ${field}`);
+
+  for (const gate of job.uploadPlan.reviewGates) {
+    if (gate.status === "open" && gate.severity === "blocker") blockers.push(`Review gate: ${gate.title}`);
   }
+
+  if ((artifacts.mediaInfoText || artifacts.mediainfo) && !artifacts.mediaInfoJson) warnings.push("Missing JSON MediaInfo for internal parsing");
+
+  const evidence: EvidenceRequirement[] = [
+    {
+      id: "media",
+      label: "Upload media",
+      present: hasMedia,
+      blocksUpload: true,
+      detail: "Final upload media is missing."
+    },
+    {
+      id: "text-mediainfo",
+      label: "Text MediaInfo or BDInfo",
+      present: hasTextInfo,
+      blocksUpload: true,
+      detail: "Full text MediaInfo or BDInfo is missing."
+    },
+    {
+      id: "screenshots",
+      label: "Hosted PNG screenshots",
+      present: hasHostedScreenshots,
+      blocksUpload: true,
+      detail: "At least three hosted PNG screenshots are required."
+    },
+    {
+      id: "upload-torrent",
+      label: "Upload torrent",
+      present: hasUploadTorrent,
+      blocksUpload: true,
+      detail: "Upload torrent is missing."
+    },
+    {
+      id: "review-draft",
+      label: "PTP draft fields",
+      present: missingDraftFields.length === 0,
+      blocksUpload: true,
+      detail: "Required PTP draft fields are missing."
+    }
+  ];
+
+  return {
+    readiness: computeUploadReadiness(job.uploadPlan.reviewGates, evidence),
+    blockers: [...new Set(blockers)],
+    warnings: [...new Set(warnings)],
+    evidence
+  };
 }

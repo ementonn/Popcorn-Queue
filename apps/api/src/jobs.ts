@@ -66,12 +66,16 @@ export interface Job {
     mediaFiles?: string[];
     screenshots?: string[];
     mediainfo?: string;
+    mediaInfoText?: string;
+    mediaInfoJson?: string;
     bdinfo?: string;
     releaseName?: string;
     description?: string;
     duplicateResult?: string;
     uploadTorrent?: string;
     qbReady?: boolean;
+    reviewBlockers?: string[];
+    reviewWarnings?: string[];
     ptpUrl?: string;
     ptpGroupId?: string;
     ptpTorrentId?: string;
@@ -188,9 +192,30 @@ function buildJobReviewDraft(job: Pick<Job, "candidate" | "uploadPlan" | "artifa
 }
 
 function ensureReviewDraft(job: Job): void {
-  if (job.reviewDraft) return;
   const draft = buildJobReviewDraft(job);
-  if (draft) job.reviewDraft = draft;
+  if (!draft) return;
+  if (!job.reviewDraft) {
+    job.reviewDraft = draft;
+    return;
+  }
+  job.reviewDraft = {
+    ...draft,
+    ...job.reviewDraft,
+    releaseName: job.reviewDraft.releaseName || draft.releaseName,
+    description: job.reviewDraft.description || draft.description,
+    groupId: job.reviewDraft.groupId ?? draft.groupId,
+    type: job.reviewDraft.type || draft.type,
+    codec: job.reviewDraft.codec || draft.codec,
+    container: job.reviewDraft.container || draft.container,
+    resolution: job.reviewDraft.resolution || draft.resolution,
+    source: job.reviewDraft.source || draft.source,
+    imdb: job.reviewDraft.imdb || draft.imdb || "",
+    title: job.reviewDraft.title || draft.title || "",
+    year: job.reviewDraft.year || draft.year || "",
+    subtitles: job.reviewDraft.subtitles.length ? job.reviewDraft.subtitles : draft.subtitles,
+    trumpable: job.reviewDraft.trumpable.length ? job.reviewDraft.trumpable : draft.trumpable,
+    artists: job.reviewDraft.artists?.length ? job.reviewDraft.artists : draft.artists ?? []
+  };
 }
 
 export class JobRepository {

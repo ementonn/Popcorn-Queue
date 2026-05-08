@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildJobWorkspacePaths } from "@popcorn-queue/core";
 import { JobRepository, type JobPhase, type PhaseState } from "./jobs.js";
-import { PreparationService } from "./preparation.js";
+import { PreparationService, computePreparationReviewStatus } from "./preparation.js";
 
 describe("PreparationService", () => {
   it("runs a created job to review and writes job logs without uploading", async () => {
@@ -102,11 +102,81 @@ describe("PreparationService", () => {
 
     expect(addCalls).toEqual([{ torrentPath: job.torrent!.filePath!, downloadPath: path.join(dataRoot, "jobs", job.id, "download") }]);
     expect(prepared.state).toBe("review");
-    expect(prepared.uploadReadiness).toBe("ready");
+    expect(prepared.uploadReadiness).toBe("missing_evidence");
     expect(prepared.artifacts.mediaFiles?.[0]).toMatch(/^media[/\\]upload[/\\]Movie\.2024/);
     expect(prepared.artifacts.uploadTorrent).toBe("torrent/upload.torrent");
     expect(prepared.artifacts.qbReady).toBe(true);
+    expect(prepared.artifacts.reviewBlockers).toContain("Missing text MediaInfo or BDInfo");
+    expect(prepared.artifacts.reviewBlockers).toContain("Missing screenshot evidence");
     expect(prepared.events.some((event) => event.message.includes("uploaded to PTP"))).toBe(false);
+  });
+
+  it("computes review blockers and warnings from evidence and draft fields", () => {
+    const repo = new JobRepository();
+    const job = repo.create({
+      candidate: {
+        site: "pter",
+        title: "Movie.2024.1080p.WEB-DL.x265-GROUP",
+        imdbId: "tt1234567"
+      },
+      checkResult: {
+        candidate: {
+          site: "pter",
+          title: "Movie.2024.1080p.WEB-DL.x265-GROUP",
+          imdbId: "tt1234567"
+        },
+        parsed: null,
+        decision: {
+          status: "open",
+          movieFound: true,
+          reason: "slot open",
+          confidence: "high",
+          ptpUrl: "https://passthepopcorn.me/torrents.php?id=123"
+        },
+        cache: { key: "ptp:imdb:tt1234567", hit: false, policy: "permanent" }
+      }
+    });
+    const completeArtifacts = {
+      mediaFiles: ["media/upload/Movie.mkv"],
+      mediaInfoText: "General\nFormat                                   : Matroska",
+      mediainfo: "General\nFormat                                   : Matroska",
+      screenshots: ["https://img.example/1.png", "https://img.example/2.png", "https://img.example/3.png"],
+      uploadTorrent: "torrent/upload.torrent",
+      releaseName: "Movie.2024.1080p.WEB.x265-GROUP",
+      description: "Description"
+    };
+
+    const readyWithWarning = computePreparationReviewStatus(job, completeArtifacts);
+    expect(readyWithWarning.readiness).toBe("ready");
+    expect(readyWithWarning.blockers).toEqual([]);
+    expect(readyWithWarning.warnings).toContain("Missing JSON MediaInfo for internal parsing");
+
+    const { mediaInfoText: _mediaInfoText, mediainfo: _mediainfo, ...withoutTextInfo } = completeArtifacts;
+    const bdInfoOnly = computePreparationReviewStatus(job, {
+      ...withoutTextInfo,
+      bdinfo: "BDInfo"
+    });
+    expect(bdInfoOnly.readiness).toBe("ready");
+    expect(bdInfoOnly.blockers).not.toContain("Missing text MediaInfo or BDInfo");
+
+    const missingHostedScreenshots = computePreparationReviewStatus(job, {
+      ...completeArtifacts,
+      screenshots: ["screenshots/raw/1.png", "https://img.example/2.jpg"]
+    });
+    expect(missingHostedScreenshots.readiness).toBe("missing_evidence");
+    expect(missingHostedScreenshots.blockers).toContain("Missing screenshot evidence");
+
+    const missingDraftJob = repo.create({
+      candidate: {
+        site: "unknown",
+        title: "Untitled.Release",
+        imdbId: null
+      }
+    });
+    const missingDraft = computePreparationReviewStatus(missingDraftJob, completeArtifacts);
+    expect(missingDraft.readiness).toBe("missing_evidence");
+    expect(missingDraft.blockers).toContain("Missing draft field: imdb");
+    expect(missingDraft.blockers).toContain("Missing draft field: year");
   });
 
   it("stores qBittorrent progress snapshots and throttles readable download logs", async () => {
@@ -335,6 +405,9 @@ describe("PreparationService", () => {
     expect(prepared.state).toBe("review");
     expect(prepared.uploadReadiness).toBe("ready");
     expect(prepared.artifacts.mediaFiles?.[0]).toMatch(/^media[/\\]upload[/\\]shock-wave-2-sample\.mkv$/);
+    expect(prepared.artifacts.mediaInfoText).toContain("Matroska");
+    expect(prepared.artifacts.mediaInfoJson).toContain("\"media\"");
+    expect(prepared.artifacts.mediainfo).toBe(prepared.artifacts.mediaInfoText);
     expect(prepared.artifacts.mediainfo).toContain("Matroska");
     expect(prepared.artifacts.screenshots).toHaveLength(6);
     expect(prepared.artifacts.screenshots?.every((url) => url.startsWith("https://imgbb.test/"))).toBe(true);
