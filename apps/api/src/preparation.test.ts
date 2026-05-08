@@ -67,6 +67,26 @@ describe("PreparationService", () => {
           addCalls.push({ torrentPath: options.torrentPath, downloadPath: options.downloadPath });
           return { infoHash: "ABC123" };
         },
+        async getStatus(infoHash) {
+          return {
+            client: "mock-qb",
+            infoHash,
+            state: "uploading",
+            progress: 1,
+            downloaded: 5,
+            size: 5,
+            amountLeft: 0,
+            downloadSpeed: 0,
+            uploadSpeed: 0,
+            eta: 0,
+            seeds: 1,
+            peers: 0,
+            savePath: null,
+            contentPath: null,
+            lastUpdatedAt: "2026-05-08T00:00:00.000Z",
+            error: null
+          };
+        },
         async isComplete(infoHash) {
           return infoHash === "ABC123";
         },
@@ -154,6 +174,26 @@ describe("PreparationService", () => {
         async addTorrent(options) {
           await copyFile(sourceFixture, path.join(options.downloadPath, path.basename(sourceFixture)));
           return { infoHash: "FIXTURE" };
+        },
+        async getStatus(infoHash) {
+          return {
+            client: "mock-qb",
+            infoHash,
+            state: "uploading",
+            progress: 1,
+            downloaded: 26_535,
+            size: 26_535,
+            amountLeft: 0,
+            downloadSpeed: 0,
+            uploadSpeed: 0,
+            eta: 0,
+            seeds: 1,
+            peers: 0,
+            savePath: null,
+            contentPath: null,
+            lastUpdatedAt: "2026-05-08T00:00:00.000Z",
+            error: null
+          };
         },
         async isComplete(infoHash) {
           return infoHash === "FIXTURE";

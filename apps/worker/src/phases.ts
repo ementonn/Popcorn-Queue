@@ -4,7 +4,10 @@ import {
   UPLOAD_PHASES,
   buildScreenshotPlan,
   buildUploadPlan,
+  createDownloadErrorStatus,
+  isDownloadComplete,
   type BrowserCheckResult,
+  type DownloadStatus,
   type MetadataPlan,
   type ReviewGate,
   type RuleDecision,
@@ -64,6 +67,7 @@ export interface TorrentClientFile {
 export interface TorrentDownloadClient {
   readonly name: string;
   addTorrent(options: { torrentPath: string; downloadPath: string; category?: string; tags?: string[]; skipHashCheck?: boolean }): Promise<{ infoHash: string }>;
+  getStatus(infoHash: string): Promise<DownloadStatus>;
   isComplete(infoHash: string): Promise<boolean>;
   listFiles(infoHash: string): Promise<TorrentClientFile[]>;
 }
@@ -222,6 +226,7 @@ export interface PhaseContext {
   };
   stopRequested(): Promise<boolean>;
   log(level: PhaseLogLevel, message: string, payload?: unknown): Promise<void>;
+  reportDownloadStatus(status: DownloadStatus): Promise<void>;
   getOutput<K extends UploadPhase>(phase: K): Promise<PhaseOutputMap[K] | undefined>;
   writeOutput<K extends UploadPhase>(phase: K, output: PhaseOutputMap[K]): Promise<void>;
   snapshotOutputs(): Partial<PhaseOutputMap>;
@@ -247,6 +252,7 @@ export interface CreatePhaseContextOptions {
   };
   stopRequested?: () => Promise<boolean>;
   log?: (level: PhaseLogLevel, message: string, payload?: unknown) => Promise<void>;
+  reportDownloadStatus?: (status: DownloadStatus) => Promise<void>;
 }
 
 export class MemoryPhaseOutputStore implements PhaseOutputStore {
@@ -299,6 +305,7 @@ export function createPhaseContext(jobId: string, job: WorkerJobInput, options: 
     },
     stopRequested: options.stopRequested ?? (async () => false),
     log: options.log ?? (async () => undefined),
+    reportDownloadStatus: options.reportDownloadStatus ?? (async () => undefined),
     getOutput: <K extends UploadPhase>(phase: K) => store.get(phase),
     writeOutput: <K extends UploadPhase>(phase: K, output: PhaseOutputMap[K]) => store.set(phase, output),
     snapshotOutputs: () => store.snapshot()
@@ -374,7 +381,9 @@ function selectMainMediaFile(files: TorrentClientFile[]): TorrentClientFile | nu
 async function waitForTorrentComplete(context: PhaseContext, infoHash: string): Promise<boolean> {
   const deadline = Date.now() + context.torrentClientOptions.waitTimeoutMs;
   do {
-    if (await context.torrentClient!.isComplete(infoHash)) return true;
+    const status = await context.torrentClient!.getStatus(infoHash);
+    await context.reportDownloadStatus(status);
+    if (isDownloadComplete(status)) return true;
     if (context.torrentClientOptions.waitTimeoutMs <= 0 || Date.now() >= deadline) return false;
     await new Promise((resolve) => setTimeout(resolve, context.torrentClientOptions.waitIntervalMs));
   } while (Date.now() < deadline);
@@ -574,6 +583,12 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
           };
         }
         if (!context.torrentClient) {
+          await context.reportDownloadStatus(createDownloadErrorStatus({
+            client: "not-configured",
+            infoHash: null,
+            state: "unavailable",
+            error: "Torrent client integration is not configured."
+          }));
           return {
             ...base("skipped", "Torrent client integration is not configured in this worker scaffold."),
             sourceUrl: context.job.candidate.sourceUrl ?? null,
@@ -585,6 +600,12 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
           };
         }
         if (!torrentPath || !(await pathExists(torrentPath))) {
+          await context.reportDownloadStatus(createDownloadErrorStatus({
+            client: context.torrentClient.name,
+            infoHash: null,
+            state: "missing",
+            error: "Source torrent file is missing."
+          }));
           return {
             ...base("skipped", "Source torrent file is missing."),
             sourceUrl: context.job.candidate.sourceUrl ?? null,
@@ -607,39 +628,58 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
           };
         }
 
-        await mkdir(downloadDirectory, { recursive: true });
-        const addOptions: Parameters<TorrentDownloadClient["addTorrent"]>[0] = {
-          torrentPath,
-          downloadPath: downloadDirectory
-        };
-        if (context.torrentClientOptions.category) addOptions.category = context.torrentClientOptions.category;
-        if (context.torrentClientOptions.tags?.length) addOptions.tags = context.torrentClientOptions.tags;
-        const { infoHash } = await context.torrentClient.addTorrent(addOptions);
-        const complete = await waitForTorrentComplete(context, infoHash);
-        if (!complete) {
+        try {
+          await mkdir(downloadDirectory, { recursive: true });
+          const addOptions: Parameters<TorrentDownloadClient["addTorrent"]>[0] = {
+            torrentPath,
+            downloadPath: downloadDirectory
+          };
+          if (context.torrentClientOptions.category) addOptions.category = context.torrentClientOptions.category;
+          if (context.torrentClientOptions.tags?.length) addOptions.tags = context.torrentClientOptions.tags;
+          const { infoHash } = await context.torrentClient.addTorrent(addOptions);
+          const complete = await waitForTorrentComplete(context, infoHash);
+          if (!complete) {
+            return {
+              ...base("blocked", "Torrent is still downloading."),
+              sourceUrl: context.job.candidate.sourceUrl ?? null,
+              downloadUrl: context.job.candidate.downloadUrl ?? null,
+              filePath: null,
+              downloadDirectory,
+              infoHash,
+              client: context.torrentClient.name
+            };
+          }
+
+          const files = await context.torrentClient.listFiles(infoHash);
+          const mainFile = selectMainMediaFile(files);
+          const filePath = mainFile ? path.join(downloadDirectory, mainFile.name) : null;
           return {
-            ...base("blocked", "Torrent is still downloading."),
+            ...base(filePath && (await pathExists(filePath)) ? "completed" : "blocked", filePath ? "Downloaded media located." : "No media file was found in torrent contents."),
             sourceUrl: context.job.candidate.sourceUrl ?? null,
             downloadUrl: context.job.candidate.downloadUrl ?? null,
-            filePath: null,
+            filePath,
             downloadDirectory,
             infoHash,
             client: context.torrentClient.name
           };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          await context.reportDownloadStatus(createDownloadErrorStatus({
+            client: context.torrentClient.name,
+            infoHash: null,
+            state: "error",
+            error: message
+          }));
+          return {
+            ...base("failed", message),
+            sourceUrl: context.job.candidate.sourceUrl ?? null,
+            downloadUrl: context.job.candidate.downloadUrl ?? null,
+            filePath: null,
+            downloadDirectory,
+            infoHash: null,
+            client: context.torrentClient.name
+          };
         }
-
-        const files = await context.torrentClient.listFiles(infoHash);
-        const mainFile = selectMainMediaFile(files);
-        const filePath = mainFile ? path.join(downloadDirectory, mainFile.name) : null;
-        return {
-          ...base(filePath && (await pathExists(filePath)) ? "completed" : "blocked", filePath ? "Downloaded media located." : "No media file was found in torrent contents."),
-          sourceUrl: context.job.candidate.sourceUrl ?? null,
-          downloadUrl: context.job.candidate.downloadUrl ?? null,
-          filePath,
-          downloadDirectory,
-          infoHash,
-          client: context.torrentClient.name
-        };
       }
     },
     {

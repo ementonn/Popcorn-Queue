@@ -242,6 +242,82 @@ describe("worker phase scaffold", () => {
     expect(outputs.done).toBeUndefined();
   });
 
+  it("reports qBittorrent download progress while waiting for completion", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-worker-qb-status-"));
+    const torrentPath = path.join(tempDir, "source.torrent");
+    const downloadDir = path.join(tempDir, "download");
+    const mediaPath = path.join(downloadDir, "Movie.2024.1080p.WEB-DL.x265-GROUP.mkv");
+    await mkdir(downloadDir, { recursive: true });
+    await writeFile(torrentPath, "source torrent");
+    await writeFile(mediaPath, "movie");
+    const reported: Array<{ state: string; progress: number | null }> = [];
+    const statuses = [
+      { state: "downloading", progress: 0, downloaded: 0, size: 5, amountLeft: 5 },
+      { state: "downloading", progress: 0.5, downloaded: 3, size: 5, amountLeft: 2 },
+      { state: "uploading", progress: 1, downloaded: 5, size: 5, amountLeft: 0 }
+    ];
+    const download = createDefaultPhaseHandlers().find((handler): handler is PhaseHandler<"download-or-locate"> => handler.phase === "download-or-locate");
+    if (!download) throw new Error("Missing download-or-locate handler");
+
+    const context = createPhaseContext(
+      "job-qb-status",
+      {
+        candidate,
+        sourceTorrentPath: torrentPath,
+        workingDirectory: tempDir
+      },
+      {
+        torrentClientOptions: { waitTimeoutMs: 500, waitIntervalMs: 1 },
+        torrentClient: {
+          name: "mock-qb",
+          async addTorrent() {
+            return { infoHash: "ABC123" };
+          },
+          async getStatus(infoHash) {
+            const next = statuses.shift() ?? { state: "uploading", progress: 1, downloaded: 5, size: 5, amountLeft: 0 };
+            return {
+              client: "mock-qb",
+              infoHash,
+              state: next.state,
+              progress: next.progress,
+              downloaded: next.downloaded,
+              size: next.size,
+              amountLeft: next.amountLeft,
+              downloadSpeed: next.progress === 1 ? 0 : 1024,
+              uploadSpeed: 0,
+              eta: next.progress === 1 ? 0 : 10,
+              seeds: 2,
+              peers: 1,
+              savePath: downloadDir,
+              contentPath: mediaPath,
+              lastUpdatedAt: "2026-05-08T00:00:00.000Z",
+              error: null
+            };
+          },
+          async isComplete() {
+            throw new Error("isComplete should be implemented through getStatus in the worker wait loop.");
+          },
+          async listFiles() {
+            return [{ name: path.basename(mediaPath), size: 5, progress: 1 }];
+          }
+        },
+        reportDownloadStatus: async (status) => {
+          reported.push({ state: status.state, progress: status.progress });
+        }
+      }
+    );
+
+    const output = await download.run(context);
+
+    expect(output.status).toBe("completed");
+    expect(output.infoHash).toBe("ABC123");
+    expect(reported).toEqual([
+      { state: "downloading", progress: 0 },
+      { state: "downloading", progress: 0.5 },
+      { state: "uploading", progress: 1 }
+    ]);
+  });
+
   it("does not prepare media into cwd when working directory is missing", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-no-workspace-"));
     const source = path.join(tempDir, `NoWorkspace-${Date.now()}.mkv`);
