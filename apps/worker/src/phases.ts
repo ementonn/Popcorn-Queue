@@ -108,6 +108,17 @@ export interface ImageUploadAttempt {
   error?: string;
 }
 
+export interface PtpUploadDraft {
+  releaseName: string;
+  ptpUrl: string | null;
+  duplicateResult: string | null;
+  screenshots: string[];
+  mediaInfo: string | null;
+  torrentPath: string | null;
+  description: string;
+  descriptionPath: string | null;
+}
+
 export interface PhaseOutputMap {
   intake: PhaseOutputBase & {
     candidate: TorrentCandidate;
@@ -170,6 +181,7 @@ export interface PhaseOutputMap {
   preflight: PhaseOutputBase & {
     openGates: ReviewGate[];
     missingTools: WorkerTool[];
+    uploadDraft: PtpUploadDraft;
   };
   review: PhaseOutputBase & {
     readyForHumanReview: true;
@@ -452,6 +464,51 @@ function screenshotOutputDirectory(context: PhaseContext): string {
 
 function outputScreenshotPath(outputDirectory: string, index: number): string {
   return path.join(outputDirectory, `screenshot-${index.toString().padStart(2, "0")}.png`);
+}
+
+function descriptionPath(context: PhaseContext): string | null {
+  if (!context.job.workingDirectory) return null;
+  return path.join(context.job.workingDirectory, "metadata", "description.md");
+}
+
+async function buildPtpUploadDraft(context: PhaseContext): Promise<PtpUploadDraft> {
+  const plan = await uploadPlan(context);
+  const duplicate = await context.getOutput("duplicate-check");
+  const mediaInspection = await context.getOutput("inspect-media");
+  const imageHost = await context.getOutput("image-host-upload");
+  const torrentCreate = await context.getOutput("torrent-create");
+  const screenshots = imageHost?.uploads.flatMap((attempt) => (attempt.result?.url ? [attempt.result.url] : [])) ?? [];
+  const mediaInfo = mediaInspection?.mediaInfo.result?.stdout ?? null;
+  const torrentPath = torrentCreate?.uploadTorrentPath ?? null;
+  const draftPath = descriptionPath(context);
+  const description = [
+    `Release: ${plan.releaseName.generated}`,
+    `Source: ${context.job.candidate.site}`,
+    `PTP: ${context.job.checkResult?.decision.ptpUrl ?? "new upload"}`,
+    `Duplicate check: ${duplicate?.decision?.reason ?? context.job.checkResult?.decision.reason ?? "not supplied"}`,
+    "",
+    "Screenshots:",
+    screenshots.length ? screenshots.join("\n") : "Pending screenshot uploads.",
+    "",
+    "MediaInfo:",
+    mediaInfo ?? "Pending MediaInfo."
+  ].join("\n");
+
+  if (draftPath) {
+    await mkdir(path.dirname(draftPath), { recursive: true });
+    await writeFile(draftPath, `${description}\n`, "utf8");
+  }
+
+  return {
+    releaseName: plan.releaseName.generated,
+    ptpUrl: context.job.checkResult?.decision.ptpUrl ?? null,
+    duplicateResult: duplicate?.decision?.reason ?? context.job.checkResult?.decision.reason ?? null,
+    screenshots,
+    mediaInfo,
+    torrentPath,
+    description,
+    descriptionPath: draftPath
+  };
 }
 
 export function createDefaultPhaseHandlers(): PhaseHandler[] {
@@ -817,6 +874,7 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
         const plan = await uploadPlan(context);
         const mediaInspection = await context.getOutput("inspect-media");
         const screenshots = await context.getOutput("screenshots");
+        const uploadDraft = await buildPtpUploadDraft(context);
         const openGates = plan.reviewGates.filter((gate) => gate.status === "open");
         const missingTools: WorkerTool[] = [];
         if (mediaInspection && !mediaInspection.tools.mediainfo.available) missingTools.push("mediainfo");
@@ -826,7 +884,8 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
         return {
           ...base(hasBlocker ? "blocked" : "completed", hasBlocker ? "Open blocker review gates remain." : "Preflight evidence collected."),
           openGates,
-          missingTools
+          missingTools,
+          uploadDraft
         };
       }
     },

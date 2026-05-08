@@ -35,9 +35,10 @@ function formatTimestamp(seconds: number): string {
 export function buildScreenshotPlan(parsed: ParsedTorrentCandidate, durationSeconds = 7200, options: ScreenshotPlanOptions = {}): ScreenshotPlan {
   const isEpisode = /\bS\d{2}E\d{2}\b/i.test(parsed.title);
   const percentages = (isEpisode ? EPISODE_PERCENTAGES : MOVIE_PERCENTAGES).slice(0, options.count);
-  const safeDuration = Math.max(durationSeconds, 900);
+  const safeDuration = durationSeconds > 0 && durationSeconds < 900 ? durationSeconds : Math.max(durationSeconds, 900);
   const timestamps = percentages.map((percentage, index) => {
-    const seconds = Math.round(safeDuration * percentage);
+    const maxTimestamp = Math.max(0, Math.floor(safeDuration) - 1);
+    const seconds = Math.min(Math.floor(safeDuration * percentage), maxTimestamp);
     return {
       index: index + 1,
       seconds,

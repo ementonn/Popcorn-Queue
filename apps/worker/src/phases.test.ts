@@ -286,7 +286,17 @@ describe("worker phase scaffold", () => {
             message: "Injected preflight failure.",
             producedAt: new Date().toISOString(),
             openGates: [],
-            missingTools: []
+            missingTools: [],
+            uploadDraft: {
+              releaseName: "Injected",
+              ptpUrl: null,
+              duplicateResult: null,
+              screenshots: [],
+              mediaInfo: null,
+              torrentPath: null,
+              description: "Injected",
+              descriptionPath: null
+            }
           };
         }
       } satisfies PhaseHandler<"preflight">;
