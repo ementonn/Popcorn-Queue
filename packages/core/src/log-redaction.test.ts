@@ -37,6 +37,20 @@ describe("log redaction", () => {
     });
   });
 
+  it("redacts cookie-bearing key variants", () => {
+    const redacted = redactForLog({
+      "Set-Cookie": "session=secret",
+      sessionCookie: "session-secret",
+      safe: "visible"
+    });
+
+    expect(redacted).toEqual({
+      "Set-Cookie": REDACTED_TEXT,
+      sessionCookie: REDACTED_TEXT,
+      safe: "visible"
+    });
+  });
+
   it("redacts arrays recursively", () => {
     const redacted = redactForLog([
       { Authorization: "Bearer browser-secret" },

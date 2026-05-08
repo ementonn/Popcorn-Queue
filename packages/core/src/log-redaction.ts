@@ -20,6 +20,7 @@ function isSecretKey(key: string): boolean {
   const normalizedKey = normalizeSecretKey(key);
   return (
     SECRET_KEYS.has(normalizedKey) ||
+    normalizedKey.includes("cookie") ||
     normalizedKey.endsWith("apikey") ||
     normalizedKey.endsWith("password") ||
     normalizedKey.endsWith("token")
