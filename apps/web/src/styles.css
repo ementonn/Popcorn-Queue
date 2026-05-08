@@ -597,19 +597,39 @@ h3 {
   gap: 9px;
 }
 
-.field {
+.draft-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.draft-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.advanced-fields {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.field,
+.draft-field {
   display: grid;
   gap: 4px;
   min-width: 0;
 }
 
 .field.wide,
+.draft-field.wide,
+.draft-checkbox-row.wide,
 .draft-toggles,
 .draft-actions {
   grid-column: 1 / -1;
 }
 
-.field span {
+.field span,
+.draft-field > span {
   color: var(--text-muted);
   font-size: 11px;
   font-weight: 700;
@@ -617,7 +637,10 @@ h3 {
 }
 
 .field input,
-.field textarea {
+.field textarea,
+.draft-field input,
+.draft-field select,
+.draft-field textarea {
   width: 100%;
   min-width: 0;
   border: 1px solid var(--border);
@@ -628,21 +651,24 @@ h3 {
   outline: 0;
 }
 
-.field textarea {
+.field textarea,
+.draft-field textarea {
   min-height: 112px;
   resize: vertical;
   line-height: 1.45;
 }
 
 .draft-toggles,
-.draft-actions {
+.draft-actions,
+.draft-checkbox-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
 
-.draft-toggles label {
+.draft-toggles label,
+.draft-checkbox-row label {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -660,6 +686,10 @@ h3 {
 
 .draft-actions .error-text {
   color: var(--red);
+}
+
+.advanced-toggle {
+  justify-self: start;
 }
 
 .gate p {

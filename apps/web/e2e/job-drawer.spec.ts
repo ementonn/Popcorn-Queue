@@ -95,6 +95,49 @@ test.describe("job review drawer", () => {
 
     await expect(page.getByTestId("job-drawer")).toContainText("Second.Movie.2025.1080p.BluRay.x264-GROUP");
   });
+
+  test("shows required PTP draft fields by default", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only drawer assertion.");
+    await page.goto("/");
+    await page.getByRole("link", { name: "Drawer.Movie.2026.1080p.WEB.x265-GROUP" }).click();
+
+    await expect(page.getByLabel("Type")).toHaveValue("Feature Film");
+    await expect(page.getByLabel("Source")).toHaveValue("WEB");
+    await expect(page.getByLabel("Codec")).toHaveValue("H.265");
+    await expect(page.getByLabel("Container")).toHaveValue("MKV");
+    await expect(page.getByLabel("Resolution")).toHaveValue("1080p");
+    await expect(page.getByRole("button", { name: "Advanced PTP fields" })).toBeVisible();
+    await expect(page.getByLabel("IMDb")).toHaveCount(0);
+  });
+
+  test("edits advanced PTP fields in collapsible section", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only drawer assertion.");
+    let savedPatch: Record<string, unknown> | null = null;
+    await page.route("**/api/jobs/job-drawer/review-draft", async (route) => {
+      const patch = route.request().postDataJSON() as Record<string, unknown>;
+      savedPatch = patch;
+      await route.fulfill({ json: { job: { ...drawerJobs[0], reviewDraft: { ...drawerJobs[0]!.reviewDraft, ...patch } } } });
+    });
+    await page.goto("/");
+    await page.getByRole("link", { name: "Drawer.Movie.2026.1080p.WEB.x265-GROUP" }).click();
+
+    await page.getByRole("button", { name: "Advanced PTP fields" }).click();
+    await page.getByLabel("IMDb").fill("tt7654321");
+    await page.getByLabel("Tags").fill("drama, mystery");
+    await page.getByRole("button", { name: "Save draft" }).click();
+
+    expect(savedPatch).toMatchObject({ imdb: "tt7654321", tags: "drama, mystery" });
+    await expect(page.getByTestId("review-panel").getByText("Draft saved")).toBeVisible();
+  });
+
+  test("shows text mediainfo artifact", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only drawer assertion.");
+    await page.goto("/");
+    await page.getByRole("link", { name: "Drawer.Movie.2026.1080p.WEB.x265-GROUP" }).click();
+
+    await expect(page.getByText("General")).toBeVisible();
+    await expect(page.getByText("Format                                   : Matroska")).toBeVisible();
+  });
 });
 
 const baseJob = {
@@ -108,7 +151,7 @@ const baseJob = {
     mediaFiles: ["media/upload/movie.mkv"],
     screenshots: ["https://img.example/1.png", "https://img.example/2.png", "https://img.example/3.png"],
     mediaInfoText: "General\nFormat                                   : Matroska",
-    mediainfo: "General\nFormat                                   : Matroska",
+    mediaInfoJson: "{\"media\":{\"track\":[{\"@type\":\"General\",\"Format\":\"Matroska\"}]}}",
     releaseName: "Drawer.Movie.2026.1080p.WEB.x265-GROUP",
     description: "Description",
     uploadTorrent: "torrent/upload.torrent",
@@ -170,4 +213,3 @@ const drawerJobs = [
     torrent: { filename: "second.source.torrent", bytes: 1000 }
   }
 ];
-

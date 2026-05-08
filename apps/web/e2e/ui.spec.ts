@@ -141,10 +141,10 @@ test.describe("Popcorn Queue UI", () => {
 
     await reviewPanel.getByLabel("Description").fill("Edited release description");
     await reviewPanel.getByLabel("PTP group").fill("456");
-    await reviewPanel.getByRole("button", { name: "Save Draft" }).click();
+    await reviewPanel.getByRole("button", { name: "Save draft" }).click();
 
     expect(savedPatch).toMatchObject({ description: "Edited release description", groupId: "456" });
-    await expect(reviewPanel).toContainText("Saved");
+    await expect(reviewPanel).toContainText("Draft saved");
   });
 
   test("shows selected job download progress in the review pane", async ({ page }, testInfo) => {

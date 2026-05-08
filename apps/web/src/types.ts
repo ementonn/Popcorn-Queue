@@ -37,13 +37,29 @@ export interface ReviewDraft {
   container: string;
   resolution: string;
   source: string;
+  otherSource?: string;
+  otherCodec?: string;
+  otherContainer?: string;
+  otherResolutionWidth?: string;
+  otherResolutionHeight?: string;
+  imdb?: string;
+  title?: string;
+  year?: string;
+  image?: string;
+  trailer?: string;
+  tags?: string;
+  synopsis?: string;
+  remaster?: boolean;
   remasterYear: string;
   remasterTitle: string;
+  special?: string;
   subtitles: string[];
   trumpable: string[];
   scene: boolean;
   personalRip: boolean;
   internal: boolean;
+  uploadToken?: string;
+  artists?: Array<{ name: string; importance: "1" | "2" | "3" | "4" | "5" | "" }>;
 }
 
 export type ReviewDraftPatch = Partial<ReviewDraft>;
@@ -78,12 +94,16 @@ export interface ApiJob {
     mediaFiles?: string[];
     screenshots?: string[];
     mediainfo?: string;
+    mediaInfoText?: string;
+    mediaInfoJson?: string;
     bdinfo?: string;
     releaseName?: string;
     description?: string;
     duplicateResult?: string;
     uploadTorrent?: string;
     qbReady?: boolean;
+    reviewBlockers?: string[];
+    reviewWarnings?: string[];
     ptpUrl?: string;
     ptpGroupId?: string;
     ptpTorrentId?: string;

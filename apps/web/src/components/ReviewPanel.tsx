@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { downloadedBytesLabel, downloadDetail, downloadProgress, downloadSummary } from "../download-status.js";
 import type { ApiJob, JobLogResponse, ReviewDraft, ReviewDraftPatch, ReviewGate } from "../types.js";
+import { DraftEditor } from "./DraftEditor.js";
 
 interface ReviewPanelProps {
   job: ApiJob | null;
@@ -16,7 +17,11 @@ function openGates(job: ApiJob, severity: ReviewGate["severity"]): ReviewGate[] 
 function allWarnings(job: ApiJob): string[] {
   const releaseWarnings = job.uploadPlan?.releaseName?.warnings ?? [];
   const gateWarnings = openGates(job, "warning").map((gate) => `${gate.title}: ${gate.detail}`);
-  return [...gateWarnings, ...releaseWarnings];
+  return [...(job.artifacts?.reviewWarnings ?? []), ...gateWarnings, ...releaseWarnings];
+}
+
+function artifactBlockers(job: ApiJob): string[] {
+  return job.artifacts?.reviewBlockers ?? [];
 }
 
 function linesFromText(value?: string): string[] {
@@ -51,37 +56,34 @@ function fallbackReviewDraft(job: ApiJob): ReviewDraft {
     container: job.uploadPlan?.media?.container?.toUpperCase() ?? "MKV",
     resolution: "1080p",
     source: "Other",
+    imdb: job.candidate?.imdbId ?? "",
+    title: job.candidate?.title ?? job.source.title ?? "",
+    year: "",
+    image: "",
+    trailer: "",
+    tags: "",
+    synopsis: "",
+    remaster: false,
     remasterYear: "",
     remasterTitle: "",
+    special: "",
     subtitles: job.uploadPlan?.media?.subtitles.languages ?? [],
     trumpable: [],
     scene: false,
     personalRip: false,
-    internal: false
-  };
-}
-
-function commaList(value: string): string[] {
-  return [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))];
-}
-
-function draftToForm(draft: ReviewDraft) {
-  return {
-    ...draft,
-    groupId: draft.groupId ?? "",
-    subtitles: draft.subtitles.join(", "),
-    trumpable: draft.trumpable.join(", ")
+    internal: false,
+    uploadToken: "",
+    artists: []
   };
 }
 
 export function ReviewPanel({ job, jobLogs, onResolveGate, onSaveReviewDraft }: ReviewPanelProps) {
   const draft = useMemo(() => (job ? job.reviewDraft ?? fallbackReviewDraft(job) : null), [job]);
-  const [draftForm, setDraftForm] = useState(() => (draft ? draftToForm(draft) : null));
-  const [draftStatus, setDraftStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [draftSaving, setDraftSaving] = useState(false);
+  const [draftError, setDraftError] = useState<string | null>(null);
 
   useEffect(() => {
-    setDraftForm(draft ? draftToForm(draft) : null);
-    setDraftStatus("idle");
+    setDraftError(null);
   }, [draft]);
 
   if (!job) {
@@ -93,9 +95,12 @@ export function ReviewPanel({ job, jobLogs, onResolveGate, onSaveReviewDraft }: 
   }
 
   const blockers = openGates(job, "blocker");
+  const blockerMessages = artifactBlockers(job);
   const warnings = allWarnings(job);
   const screenshots = job.artifacts?.screenshots ?? [];
-  const mediaLines = linesFromText(job.artifacts?.mediainfo ?? job.artifacts?.bdinfo);
+  const mediaValue = job.artifacts?.mediaInfoText ?? job.artifacts?.mediainfo ?? job.artifacts?.bdinfo;
+  const legacyJsonMediaInfo = !job.artifacts?.mediaInfoText && Boolean(mediaValue?.trim().startsWith("{"));
+  const mediaLines = linesFromText(mediaValue);
   const draftLines = linesFromText(job.artifacts?.description);
   const recentLogs = jobLogs.lines.length ? jobLogs.lines.slice(-8) : (job.events ?? []).slice(-8).map((event) => event.message);
   const download = job.downloadStatus;
@@ -110,8 +115,13 @@ export function ReviewPanel({ job, jobLogs, onResolveGate, onSaveReviewDraft }: 
 
       <section>
         <h3>Blockers</h3>
-        {blockers.length ? (
+        {blockers.length || blockerMessages.length ? (
           <div className="gate-list">
+            {blockerMessages.map((blocker) => (
+              <article className="gate blocker" key={blocker}>
+                <strong>{blocker}</strong>
+              </article>
+            ))}
             {blockers.map((gate) => (
               <article className="gate blocker" key={gate.id}>
                 <strong>{gate.title}</strong>
@@ -201,7 +211,10 @@ export function ReviewPanel({ job, jobLogs, onResolveGate, onSaveReviewDraft }: 
       <section>
         <h3>MediaInfo / BDInfo</h3>
         {mediaLines.length ? (
-          <pre>{mediaLines.join("\n")}</pre>
+          <>
+            {legacyJsonMediaInfo ? <p className="muted">Legacy internal MediaInfo JSON</p> : null}
+            <pre className="artifact-pre">{mediaLines.join("\n")}</pre>
+          </>
         ) : (
           empty(job.uploadPlan?.media ? `${job.uploadPlan.media.discType} media inspection pending.` : "Media inspection pending.")
         )}
@@ -209,105 +222,25 @@ export function ReviewPanel({ job, jobLogs, onResolveGate, onSaveReviewDraft }: 
 
       <section>
         <h3>Upload Draft</h3>
-        {draftForm ? (
-          <form
-            className="draft-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              setDraftStatus("saving");
-              void Promise.resolve(
-                onSaveReviewDraft(job.id, {
-                  releaseName: draftForm.releaseName,
-                  description: draftForm.description,
-                  groupId: draftForm.groupId || null,
-                  type: draftForm.type,
-                  codec: draftForm.codec,
-                  container: draftForm.container,
-                  resolution: draftForm.resolution,
-                  source: draftForm.source,
-                  remasterYear: draftForm.remasterYear,
-                  remasterTitle: draftForm.remasterTitle,
-                  subtitles: commaList(draftForm.subtitles),
-                  trumpable: commaList(draftForm.trumpable),
-                  scene: draftForm.scene,
-                  personalRip: draftForm.personalRip,
-                  internal: draftForm.internal
-                })
-              )
-                .then(() => setDraftStatus("saved"))
-                .catch(() => setDraftStatus("error"));
+        {draft ? (
+          <DraftEditor
+            draft={draft}
+            saving={draftSaving}
+            error={draftError}
+            onSave={async (patch) => {
+              setDraftSaving(true);
+              setDraftError(null);
+              try {
+                await onSaveReviewDraft(job.id, patch);
+              } catch (error) {
+                const message = error instanceof Error ? error.message : "Draft save failed";
+                setDraftError(message);
+                throw error;
+              } finally {
+                setDraftSaving(false);
+              }
             }}
-          >
-            <label className="field wide">
-              <span>Release name</span>
-              <input
-                value={draftForm.releaseName}
-                onChange={(event) => setDraftForm((current) => current && { ...current, releaseName: event.target.value })}
-              />
-            </label>
-            <label className="field">
-              <span>PTP group</span>
-              <input value={draftForm.groupId} onChange={(event) => setDraftForm((current) => current && { ...current, groupId: event.target.value })} />
-            </label>
-            <label className="field">
-              <span>Type</span>
-              <input value={draftForm.type} onChange={(event) => setDraftForm((current) => current && { ...current, type: event.target.value })} />
-            </label>
-            <label className="field">
-              <span>Codec</span>
-              <input value={draftForm.codec} onChange={(event) => setDraftForm((current) => current && { ...current, codec: event.target.value })} />
-            </label>
-            <label className="field">
-              <span>Container</span>
-              <input value={draftForm.container} onChange={(event) => setDraftForm((current) => current && { ...current, container: event.target.value })} />
-            </label>
-            <label className="field">
-              <span>Resolution</span>
-              <input value={draftForm.resolution} onChange={(event) => setDraftForm((current) => current && { ...current, resolution: event.target.value })} />
-            </label>
-            <label className="field">
-              <span>Source</span>
-              <input value={draftForm.source} onChange={(event) => setDraftForm((current) => current && { ...current, source: event.target.value })} />
-            </label>
-            <label className="field">
-              <span>Remaster year</span>
-              <input value={draftForm.remasterYear} onChange={(event) => setDraftForm((current) => current && { ...current, remasterYear: event.target.value })} />
-            </label>
-            <label className="field">
-              <span>Remaster title</span>
-              <input value={draftForm.remasterTitle} onChange={(event) => setDraftForm((current) => current && { ...current, remasterTitle: event.target.value })} />
-            </label>
-            <label className="field wide">
-              <span>Subtitles</span>
-              <input value={draftForm.subtitles} onChange={(event) => setDraftForm((current) => current && { ...current, subtitles: event.target.value })} />
-            </label>
-            <label className="field wide">
-              <span>Trumpable</span>
-              <input value={draftForm.trumpable} onChange={(event) => setDraftForm((current) => current && { ...current, trumpable: event.target.value })} />
-            </label>
-            <label className="field wide">
-              <span>Description</span>
-              <textarea value={draftForm.description} onChange={(event) => setDraftForm((current) => current && { ...current, description: event.target.value })} />
-            </label>
-            <div className="draft-toggles">
-              {(["scene", "personalRip", "internal"] as const).map((key) => (
-                <label key={key}>
-                  <input
-                    type="checkbox"
-                    checked={draftForm[key]}
-                    onChange={(event) => setDraftForm((current) => current && { ...current, [key]: event.target.checked })}
-                  />
-                  <span>{key === "personalRip" ? "Personal rip" : key}</span>
-                </label>
-              ))}
-            </div>
-            <div className="draft-actions">
-              <button type="submit" className="primary" disabled={draftStatus === "saving"}>
-                Save Draft
-              </button>
-              {draftStatus === "saved" ? <span>Saved</span> : draftStatus === "error" ? <span className="error-text">Save failed</span> : null}
-            </div>
-          </form>
+          />
         ) : (
           <div className="release-draft">
             <strong>{job.artifacts?.releaseName ?? job.uploadPlan?.releaseName?.generated ?? job.candidate?.title ?? job.source.title}</strong>
