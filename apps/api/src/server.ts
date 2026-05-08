@@ -5,6 +5,7 @@ import { type BrowserCheckResult, type TorrentCandidate } from "@popcorn-queue/c
 import { BrowserCheckService, PtpClient } from "@popcorn-queue/integrations";
 import { makeBrowserAuthHook } from "./auth.js";
 import type { ApiConfig } from "./config.js";
+import { createApiLogger } from "./logger.js";
 import { PrismaPersistence } from "./persistence.js";
 
 interface CreateManualJobBody extends Partial<TorrentCandidate> {
@@ -24,7 +25,8 @@ function configuredImageHosts(config: ApiConfig): string[] {
 }
 
 export function buildServer(config: ApiConfig) {
-  const app = fastify({ logger: true });
+  const logger = createApiLogger(config);
+  const app = logger ? fastify({ loggerInstance: logger }) : fastify({ logger: false });
   const persistence = new PrismaPersistence({
     jobs: {
       imageHosts: configuredImageHosts(config)

@@ -6,4 +6,6 @@ playwright-report/
 .env
 *.db
 *.db-*
+logs/*
+!logs/.gitkeep
 .DS_Store

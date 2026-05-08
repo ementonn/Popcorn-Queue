@@ -20,6 +20,13 @@ npm run dev:web
 The API stores jobs and the permanent PTP cache in local SQLite via
 `DATABASE_URL=file:./popcorn-queue.db`.
 
+API logs are written as Pino JSON lines to `logs/api.log` and also printed to
+the dev server console. To follow them while testing:
+
+```bash
+npm run logs:api
+```
+
 ## Browser Bridge
 
 Install `apps/userscript/popcorn-queue-bridge.user.js` in Tampermonkey, then set:

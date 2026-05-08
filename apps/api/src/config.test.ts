@@ -82,7 +82,11 @@ describe("API configuration", () => {
       MEDIAINFO_BIN: "/usr/bin/mediainfo",
       OXIPNG_BIN: "/usr/bin/oxipng",
       POPCORN_QUEUE_WORK_DIR: "/tmp/work",
-      POPCORN_QUEUE_OUTPUT_DIR: "/tmp/output"
+      POPCORN_QUEUE_OUTPUT_DIR: "/tmp/output",
+      POPCORN_QUEUE_LOG_LEVEL: "debug",
+      POPCORN_QUEUE_LOG_FILE: "logs/api-test.log",
+      POPCORN_QUEUE_LOG_TO_FILE: "false",
+      POPCORN_QUEUE_LOG_TO_CONSOLE: "false"
     });
 
     expect(config).toMatchObject({
@@ -120,7 +124,13 @@ describe("API configuration", () => {
         oxipngBin: "/usr/bin/oxipng",
         workDir: "/tmp/work",
         outputDir: "/tmp/output"
+      },
+      logging: {
+        level: "debug",
+        toFile: false,
+        toConsole: false
       }
     });
+    expect(config.logging.file).toMatch(/logs[/\\]api-test\.log$/);
   });
 });

@@ -61,6 +61,12 @@ function testConfig(): ApiConfig {
       oxipngBin: "oxipng",
       workDir: "./data/work",
       outputDir: "./data/output"
+    },
+    logging: {
+      level: "silent",
+      file: "",
+      toFile: false,
+      toConsole: false
     }
   };
 }

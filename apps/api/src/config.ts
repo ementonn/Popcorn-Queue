@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 
 export interface ApiConfig {
   host: string;
@@ -37,6 +37,12 @@ export interface ApiConfig {
     workDir: string;
     outputDir: string;
   };
+  logging: {
+    level: string;
+    file: string;
+    toFile: boolean;
+    toConsole: boolean;
+  };
 }
 
 type EnvMap = NodeJS.ProcessEnv | Record<string, string | undefined>;
@@ -61,6 +67,18 @@ function readNumber(value: string | undefined, fallback: number): number {
 function readBoolean(value: string | undefined, fallback = false): boolean {
   if (value === undefined || value === "") return fallback;
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+}
+
+function projectRoot(): string {
+  const cwd = process.cwd();
+  const segments = cwd.split(/[\\/]/);
+  if (segments.at(-2) === "apps" && segments.at(-1) === "api") return resolve(cwd, "../..");
+  return cwd;
+}
+
+function resolveProjectPath(value: string | undefined, fallback: string): string {
+  const raw = value?.trim() || fallback;
+  return isAbsolute(raw) ? raw : resolve(projectRoot(), raw);
 }
 
 function decodeEnvValue(rawValue: string): string {
@@ -155,6 +173,12 @@ export function loadConfig(env = process.env): ApiConfig {
       oxipngBin: env.OXIPNG_BIN ?? "oxipng",
       workDir: env.POPCORN_QUEUE_WORK_DIR ?? "./data/work",
       outputDir: env.POPCORN_QUEUE_OUTPUT_DIR ?? "./data/output"
+    },
+    logging: {
+      level: env.POPCORN_QUEUE_LOG_LEVEL ?? "info",
+      file: resolveProjectPath(env.POPCORN_QUEUE_LOG_FILE, "logs/api.log"),
+      toFile: readBoolean(env.POPCORN_QUEUE_LOG_TO_FILE, true),
+      toConsole: readBoolean(env.POPCORN_QUEUE_LOG_TO_CONSOLE, true)
     }
   };
 }

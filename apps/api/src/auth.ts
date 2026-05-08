@@ -9,6 +9,14 @@ export function makeBrowserAuthHook(browserToken: string) {
     const header = request.headers.authorization ?? "";
     const token = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : request.headers["x-popcorn-token"];
     if (token !== browserToken) {
+      request.log.warn(
+        {
+          url: request.url,
+          hasAuthorizationHeader: Boolean(header),
+          hasBrowserTokenHeader: Boolean(request.headers["x-popcorn-token"])
+        },
+        "browser auth failed"
+      );
       await reply.code(401).send({ error: "unauthorized" });
     }
   };
