@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -188,5 +188,50 @@ describe("worker phase scaffold", () => {
     expect(outputs.intake?.status).toBe("completed");
     expect(outputs.screenshots?.ffmpeg[0]?.skippedReason).toBe("External tool execution is disabled.");
     expect(outputs.done?.completed).toBe(true);
+  });
+
+  it("runs preparation to review without running upload", async () => {
+    const calls: CommandInvocation[] = [];
+    const context = createPhaseContext(
+      "job-review",
+      { candidate },
+      {
+        runExternalTools: false,
+        commandExecutor: fakeExecutor(calls)
+      }
+    );
+
+    const outputs = await new PhaseRunner().runPreparationToReview(context);
+
+    expect(outputs.review?.status).toBe("completed");
+    expect(outputs.upload).toBeUndefined();
+    expect(outputs.done).toBeUndefined();
+  });
+
+  it("uses final upload media for inspection and screenshots", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-final-media-"));
+    const source = path.join(tempDir, "source", "Movie.mkv");
+    await mkdir(path.dirname(source), { recursive: true });
+    await writeFile(source, "mkv");
+
+    const context = createPhaseContext(
+      "job-final-media",
+      {
+        candidate,
+        mediaPath: source,
+        workingDirectory: tempDir,
+        outputDirectory: path.join(tempDir, "screens")
+      },
+      {
+        runExternalTools: false,
+        commandExecutor: fakeExecutor([])
+      }
+    );
+
+    const outputs = await new PhaseRunner().runPreparationToReview(context);
+
+    expect(outputs["prepare-media"]?.outputPath).toMatch(/media[/\\]upload[/\\]Movie\.mkv$/);
+    expect(outputs["inspect-media"]?.mediaPath).toBe(outputs["prepare-media"]?.outputPath);
+    expect(outputs.screenshots?.mediaPath).toBe(outputs["prepare-media"]?.outputPath);
   });
 });

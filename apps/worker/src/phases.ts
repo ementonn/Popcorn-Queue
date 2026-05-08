@@ -1,4 +1,4 @@
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   UPLOAD_PHASES,
@@ -24,6 +24,7 @@ import {
   type ToolAvailability,
   type WorkerTool
 } from "./commands.js";
+import { prepareUploadMedia } from "./media-prepare.js";
 
 export { UPLOAD_PHASES };
 export type { UploadPhase };
@@ -113,8 +114,9 @@ export interface PhaseOutputMap {
   };
   "prepare-media": PhaseOutputBase & {
     inputPath: string | null;
-    primaryFilePath: string | null;
-    extractionRequired: boolean;
+    outputPath: string | null;
+    mode: "hardlink" | "copy" | "remux" | "skipped";
+    remuxed: boolean;
   };
   "inspect-media": PhaseOutputBase & {
     mediaPath: string | null;
@@ -134,8 +136,9 @@ export interface PhaseOutputMap {
     files: string[];
   };
   "image-host-upload": PhaseOutputBase & {
-    uploads: ImageUploadAttempt[];
     files: string[];
+    hostedJsonPath: string | null;
+    uploads: ImageUploadAttempt[];
   };
   "torrent-create": PhaseOutputBase & {
     reusePlan: UploadPlan["torrentReuse"];
@@ -143,6 +146,7 @@ export interface PhaseOutputMap {
   };
   "seed-prepare": PhaseOutputBase & {
     torrentPath: string | null;
+    mediaPath: string | null;
     client: string | null;
   };
   preflight: PhaseOutputBase & {
@@ -150,7 +154,7 @@ export interface PhaseOutputMap {
     missingTools: WorkerTool[];
   };
   review: PhaseOutputBase & {
-    openGates: ReviewGate[];
+    readyForHumanReview: true;
   };
   upload: PhaseOutputBase & {
     ptpUrl: string | null;
@@ -271,11 +275,19 @@ async function uploadPlan(context: PhaseContext): Promise<UploadPlan> {
 }
 
 async function resolvedMediaPath(context: PhaseContext): Promise<string | null> {
-  if (context.job.mediaPath) return context.job.mediaPath;
   const preparedMedia = await context.getOutput("prepare-media");
-  if (preparedMedia?.primaryFilePath) return preparedMedia.primaryFilePath;
+  if (preparedMedia?.outputPath) return preparedMedia.outputPath;
+  if (context.job.mediaPath) return context.job.mediaPath;
   if (context.job.downloadPath) return context.job.downloadPath;
   return null;
+}
+
+function mediaWorkspaceDirectories(context: PhaseContext): { uploadDirectory: string; intermediateDirectory: string } {
+  const root = context.job.workingDirectory ?? process.cwd();
+  return {
+    uploadDirectory: path.join(root, "media", "upload"),
+    intermediateDirectory: path.join(root, "media", "intermediates")
+  };
 }
 
 function isArchivePath(filePath: string | null): boolean {
@@ -428,12 +440,40 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
       phase: "prepare-media",
       async run(context) {
         const inputPath = context.job.mediaPath ?? context.job.downloadPath ?? null;
-        const extractionRequired = isArchivePath(inputPath);
+        if (!inputPath) {
+          return {
+            ...base("skipped", "No media path is available for preparation."),
+            inputPath,
+            outputPath: null,
+            mode: "skipped",
+            remuxed: false
+          };
+        }
+        if (isArchivePath(inputPath)) {
+          return {
+            ...base("skipped", "Archive extraction is planned but no extractor is configured."),
+            inputPath,
+            outputPath: null,
+            mode: "skipped",
+            remuxed: false
+          };
+        }
+
+        const directories = mediaWorkspaceDirectories(context);
+        const prepared = await prepareUploadMedia({
+          sourcePath: inputPath,
+          uploadDirectory: directories.uploadDirectory,
+          intermediateDirectory: directories.intermediateDirectory,
+          runExternalTools: context.runExternalTools,
+          ffmpegCommand: context.toolCommands.ffmpeg ?? "ffmpeg",
+          commandExecutor: context.commandExecutor
+        });
         return {
-          ...base(extractionRequired ? "skipped" : "completed", extractionRequired ? "Archive extraction is planned but no extractor is configured." : "No archive extraction required."),
-          inputPath,
-          primaryFilePath: extractionRequired ? null : inputPath,
-          extractionRequired
+          ...base("completed", "Upload media prepared."),
+          inputPath: prepared.inputPath,
+          outputPath: prepared.outputPath,
+          mode: prepared.mode,
+          remuxed: prepared.remuxed
         };
       }
     },
@@ -550,10 +590,32 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
       phase: "image-host-upload",
       async run(context) {
         const screenshots = await context.getOutput("screenshots");
+        if (!screenshots) {
+          return {
+            ...base("skipped", "No screenshots are available for image host upload."),
+            files: [],
+            hostedJsonPath: null,
+            uploads: []
+          };
+        }
+        const hostedUploads = screenshots.uploads
+          .filter((attempt) => attempt.result)
+          .map((attempt) => ({
+            filePath: attempt.filePath,
+            host: attempt.host,
+            result: attempt.result
+          }));
+        let hostedJsonPath: string | null = null;
+        if (hostedUploads.length > 0) {
+          hostedJsonPath = path.join(screenshots.outputDirectory, "hosted.json");
+          await mkdir(path.dirname(hostedJsonPath), { recursive: true });
+          await writeFile(hostedJsonPath, `${JSON.stringify(hostedUploads, null, 2)}\n`, "utf8");
+        }
         return {
-          ...base(screenshots ? "completed" : "skipped", screenshots ? "Image host upload results collected from screenshot phase." : "No screenshots are available for image host upload."),
-          uploads: screenshots?.uploads ?? [],
-          files: screenshots?.files ?? []
+          ...base("completed", "Image host upload results collected from screenshot phase."),
+          files: screenshots.files,
+          hostedJsonPath,
+          uploads: screenshots.uploads
         };
       }
     },
@@ -574,6 +636,7 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
         return {
           ...base("skipped", "Torrent client integration is not configured in this worker scaffold."),
           torrentPath: context.job.sourceTorrentPath ?? context.job.torrent?.filePath ?? null,
+          mediaPath: await resolvedMediaPath(context),
           client: null
         };
       }
@@ -599,13 +662,10 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
     },
     {
       phase: "review",
-      async run(context) {
-        const plan = await uploadPlan(context);
-        const openGates = plan.reviewGates.filter((gate) => gate.status === "open");
-        const hasBlocker = openGates.some((gate) => gate.severity === "blocker");
+      async run() {
         return {
-          ...base(hasBlocker ? "blocked" : "completed", hasBlocker ? "Open blocker review gates remain." : "Review gate state collected."),
-          openGates
+          ...base("completed", "Ready for human review."),
+          readyForHumanReview: true
         };
       }
     },
@@ -656,6 +716,33 @@ export class PhaseRunner {
     if (startIndex < 0) throw new Error(`Unknown start phase: ${startPhase}`);
 
     for (const handler of this.handlers.slice(startIndex)) {
+      if (await context.stopRequested()) {
+        await context.log("info", "Stop requested before phase.", { phase: handler.phase });
+        return context.snapshotOutputs();
+      }
+
+      await context.log("info", "Starting phase.", { phase: handler.phase });
+      const output = await handler.run(context);
+      await context.writeOutput(handler.phase, output);
+      await context.log(output.status === "failed" ? "error" : output.status === "blocked" ? "warn" : "info", "Finished phase.", {
+        phase: handler.phase,
+        status: output.status,
+        message: output.message
+      });
+
+      if (output.status === "blocked" || output.status === "failed") {
+        return context.snapshotOutputs();
+      }
+    }
+
+    return context.snapshotOutputs();
+  }
+
+  async runPreparationToReview(context: PhaseContext): Promise<Partial<PhaseOutputMap>> {
+    const reviewIndex = this.handlers.findIndex((handler) => handler.phase === "review");
+    if (reviewIndex < 0) throw new Error("Missing phase handler: review");
+
+    for (const handler of this.handlers.slice(0, reviewIndex + 1)) {
       if (await context.stopRequested()) {
         await context.log("info", "Stop requested before phase.", { phase: handler.phase });
         return context.snapshotOutputs();
