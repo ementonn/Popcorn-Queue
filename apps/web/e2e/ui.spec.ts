@@ -79,8 +79,12 @@ test.describe("Popcorn Queue UI", () => {
     await expect(page.getByRole("columnheader", { name: "Status" })).toBeVisible();
     await expect(page.getByRole("columnheader", { name: "Release" })).toBeVisible();
     await expect(page.getByRole("columnheader", { name: "Step" })).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: "Download" })).toBeVisible();
     await expect(page.getByRole("columnheader", { name: "Blockers" })).toBeVisible();
     await expect(page.getByLabel("Upload queue").getByRole("link", { name: "ATHENA.2022.1080p.WEB.x265-SMURF" })).toBeVisible();
+    await expect(page.getByLabel("Upload queue")).toContainText("Downloaded");
+    await expect(page.getByLabel("Upload queue")).toContainText("Downloading (42%)");
+    await expect(page.getByLabel("Upload queue")).toContainText("42% - 8.0 MB/s - 12m");
     await expect(page.locator(".job-link").first()).toHaveAttribute("href", "/jobs/job-athena");
   });
 
@@ -104,12 +108,27 @@ test.describe("Popcorn Queue UI", () => {
       "Blockers",
       "Warnings",
       "Duplicate/PTP Result",
+      "Download",
       "Screenshots",
       "MediaInfo / BDInfo",
       "Release Draft",
       "Torrent / qB Readiness",
       "Recent Job Log"
     ]);
+  });
+
+  test("shows selected job download progress in the review pane", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only review assertion.");
+    await page.goto("/");
+
+    await page.getByRole("link", { name: "Home.Sweet.Home.2021.1080p.WEB.x265-TJUPT" }).click();
+    const reviewPanel = page.getByTestId("review-panel");
+
+    await expect(reviewPanel.getByRole("heading", { name: "Download" })).toBeVisible();
+    await expect(reviewPanel).toContainText("Downloading (42%)");
+    await expect(reviewPanel).toContainText("42% - 8.0 MB/s - 12m");
+    await expect(reviewPanel).toContainText("4.0 MB / 10.0 MB");
+    await expect(reviewPanel).toContainText("HOMEHASH");
   });
 
   test("keeps diagnostics hidden until requested", async ({ page }) => {
@@ -180,6 +199,24 @@ const apiJobs = [
     candidate: { site: "mteam", title: "ATHENA.2022.FRENCH.1080p.NF.WEB-DL.x265-SMURF", imdbId: "tt1234567" },
     checkResult: { decision: { status: "review", reason: "IMDb + resolution match" } },
     torrent: { filename: "ATHENA.torrent", bytes: 6871947673 },
+    downloadStatus: {
+      client: "qbittorrent",
+      infoHash: "ATHENAHASH",
+      state: "uploading",
+      progress: 1,
+      downloaded: 6_871_947_673,
+      size: 6_871_947_673,
+      amountLeft: 0,
+      downloadSpeed: 0,
+      uploadSpeed: 1_048_576,
+      eta: 0,
+      seeds: 4,
+      peers: 0,
+      savePath: "/downloads",
+      contentPath: "/downloads/ATHENA.mkv",
+      lastUpdatedAt: "2026-05-08T00:00:00.000Z",
+      error: null
+    },
     artifacts: {
       mediaFiles: ["media/upload/ATHENA.2022.1080p.WEB.x265-SMURF.mkv"],
       screenshots: ["https://example.test/shot1.png", "https://example.test/shot2.png"],
@@ -212,6 +249,24 @@ const apiJobs = [
     updatedAt: "2026-05-08T00:00:00.000Z",
     source: { site: "TJUPT", title: "Home.Sweet.Home.2021.1080p.WEB-DL.HDR.H265-TJUPT" },
     candidate: { site: "tjupt", title: "Home.Sweet.Home.2021.1080p.WEB-DL.HDR.H265-TJUPT" },
+    downloadStatus: {
+      client: "qbittorrent",
+      infoHash: "HOMEHASH",
+      state: "downloading",
+      progress: 0.42,
+      downloaded: 4_194_304,
+      size: 10_485_760,
+      amountLeft: 6_291_456,
+      downloadSpeed: 8_388_608,
+      uploadSpeed: 0,
+      eta: 720,
+      seeds: 12,
+      peers: 3,
+      savePath: "/downloads",
+      contentPath: "/downloads/Home.Sweet.Home.2021.1080p.WEB-DL.HDR.H265-TJUPT.mkv",
+      lastUpdatedAt: "2026-05-08T00:00:00.000Z",
+      error: null
+    },
     uploadPlan: {
       releaseName: { generated: "Home.Sweet.Home.2021.1080p.WEB.x265-TJUPT", group: "TJUPT", container: "mkv", warnings: [] },
       screenshots: { count: 6, imageHosts: ["imgbb"], toneMapHint: "bt2020" },
