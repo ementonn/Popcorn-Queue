@@ -2,7 +2,7 @@
 // @name         Popcorn Queue Bridge
 // @namespace    https://popcorn-queue.local/
 // @description  Check PTP slots through Popcorn Queue and send source torrents into the upload service.
-// @version      0.1.1
+// @version      0.1.2
 // @author       emt
 // @match        https://tjupt.org/torrents.php*
 // @match        https://pterclub.net/torrents.php*
@@ -308,11 +308,56 @@
     return ["not_found", "open", "no_torrents", "trumpable", "coexist", "review"].includes(status);
   }
 
-  function downloadTorrent(url) {
-    return apiDownload(absolutize(url));
+  function downloadTorrent(torrent) {
+    return apiDownload(absolutize(torrent.downloadUrl), fallbackTorrentFilename(torrent));
   }
 
-  function apiDownload(url) {
+  function headerValue(rawHeaders, name) {
+    const lowerName = name.toLowerCase();
+    return String(rawHeaders || "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const index = line.indexOf(":");
+        return index > 0 ? [line.slice(0, index).trim().toLowerCase(), line.slice(index + 1).trim()] : null;
+      })
+      .find((entry) => entry && entry[0] === lowerName)?.[1] || null;
+  }
+
+  function decodeFilenameValue(value) {
+    const trimmed = String(value || "").trim().replace(/^"(.*)"$/, "$1");
+    try {
+      return decodeURIComponent(trimmed);
+    } catch (_) {
+      return trimmed;
+    }
+  }
+
+  function filenameFromContentDisposition(value) {
+    if (!value) return null;
+    const extended = value.match(/filename\*\s*=\s*(?:UTF-8''|utf-8'')?([^;]+)/i);
+    if (extended && extended[1]) return decodeFilenameValue(extended[1]);
+    const quoted = value.match(/filename\s*=\s*"([^"]+)"/i);
+    if (quoted && quoted[1]) return decodeFilenameValue(quoted[1]);
+    const plain = value.match(/filename\s*=\s*([^;]+)/i);
+    return plain && plain[1] ? decodeFilenameValue(plain[1]) : null;
+  }
+
+  function sanitizeTorrentFilename(filename, fallback) {
+    let name = String(filename || fallback || "source.torrent").split(/[\\/]/).pop().trim();
+    name = name.replace(/[\0\r\n]/g, "");
+    if (!name) name = fallback || "source.torrent";
+    return /\.torrent$/i.test(name) ? name : name + ".torrent";
+  }
+
+  function fallbackTorrentFilename(torrent) {
+    const site = torrent.site || detectSite() || "source";
+    const id = torrent.sourceTorrentId || (torrent.downloadUrl && (String(torrent.downloadUrl).match(/[?&]id=(\d+)/) || [])[1]);
+    return sanitizeTorrentFilename(id ? site + "-" + id : site + "-source", "source.torrent");
+  }
+
+  function apiDownload(url, fallbackFilename) {
     return new Promise((resolve, reject) => {
       if (!url) {
         reject(new Error("No download URL"));
@@ -325,14 +370,20 @@
         headers: { Accept: "application/x-bittorrent,application/octet-stream,*/*" },
         onload: (response) => {
           if (response.status !== 200) reject(new Error("Download failed: HTTP " + response.status));
-          else resolve(response.response);
+          else {
+            const filename = filenameFromContentDisposition(headerValue(response.responseHeaders, "content-disposition"));
+            resolve({
+              bytes: response.response,
+              filename: sanitizeTorrentFilename(filename, fallbackFilename)
+            });
+          }
         },
         onerror: () => reject(new Error("Download failed"))
       });
     });
   }
 
-  async function downloadMTeamTorrent(sourceTorrentId) {
+  async function downloadMTeamTorrent(sourceTorrentId, torrent) {
     const auth = localStorage.getItem("auth") || "";
     const body = new URLSearchParams({ id: String(sourceTorrentId) }).toString();
     const hosts = ["api.m-team.io", "api.m-team.cc"];
@@ -358,7 +409,7 @@
             onerror: () => reject(new Error("token request failed"))
           });
         });
-        if (tokenResponse.data) return apiDownload(absolutize(tokenResponse.data));
+        if (tokenResponse.data) return apiDownload(absolutize(tokenResponse.data), fallbackTorrentFilename(torrent || { site: "mteam", sourceTorrentId }));
       } catch (error) {
         lastError = error;
       }
@@ -414,13 +465,13 @@
 
   async function sendJob(torrent, result, button, badge) {
     button.textContent = "DL...";
-    const torrentData = torrent.sourceTorrentId
-      ? await downloadMTeamTorrent(torrent.sourceTorrentId)
-      : await downloadTorrent(torrent.downloadUrl);
+    const sourceTorrent = torrent.sourceTorrentId
+      ? await downloadMTeamTorrent(torrent.sourceTorrentId, torrent)
+      : await downloadTorrent(torrent);
     button.textContent = "Send...";
 
     const form = new FormData();
-    form.append("torrent", new Blob([torrentData], { type: "application/x-bittorrent" }), (torrent.sourceTorrentId || "source") + ".torrent");
+    form.append("torrent", new Blob([sourceTorrent.bytes], { type: "application/x-bittorrent" }), sourceTorrent.filename);
     form.append("candidate", JSON.stringify(stripElement(torrent)));
     form.append("checkResult", JSON.stringify(result));
     const response = await apiRequest("POST", "/api/browser/jobs", form);
