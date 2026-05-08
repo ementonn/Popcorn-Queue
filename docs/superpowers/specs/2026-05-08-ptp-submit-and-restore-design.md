@@ -64,6 +64,8 @@ The internal paths stay stable:
 
 The UI should stop presenting `source.torrent` as a meaningful user-facing filename. It should label these paths as `Source torrent` and `PTP upload torrent`, and optionally show the original filename from job metadata.
 
+The source torrent display name must come from the source-site download when available. The browser bridge should parse `Content-Disposition` from the source torrent response and submit that filename in the multipart upload. If the source site does not provide a filename, the bridge should use a stable fallback derived from site and source torrent id, and only then fall back to `source.torrent`. The backend still writes the bytes to `torrent/source.torrent`, but preserves the submitted filename in `job.torrent.filename` and `input/source.json`; the web UI displays that original filename beside the `Source torrent` role label.
+
 Restore validation checks `manifest.json`, every `uploadFiles` entry, and `torrentFile` if present. Missing upload media blocks automatic reseed and puts the job in review with a warning. A restored `done` job with valid upload media and upload torrent becomes `needs_reseed`; `/api/jobs/:id/reseed` adds `torrent/upload.torrent` to qB with `media/upload` as save path and marks the job `seeding` only after qB accepts it.
 
 ## Web UI
