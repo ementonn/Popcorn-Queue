@@ -482,6 +482,35 @@ describe("worker phase scaffold", () => {
     expect(outputs.screenshots?.mediaPath).toBe(outputs["prepare-media"]?.outputPath);
   });
 
+  it("runs screenshot extraction with noninteractive overwrite flags", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-screenshot-flags-"));
+    const source = path.join(tempDir, "source", "Movie.mkv");
+    await mkdir(path.dirname(source), { recursive: true });
+    await writeFile(source, "mkv");
+    const calls: CommandInvocation[] = [];
+
+    const context = createPhaseContext(
+      "job-screenshot-flags",
+      {
+        candidate,
+        mediaPath: source,
+        workingDirectory: tempDir,
+        outputDirectory: path.join(tempDir, "screens")
+      },
+      {
+        runExternalTools: true,
+        commandExecutor: fakeExecutor(calls)
+      }
+    );
+
+    await new PhaseRunner().runPreparationToReview(context);
+    const screenshotCalls = calls.filter((call) => call.command === "ffmpeg" && call.args.includes("-frames:v"));
+
+    expect(screenshotCalls).not.toHaveLength(0);
+    expect(screenshotCalls.every((call) => call.args.includes("-nostdin"))).toBe(true);
+    expect(screenshotCalls.every((call) => call.args.includes("-y"))).toBe(true);
+  });
+
   it("emits preparation phase lifecycle callbacks", async () => {
     const events: string[] = [];
     const context = createPhaseContext(

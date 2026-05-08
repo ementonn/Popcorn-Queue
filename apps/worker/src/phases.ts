@@ -418,7 +418,7 @@ function mediaInfoInvocation(command: string, mediaPath: string): CommandInvocat
 function screenshotInvocation(command: string, mediaPath: string, timestamp: string, outputPath: string): CommandInvocation {
   return {
     command,
-    args: ["-hide_banner", "-loglevel", "error", "-ss", timestamp, "-i", mediaPath, "-frames:v", "1", "-q:v", "2", outputPath],
+    args: ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-ss", timestamp, "-i", mediaPath, "-frames:v", "1", "-q:v", "2", outputPath],
     timeoutMs: 60_000
   };
 }
