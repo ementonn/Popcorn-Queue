@@ -97,6 +97,10 @@ function hasOpenGate(job: Pick<Job, "uploadPlan">, severity?: ReviewGate["severi
   return job.uploadPlan.reviewGates.some((gate) => gate.status === "open" && (!severity || gate.severity === severity));
 }
 
+function canEnterUpload(job: Pick<Job, "uploadReadiness" | "uploadPlan">): boolean {
+  return job.uploadReadiness === "ready" && !hasOpenGate(job, "blocker");
+}
+
 function makePhases(startPhase: JobPhase): PhaseRun[] {
   return JOB_PHASES.map((phase) => ({
     phase,
@@ -239,11 +243,7 @@ export class JobRepository {
   startUpload(id: string): Job | null {
     const job = this.jobs.get(id);
     if (!job) return null;
-    if (job.uploadReadiness !== "ready") {
-      job.state = "review";
-      job.humanStep = "Review upload package";
-      return this.record(job, "warn", "Cannot start upload until blockers and required evidence are resolved.");
-    }
+    if (!canEnterUpload(job)) return this.blockUploadStart(job);
     job.state = "uploading";
     job.phase = "upload";
     job.humanStep = "Uploading to tracker";
@@ -254,6 +254,9 @@ export class JobRepository {
   retryFailed(id: string): Job | null {
     const job = this.jobs.get(id);
     if (!job) return null;
+    if (job.state !== "failed" && !job.phases.some((item) => item.state === "failed")) {
+      return this.record(job, "warn", "Retry is only available for failed jobs.", { phase: job.phase });
+    }
     const run = job.phases.find((item) => item.phase === job.phase);
     if (run) {
       run.retryCount += 1;
@@ -295,6 +298,11 @@ export class JobRepository {
 
     this.setPhaseState(job, job.phase, "done", "Finished.");
     const next = JOB_PHASES[phaseIndex(job.phase) + 1];
+    if (next === "upload" && !canEnterUpload(job)) {
+      job.state = "review";
+      job.humanStep = "Review upload package";
+      return this.blockUploadStart(job);
+    }
     if (!next) {
       job.phase = "done";
       job.state = "done";
@@ -349,6 +357,14 @@ export class JobRepository {
     run.message = message;
     if (state === "running" && !run.startedAt) run.startedAt = now;
     if (state === "done" || state === "failed" || state === "warning") run.finishedAt = now;
+  }
+
+  private blockUploadStart(job: Job): Job {
+    job.state = "review";
+    job.phase = "review";
+    job.humanStep = "Review upload package";
+    this.setPhaseState(job, "review", "warning", "Blocked until upload readiness is ready.");
+    return this.record(job, "warn", "Cannot start upload until blockers and required evidence are resolved.");
   }
 
   private record(job: Job, level: JobEvent["level"], message: string, payload?: unknown): Job {

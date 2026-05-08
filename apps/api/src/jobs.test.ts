@@ -59,6 +59,67 @@ describe("JobRepository pre-upload state machine", () => {
     expect(blocked.state).toBe("review");
     expect(blocked.events.at(0)?.message).toBe("Cannot start upload until blockers and required evidence are resolved.");
   });
+
+  it("blocks every advance into upload until readiness is ready and blocker gates are resolved", () => {
+    const repo = new JobRepository();
+    let job = repo.create({ candidate });
+
+    while (job.phase !== "review") {
+      job = repo.advance(job.id)!;
+    }
+
+    job = repo.advance(job.id)!;
+    expect(job.phase).toBe("review");
+    expect(job.state).toBe("review");
+    expect(job.events.at(0)?.message).toBe("Cannot start upload until blockers and required evidence are resolved.");
+
+    job = repo.markPreparedForReview(job.id, { uploadReadiness: "ready", artifacts: {} })!;
+    job = repo.advance(job.id)!;
+
+    expect(job.phase).toBe("upload");
+    expect(job.state).toBe("uploading");
+  });
+
+  it("blocks Start Upload when stale readiness is ready but blocker gates are open", () => {
+    const repo = new JobRepository();
+    let job = repo.create({
+      candidate: {
+        site: "unknown",
+        title: "Movie.2024.1080p.BluRay.x264-YIFY.mp4",
+        imdbId: null
+      }
+    });
+
+    job = repo.markPreparedForReview(job.id, { uploadReadiness: "ready", artifacts: {} })!;
+    job = repo.startUpload(job.id)!;
+
+    expect(job.state).toBe("review");
+    expect(job.phase).toBe("review");
+    expect(job.events.at(0)?.message).toBe("Cannot start upload until blockers and required evidence are resolved.");
+  });
+
+  it("only retries failed jobs or failed phases", () => {
+    const repo = new JobRepository();
+    let done = repo.markPreparedForReview(repo.create({ candidate }).id, { uploadReadiness: "ready", artifacts: {} })!;
+    done.state = "done";
+
+    done = repo.retryFailed(done.id)!;
+    expect(done.state).toBe("done");
+    expect(done.events.at(0)?.message).toBe("Retry is only available for failed jobs.");
+
+    let uploading = repo.markPreparedForReview(repo.create({ candidate }).id, { uploadReadiness: "ready", artifacts: {} })!;
+    uploading = repo.startUpload(uploading.id)!;
+    uploading = repo.retryFailed(uploading.id)!;
+    expect(uploading.state).toBe("uploading");
+    expect(uploading.events.at(0)?.message).toBe("Retry is only available for failed jobs.");
+
+    let failed = repo.create({ candidate });
+    failed.state = "failed";
+    failed.phases[0]!.state = "failed";
+    failed = repo.retryFailed(failed.id)!;
+    expect(failed.state).toBe("preparing");
+    expect(failed.phases[0]).toMatchObject({ state: "pending", retryCount: 1, message: "Retry queued." });
+  });
 });
 
 describe("legacy persisted job normalization", () => {
