@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { TorrentCandidate } from "@popcorn-queue/core";
+import type { ReviewDraft, TorrentCandidate } from "@popcorn-queue/core";
 import type { CommandExecutor, CommandInvocation, CommandResult } from "./commands.js";
 import { PhaseRunner, createDefaultPhaseHandlers, createPhaseContext, parseMediaInfoSummary, type PhaseHandler } from "./phases.js";
 
@@ -10,6 +10,24 @@ const candidate: TorrentCandidate = {
   site: "mteam",
   title: "Perfect.Days.2023.1080p.BluRay.FLAC.x264-GROUP",
   imdbId: "tt27503384"
+};
+
+const reviewDraft: ReviewDraft = {
+  releaseName: "Perfect.Days.2023.1080p.BluRay.FLAC.x264-GROUP",
+  description: "Release description",
+  groupId: "123",
+  type: "Feature Film",
+  codec: "H.264",
+  container: "MKV",
+  resolution: "1080p",
+  source: "Blu-ray",
+  remasterYear: "",
+  remasterTitle: "",
+  subtitles: [],
+  trumpable: [],
+  scene: true,
+  personalRip: false,
+  internal: false
 };
 
 function commandResult(invocation: CommandInvocation, stdout = `${invocation.command} version\n`): CommandResult {
@@ -181,11 +199,14 @@ describe("worker phase scaffold", () => {
     expect(output.uploads.every((attempt) => attempt.result?.host === "imgbb")).toBe(true);
   });
 
-  it("runs the default phase sequence to done using only planned external outputs", async () => {
+  it("fails the upload phase cleanly when no PTP submitter is configured", async () => {
     const calls: CommandInvocation[] = [];
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-worker-no-submit-"));
+    await mkdir(path.join(tempDir, "torrent"), { recursive: true });
+    await writeFile(path.join(tempDir, "torrent", "upload.torrent"), "torrent");
     const context = createPhaseContext(
       "job-3",
-      { candidate },
+      { candidate, workingDirectory: tempDir, reviewDraft },
       {
         runExternalTools: false,
         commandExecutor: fakeExecutor(calls)
@@ -196,6 +217,47 @@ describe("worker phase scaffold", () => {
 
     expect(outputs.intake?.status).toBe("completed");
     expect(outputs.screenshots?.ffmpeg[0]?.skippedReason).toBe("External tool execution is disabled.");
+    expect(outputs.upload?.status).toBe("failed");
+    expect(outputs.upload?.message).toMatch(/PTP submitter/i);
+    expect(outputs.done).toBeUndefined();
+  });
+
+  it("runs upload tail through an injected PTP submitter", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-worker-submit-"));
+    const torrentPath = path.join(tempDir, "torrent", "upload.torrent");
+    await mkdir(path.dirname(torrentPath), { recursive: true });
+    await writeFile(torrentPath, "torrent");
+    const submitted: Array<{ draft: ReviewDraft; torrentPath: string; nfoText?: string | null }> = [];
+    const context = createPhaseContext(
+      "job-submit",
+      {
+        candidate,
+        workingDirectory: tempDir,
+        reviewDraft
+      },
+      {
+        ptpSubmitter: {
+          async submit(input) {
+            submitted.push(input);
+            return {
+              groupId: "123",
+              torrentId: "456",
+              ptpUrl: "https://passthepopcorn.me/torrents.php?id=123&torrentid=456"
+            };
+          }
+        }
+      }
+    );
+
+    const outputs = await new PhaseRunner().runUploadTail(context);
+
+    expect(submitted).toEqual([{ draft: reviewDraft, torrentPath, nfoText: null }]);
+    expect(outputs.upload).toMatchObject({
+      status: "completed",
+      ptpUrl: "https://passthepopcorn.me/torrents.php?id=123&torrentid=456",
+      draftOnly: false,
+      result: { groupId: "123", torrentId: "456" }
+    });
     expect(outputs.done?.completed).toBe(true);
   });
 

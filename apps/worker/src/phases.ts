@@ -9,6 +9,8 @@ import {
   type BrowserCheckResult,
   type DownloadStatus,
   type MetadataPlan,
+  type PtpUploadResult,
+  type ReviewDraft,
   type ReviewGate,
   type RuleDecision,
   type ScreenshotPlan,
@@ -44,6 +46,7 @@ export interface PhaseOutputBase {
 export interface WorkerJobInput {
   candidate: TorrentCandidate;
   checkResult?: BrowserCheckResult;
+  reviewDraft?: ReviewDraft;
   torrent?: {
     filename: string;
     bytes: number;
@@ -102,6 +105,10 @@ export interface ImageUploadResult {
 export interface ImageHostUploader {
   readonly name: string;
   uploadImage(filePath: string): Promise<ImageUploadResult>;
+}
+
+export interface PtpSubmitter {
+  submit(input: { draft: ReviewDraft; torrentPath: string; nfoText?: string | null }): Promise<PtpUploadResult>;
 }
 
 export interface ImageUploadAttempt {
@@ -193,6 +200,7 @@ export interface PhaseOutputMap {
   upload: PhaseOutputBase & {
     ptpUrl: string | null;
     draftOnly: boolean;
+    result?: PtpUploadResult;
   };
   "post-hook": PhaseOutputBase & {
     hooksRun: string[];
@@ -217,6 +225,7 @@ export interface PhaseContext {
   commandExecutor: CommandExecutor;
   toolCommands: Partial<Record<WorkerTool, string>>;
   imageUploader: ImageHostUploader | undefined;
+  ptpSubmitter: PtpSubmitter | undefined;
   torrentClient: TorrentDownloadClient | undefined;
   torrentClientOptions: {
     category?: string;
@@ -243,6 +252,7 @@ export interface CreatePhaseContextOptions {
   commandExecutor?: CommandExecutor;
   toolCommands?: Partial<Record<WorkerTool, string>>;
   imageUploader?: ImageHostUploader;
+  ptpSubmitter?: PtpSubmitter;
   torrentClient?: TorrentDownloadClient;
   torrentClientOptions?: {
     category?: string;
@@ -296,6 +306,7 @@ export function createPhaseContext(jobId: string, job: WorkerJobInput, options: 
     commandExecutor: options.commandExecutor ?? nodeCommandExecutor,
     toolCommands: options.toolCommands ?? {},
     imageUploader: options.imageUploader,
+    ptpSubmitter: options.ptpSubmitter,
     torrentClient: options.torrentClient,
     torrentClientOptions: {
       ...(options.torrentClientOptions?.category ? { category: options.torrentClientOptions.category } : {}),
@@ -941,11 +952,49 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
     {
       phase: "upload",
       async run(context) {
-        return {
-          ...base("skipped", "PTP upload submission is not configured in this worker scaffold."),
-          ptpUrl: context.job.checkResult?.decision.ptpUrl ?? null,
-          draftOnly: true
-        };
+        if (!context.ptpSubmitter) {
+          return {
+            ...base("failed", "PTP submitter is not configured."),
+            ptpUrl: null,
+            draftOnly: true
+          };
+        }
+        if (!context.job.reviewDraft) {
+          return {
+            ...base("failed", "Review draft is missing."),
+            ptpUrl: null,
+            draftOnly: true
+          };
+        }
+        const torrentPath = uploadTorrentPath(context);
+        if (!torrentPath || !(await pathExists(torrentPath))) {
+          return {
+            ...base("failed", "PTP upload torrent is missing."),
+            ptpUrl: null,
+            draftOnly: true
+          };
+        }
+        const preflight = await context.getOutput("preflight");
+        try {
+          const result = await context.ptpSubmitter.submit({
+            draft: context.job.reviewDraft,
+            torrentPath,
+            nfoText: preflight?.uploadDraft.mediaInfo ?? null
+          });
+          return {
+            ...base("completed", "PTP upload submitted."),
+            ptpUrl: result.ptpUrl,
+            draftOnly: false,
+            result
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            ...base("failed", message),
+            ptpUrl: null,
+            draftOnly: false
+          };
+        }
       }
     },
     {
@@ -1005,6 +1054,10 @@ export class PhaseRunner {
     }
 
     return context.snapshotOutputs();
+  }
+
+  async runUploadTail(context: PhaseContext): Promise<Partial<PhaseOutputMap>> {
+    return this.runFrom("upload", context);
   }
 
   async runPreparationToReview(context: PhaseContext): Promise<Partial<PhaseOutputMap>> {
