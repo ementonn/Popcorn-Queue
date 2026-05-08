@@ -10,46 +10,78 @@ test.describe("Popcorn Queue UI", () => {
       await route.fulfill({ json: { jobs: apiJobs } });
     });
     await page.route("**/api/health", async (route) => {
-      await route.fulfill({ json: { ok: true, ptpConfigured: false, browserTokenConfigured: true, cachePolicy: "permanent" } });
-    });
-    await page.route("**/api/features", async (route) => {
       await route.fulfill({
         json: {
-          features: [
-            {
-              id: "upload-plan",
-              name: "Upsies-style upload plan",
-              status: "implemented",
-              detail: "Every job receives metadata, release-name, scene, screenshot, torrent-reuse, media, and review-gate plans."
-            }
-          ]
+          ok: true,
+          ptpConfigured: true,
+          browserTokenConfigured: true,
+          publicWebUrl: "http://127.0.0.1:5173",
+          publicApiUrl: "http://127.0.0.1:3500",
+          external: {
+            imageHost: "imgbb",
+            imgbbConfigured: true,
+            torrentClientConfigured: true,
+            externalToolsEnabled: false
+          }
         }
       });
     });
+    await page.route("**/api/logs/global", async (route) => {
+      await route.fulfill({ json: { api: ["api booted", "job updated"], worker: ["worker standby"] } });
+    });
+    await page.route("**/api/jobs/job-athena/logs", async (route) => {
+      await route.fulfill({ json: { lines: ["prepare-media done", "review ready"] } });
+    });
+    await page.route("**/api/jobs/job-home/logs", async (route) => {
+      await route.fulfill({ json: { lines: ["waiting for media"] } });
+    });
+    await page.route("**/api/jobs/*/pause", async (route) => {
+      await route.fulfill({ json: { job: apiJobs[0] } });
+    });
+    await page.route("**/api/jobs/*/retry-failed", async (route) => {
+      await route.fulfill({ json: { job: apiJobs[0] } });
+    });
+    await page.route("**/api/jobs/*/debug/advance", async (route) => {
+      await route.fulfill({ json: { job: apiJobs[0] } });
+    });
+    await page.route("**/api/jobs/*/debug/skip", async (route) => {
+      await route.fulfill({ json: { job: apiJobs[0] } });
+    });
+    await page.route("**/api/jobs/*/debug/force-state", async (route) => {
+      await route.fulfill({ json: { job: apiJobs[0] } });
+    });
+    await page.route("**/api/jobs/*/review-gates/*/resolve", async (route) => {
+      await route.fulfill({ json: { job: apiJobs[0] } });
+    });
+    await page.route("**/api/jobs/*/start-upload", async (route) => {
+      await route.fulfill({ json: { job: { ...apiJobs[0], state: "uploading", phase: "upload" } } });
+    });
   });
 
-  test("renders the desktop queue workspace", async ({ page }, testInfo) => {
+  test("renders the desktop review workspace without development status noise", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only layout assertion.");
     await page.goto("/");
 
     await expect(page.locator(".brand").getByText("Popcorn Queue")).toBeVisible();
     await expect(page.getByRole("link", { name: /Jobs/i })).toBeVisible();
-    await expect(page.getByPlaceholder("Search jobs, IMDb, PTP ID, source")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Start" })).toBeVisible();
+    await expect(page.getByPlaceholder("Search jobs, IMDb, source")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Start Upload" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Advance", exact: true })).toBeVisible();
-    await expect(page.locator(".filter-sidebar")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry failed steps" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Diagnostics" })).toBeVisible();
+
+    await expect(page.getByRole("button", { name: "Advance phase" })).toHaveCount(0);
+    await expect(page.getByText(/PTP cache/i)).toHaveCount(0);
+    await expect(page.getByText(/Permanent/i)).toHaveCount(0);
+    await expect(page.getByText(/Upsies features/i)).toHaveCount(0);
+    await expect(page.getByText(/Feature status/i)).toHaveCount(0);
 
     await expect(page.getByRole("columnheader", { name: "Status" })).toBeVisible();
     await expect(page.getByRole("columnheader", { name: "Release" })).toBeVisible();
-    await expect(page.getByText("ATHENA.2022.FRENCH.1080p.NF.WEB-DL.x265-SMURF")).toBeVisible();
-    await expect(page.locator(".inspector").getByText("PTP cache")).toBeVisible();
-    await expect(page.locator(".inspector").getByText("Permanent")).toBeVisible();
-    await expect(page.locator(".status-banner.success")).toContainText("API connected");
-    await expect(page.locator(".job-link")).toHaveAttribute("href", "/jobs/job-athena");
-    await expect(page.locator(".gate-summary")).toContainText("1 warnings");
-    await expect(page.locator(".phase-list")).toContainText("duplicate-check");
+    await expect(page.getByRole("columnheader", { name: "Step" })).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: "Blockers" })).toBeVisible();
+    await expect(page.getByLabel("Upload queue").getByRole("link", { name: "ATHENA.2022.1080p.WEB.x265-SMURF" })).toBeVisible();
+    await expect(page.locator(".job-link").first()).toHaveAttribute("href", "/jobs/job-athena");
   });
 
   test("uses the QUI-style light utility shell", async ({ page }, testInfo) => {
@@ -60,6 +92,39 @@ test.describe("Popcorn Queue UI", () => {
     await expect(page.locator(".sidebar")).toHaveCSS("background-color", "rgb(250, 250, 250)");
     await expect(page.locator(".sidebar nav a.active")).toHaveCSS("background-color", "rgb(36, 36, 36)");
     await expect(page.locator(".table-wrap")).toBeVisible();
+  });
+
+  test("keeps review sections in upload decision order", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only review assertion.");
+    await page.goto("/");
+
+    await expect(page.locator('[data-testid="review-panel"] h3').first()).toBeVisible();
+    const headings = await page.locator('[data-testid="review-panel"] h3').allTextContents();
+    expect(headings).toEqual([
+      "Blockers",
+      "Warnings",
+      "Duplicate/PTP Result",
+      "Screenshots",
+      "MediaInfo / BDInfo",
+      "Release Draft",
+      "Torrent / qB Readiness",
+      "Recent Job Log"
+    ]);
+  });
+
+  test("keeps diagnostics hidden until requested", async ({ page }) => {
+    await page.goto("/");
+
+    await expect(page.getByTestId("diagnostics-panel")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Advance phase" })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Diagnostics" }).click();
+    await expect(page.getByTestId("diagnostics-panel")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Advance phase" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Skip" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Force state" })).toBeVisible();
+    await expect(page.getByText("Global logs")).toBeVisible();
+    await expect(page.getByText("Job logs")).toBeVisible();
   });
 
   test("keeps primary controls inside the viewport", async ({ page }, testInfo) => {
@@ -79,25 +144,27 @@ test.describe("Popcorn Queue UI", () => {
     expect(queueBox!.x + queueBox!.width).toBeLessThanOrEqual(viewportWidth);
   });
 
-  test("collapses navigation and hides inspector on mobile", async ({ page }, testInfo) => {
+  test("collapses navigation and hides review details on mobile", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium-mobile", "Mobile-only layout assertion.");
     await page.goto("/");
 
     await expect(page.locator(".brand")).toBeHidden();
-    await expect(page.locator(".inspector")).toBeHidden();
-    await expect(page.getByPlaceholder("Search jobs, IMDb, PTP ID, source")).toBeVisible();
-    await expect(page.getByText("Home.Sweet.Home.2021.1080p.WEB-DL.HDR.H265-TJUPT")).toBeVisible();
+    await expect(page.getByTestId("review-panel")).toBeHidden();
+    await expect(page.getByPlaceholder("Search jobs, IMDb, source")).toBeVisible();
+    await expect(page.getByText("Home.Sweet.Home.2021.1080p.WEB.x265-TJUPT")).toBeVisible();
   });
 
-  test("surfaces API error details on job actions", async ({ page }, testInfo) => {
+  test("surfaces API error details on upload actions", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only interaction assertion.");
-    await page.route("**/api/jobs/job-athena/start", async (route) => {
+    await page.route("**/api/jobs/job-athena/start-upload", async (route) => {
       await route.fulfill({ status: 409, json: { error: "blocker_review_gate_open" } });
     });
     await page.goto("/");
 
-    await page.getByRole("button", { name: "Start" }).click();
-    await expect(page.locator(".status-banner.error")).toContainText("/api/jobs/job-athena/start failed with HTTP 409: blocker_review_gate_open");
+    await page.getByRole("button", { name: "Start Upload" }).click();
+    await expect(page.locator(".status-banner.error")).toContainText(
+      "/api/jobs/job-athena/start-upload failed with HTTP 409: blocker_review_gate_open"
+    );
   });
 });
 
@@ -105,41 +172,52 @@ const apiJobs = [
   {
     id: "job-athena",
     state: "review",
-    phase: "duplicate-check",
+    phase: "review",
+    uploadReadiness: "ready",
+    humanStep: "Review screenshots and metadata",
     updatedAt: "2026-05-08T00:00:00.000Z",
     source: { site: "M-Team", title: "ATHENA.2022.FRENCH.1080p.NF.WEB-DL.x265-SMURF" },
     candidate: { site: "mteam", title: "ATHENA.2022.FRENCH.1080p.NF.WEB-DL.x265-SMURF", imdbId: "tt1234567" },
-    checkResult: { cache: { hit: true, policy: "permanent" }, decision: { status: "review", reason: "IMDb + resolution match" } },
+    checkResult: { decision: { status: "review", reason: "IMDb + resolution match" } },
     torrent: { filename: "ATHENA.torrent", bytes: 6871947673 },
+    artifacts: {
+      mediaFiles: ["media/upload/ATHENA.2022.1080p.WEB.x265-SMURF.mkv"],
+      screenshots: ["https://example.test/shot1.png", "https://example.test/shot2.png"],
+      mediainfo: "General\nComplete name: ATHENA.mkv\nFormat: Matroska",
+      releaseName: "ATHENA.2022.1080p.WEB.x265-SMURF",
+      description: "ATHENA release draft\nSource: WEB",
+      uploadTorrent: "torrent/upload.torrent",
+      qbReady: true
+    },
     uploadPlan: {
-      releaseName: { generated: "ATHENA.2022.1080p.WEB.x265-SMURF", group: "SMURF", container: null, warnings: [] },
-      scene: { status: "likely_scene", releaseGroup: "SMURF", providers: ["predbnet", "srrdb"], evidence: ["Release group suffix detected."] },
-      screenshots: { count: 6, imageHosts: ["ptpimg", "imgbox"], toneMapHint: "bt709" },
+      releaseName: { generated: "ATHENA.2022.1080p.WEB.x265-SMURF", group: "SMURF", container: "mkv", warnings: [] },
+      screenshots: { count: 6, imageHosts: ["imgbb", "imgbox"], toneMapHint: "bt709" },
       torrentReuse: { strategy: "search-generic-cache", preservePieceHashes: true, reason: "A source .torrent was uploaded." },
       metadata: { imdbId: "tt1234567", providers: [], tags: ["web-dl"] },
-      media: { container: null, discType: "file", audio: { codecs: [], languages: ["French"], commentaryLikely: false }, subtitles: { languages: [], embeddedLikely: false }, trumpableChecks: [] },
+      media: { container: "mkv", discType: "file", audio: { codecs: [], languages: ["French"], commentaryLikely: false }, subtitles: { languages: [], embeddedLikely: false }, trumpableChecks: [] },
       reviewGates: [{ id: "duplicate:review", severity: "warning", status: "open", title: "Duplicate review", detail: "IMDb + resolution match" }]
     },
     phases: [
       { phase: "intake", state: "done", retryCount: 0, message: "Finished." },
-      { phase: "metadata", state: "done", retryCount: 0, message: "Finished." },
-      { phase: "duplicate-check", state: "blocked", retryCount: 0, message: "Review required." }
+      { phase: "prepare-media", state: "done", retryCount: 0, message: "Finished." },
+      { phase: "review", state: "blocked", retryCount: 0, message: "Review required." }
     ]
   },
   {
     id: "job-home",
-    state: "queued",
-    phase: "intake",
+    state: "preparing",
+    phase: "prepare-media",
+    uploadReadiness: "missing_evidence",
+    humanStep: "Preparing upload media",
     updatedAt: "2026-05-08T00:00:00.000Z",
     source: { site: "TJUPT", title: "Home.Sweet.Home.2021.1080p.WEB-DL.HDR.H265-TJUPT" },
     candidate: { site: "tjupt", title: "Home.Sweet.Home.2021.1080p.WEB-DL.HDR.H265-TJUPT" },
     uploadPlan: {
-      releaseName: { generated: "Home.Sweet.Home.2021.1080p.WEB.x265-TJUPT", group: "TJUPT", container: null, warnings: [] },
-      scene: { status: "needs_verification", releaseGroup: "TJUPT", providers: ["predbnet", "srrdb"], evidence: ["Release group suffix detected."] },
-      screenshots: { count: 6, imageHosts: ["ptpimg"], toneMapHint: "bt2020" },
+      releaseName: { generated: "Home.Sweet.Home.2021.1080p.WEB.x265-TJUPT", group: "TJUPT", container: "mkv", warnings: [] },
+      screenshots: { count: 6, imageHosts: ["imgbb"], toneMapHint: "bt2020" },
       torrentReuse: { strategy: "hash-from-content", preservePieceHashes: false, reason: "No reusable source torrent is available yet." },
       metadata: { imdbId: null, providers: [], tags: ["web-dl"] },
-      media: { container: null, discType: "file", audio: { codecs: [], languages: ["English"], commentaryLikely: false }, subtitles: { languages: [], embeddedLikely: false }, trumpableChecks: [] },
+      media: { container: "mkv", discType: "file", audio: { codecs: [], languages: ["English"], commentaryLikely: false }, subtitles: { languages: [], embeddedLikely: false }, trumpableChecks: [] },
       reviewGates: []
     },
     phases: []
