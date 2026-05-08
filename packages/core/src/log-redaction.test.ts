@@ -20,4 +20,50 @@ describe("log redaction", () => {
       safe: "visible"
     });
   });
+
+  it("redacts common secret keys regardless of casing", () => {
+    const redacted = redactForLog({
+      ApiKey: "ptp-key",
+      Authorization: "Bearer browser-secret",
+      Cookie: "session=secret",
+      safe: "visible"
+    });
+
+    expect(redacted).toEqual({
+      ApiKey: REDACTED_TEXT,
+      Authorization: REDACTED_TEXT,
+      Cookie: REDACTED_TEXT,
+      safe: "visible"
+    });
+  });
+
+  it("redacts arrays recursively", () => {
+    const redacted = redactForLog([
+      { Authorization: "Bearer browser-secret" },
+      { nested: [{ ApiKey: "ptp-key" }, { safe: "visible" }] }
+    ]);
+
+    expect(redacted).toEqual([
+      { Authorization: REDACTED_TEXT },
+      { nested: [{ ApiKey: REDACTED_TEXT }, { safe: "visible" }] }
+    ]);
+  });
+
+  it("does not mutate input objects", () => {
+    const input = {
+      ApiKey: "ptp-key",
+      nested: [{ Authorization: "Bearer browser-secret" }]
+    };
+
+    const redacted = redactForLog(input);
+
+    expect(redacted).toEqual({
+      ApiKey: REDACTED_TEXT,
+      nested: [{ Authorization: REDACTED_TEXT }]
+    });
+    expect(input).toEqual({
+      ApiKey: "ptp-key",
+      nested: [{ Authorization: "Bearer browser-secret" }]
+    });
+  });
 });
