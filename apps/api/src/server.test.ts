@@ -67,18 +67,35 @@ function testConfig(): ApiConfig {
       file: "",
       toFile: false,
       toConsole: false
+    },
+    paths: {
+      dataRoot: "/tmp/popcorn-queue-test-data",
+      apiLogFile: "/tmp/popcorn-queue-test-api.log",
+      workerLogFile: "/tmp/popcorn-queue-test-worker.log"
     }
   };
 }
 
-async function withServer<T>(run: (app: ReturnType<typeof buildServer>) => Promise<T>): Promise<T> {
-  const app = buildServer(testConfig());
+async function withServer<T>(run: (app: ReturnType<typeof buildServer>) => Promise<T>, options: { autoPrepare?: boolean } = { autoPrepare: false }): Promise<T> {
+  const app = buildServer(testConfig(), options);
   try {
     await app.ready();
     return await run(app);
   } finally {
     await app.close();
   }
+}
+
+async function waitForJob(app: ReturnType<typeof buildServer>, id: string, predicate: (job: Job) => boolean): Promise<Job> {
+  let last: Job | null = null;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const response = await app.inject({ method: "GET", url: `/api/jobs/${id}` });
+    expect(response.statusCode).toBe(200);
+    last = response.json<{ job: Job }>().job;
+    if (predicate(last)) return last;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for job ${id}; last state ${last?.state ?? "unknown"}/${last?.phase ?? "unknown"}`);
 }
 
 function multipartBody(boundary: string, fields: Record<string, string>, file: { name: string; filename: string; contentType: string; value: string }): Buffer {
@@ -247,5 +264,34 @@ describe("API jobs", () => {
       expect(job.state).toBe("review");
       expect(job.events.at(0)?.message).toBe("Retry is only available for failed jobs.");
     });
+  });
+
+  it("automatically prepares created jobs to review when enabled", async () => {
+    await withServer(
+      async (app) => {
+        const create = await app.inject({
+          method: "POST",
+          url: "/api/jobs",
+          payload: {
+            site: "mteam",
+            title: "Movie.2024.1080p.BluRay.x264-GROUP",
+            imdbId: "tt1234567"
+          }
+        });
+        expect(create.statusCode).toBe(201);
+        const created = create.json<{ job: Job }>().job;
+
+        const prepared = await waitForJob(app, created.id, (job) => job.state === "review");
+
+        expect(prepared.phase).toBe("review");
+        expect(prepared.uploadReadiness).toBe("missing_evidence");
+        expect(prepared.events.some((event) => event.message === "Upload package ready for review.")).toBe(true);
+
+        const logs = await app.inject({ method: "GET", url: `/api/jobs/${created.id}/logs` });
+        expect(logs.statusCode).toBe(200);
+        expect(logs.json<{ lines: string[] }>().lines.join("\n")).toContain("Starting phase.");
+      },
+      { autoPrepare: true }
+    );
   });
 });

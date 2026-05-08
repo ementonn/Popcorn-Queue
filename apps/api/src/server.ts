@@ -1,15 +1,21 @@
 import fastify from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
-import { type BrowserCheckResult, type TorrentCandidate } from "@popcorn-queue/core";
+import { buildJobWorkspacePaths, type BrowserCheckResult, type TorrentCandidate } from "@popcorn-queue/core";
 import { BrowserCheckService, PtpClient } from "@popcorn-queue/integrations";
 import { makeBrowserAuthHook } from "./auth.js";
 import type { ApiConfig } from "./config.js";
+import { readLogTail } from "./job-logs.js";
 import { createApiLogger } from "./logger.js";
 import { PrismaPersistence } from "./persistence.js";
+import { PreparationService } from "./preparation.js";
 
 interface CreateManualJobBody extends Partial<TorrentCandidate> {
   title: string;
+}
+
+export interface BuildServerOptions {
+  autoPrepare?: boolean;
 }
 
 function configuredImageHosts(config: ApiConfig): string[] {
@@ -24,8 +30,9 @@ function configuredImageHosts(config: ApiConfig): string[] {
   return [...new Set(hosts)];
 }
 
-export function buildServer(config: ApiConfig) {
+export function buildServer(config: ApiConfig, options: BuildServerOptions = {}) {
   const logger = createApiLogger(config);
+  const autoPrepare = options.autoPrepare ?? true;
   const app = logger ? fastify({ loggerInstance: logger }) : fastify({ logger: false });
   const persistence = new PrismaPersistence({
     jobs: {
@@ -44,6 +51,20 @@ export function buildServer(config: ApiConfig) {
     requestDelayMs: config.ptp.requestDelayMs
   });
   const browserAuth = makeBrowserAuthHook(config.browserToken);
+  const preparation = new PreparationService({
+    dataRoot: config.paths.dataRoot,
+    jobs: jobRepository,
+    runExternalTools: config.integrations.runExternalTools,
+    toolCommands: {
+      ffmpeg: config.integrations.ffmpegBin,
+      mediainfo: config.integrations.mediainfoBin,
+      oxipng: config.integrations.oxipngBin
+    }
+  });
+
+  function enqueuePreparation(jobId: string): void {
+    if (autoPrepare) preparation.enqueue(jobId);
+  }
 
   app.addHook("onClose", async () => {
     await persistence.disconnect();
@@ -155,6 +176,17 @@ export function buildServer(config: ApiConfig) {
     return { job };
   });
 
+  app.get<{ Params: { id: string } }>("/api/jobs/:id/logs", async (request, reply) => {
+    const job = await jobRepository.get(request.params.id);
+    if (!job) return reply.code(404).send({ error: "job_not_found" });
+    return { lines: await readLogTail(buildJobWorkspacePaths(config.paths.dataRoot, request.params.id).logs.jobLog, 200) };
+  });
+
+  app.get("/api/logs/global", async () => ({
+    api: await readLogTail(config.paths.apiLogFile, 200),
+    worker: await readLogTail(config.paths.workerLogFile, 200)
+  }));
+
   app.post<{ Body: CreateManualJobBody }>("/api/jobs", async (request, reply) => {
     const body = request.body;
     if (!body?.title) return reply.code(400).send({ error: "title_required" });
@@ -170,6 +202,7 @@ export function buildServer(config: ApiConfig) {
     if (body.sourceTorrentId !== undefined) candidate.sourceTorrentId = body.sourceTorrentId;
 
     const job = await jobRepository.create({ candidate });
+    enqueuePreparation(job.id);
     return reply.code(201).send({ job });
   });
 
@@ -217,6 +250,18 @@ export function buildServer(config: ApiConfig) {
 
   app.post<{ Params: { id: string } }>("/api/jobs/:id/debug/advance", async (request, reply) => {
     const job = await advanceJob(request.params.id);
+    if (!job) return reply.code(404).send({ error: "job_not_found" });
+    return { job };
+  });
+
+  app.post<{ Params: { id: string } }>("/api/jobs/:id/debug/skip", async (request, reply) => {
+    const job = await advanceJob(request.params.id);
+    if (!job) return reply.code(404).send({ error: "job_not_found" });
+    return { job };
+  });
+
+  app.post<{ Params: { id: string } }>("/api/jobs/:id/debug/force-state", async (request, reply) => {
+    const job = await jobRepository.get(request.params.id);
     if (!job) return reply.code(404).send({ error: "job_not_found" });
     return { job };
   });
@@ -314,6 +359,7 @@ export function buildServer(config: ApiConfig) {
     if (checkResult) createInput.checkResult = checkResult;
 
     const job = await jobRepository.createFromBrowser(createInput);
+    enqueuePreparation(job.id);
     return reply.code(201).send({ job });
   });
 

@@ -43,6 +43,11 @@ export interface ApiConfig {
     toFile: boolean;
     toConsole: boolean;
   };
+  paths: {
+    dataRoot: string;
+    apiLogFile: string;
+    workerLogFile: string;
+  };
 }
 
 type EnvMap = NodeJS.ProcessEnv | Record<string, string | undefined>;
@@ -137,6 +142,7 @@ export function loadLocalEnv(env: EnvMap = process.env, options: LoadEnvOptions 
 export function loadConfig(env = process.env): ApiConfig {
   if (env === process.env) loadLocalEnv(env, { override: true });
   const port = readNumber(env.POPCORN_QUEUE_PORT, 3500);
+  const apiLogFile = resolveProjectPath(env.POPCORN_QUEUE_LOG_FILE, "logs/api.log");
 
   return {
     host: env.POPCORN_QUEUE_HOST ?? "0.0.0.0",
@@ -176,9 +182,14 @@ export function loadConfig(env = process.env): ApiConfig {
     },
     logging: {
       level: env.POPCORN_QUEUE_LOG_LEVEL ?? "info",
-      file: resolveProjectPath(env.POPCORN_QUEUE_LOG_FILE, "logs/api.log"),
+      file: apiLogFile,
       toFile: readBoolean(env.POPCORN_QUEUE_LOG_TO_FILE, true),
       toConsole: readBoolean(env.POPCORN_QUEUE_LOG_TO_CONSOLE, true)
+    },
+    paths: {
+      dataRoot: resolveProjectPath(env.POPCORN_QUEUE_DATA_ROOT, "data"),
+      apiLogFile,
+      workerLogFile: resolveProjectPath(env.POPCORN_QUEUE_WORKER_LOG_FILE, "logs/worker.log")
     }
   };
 }

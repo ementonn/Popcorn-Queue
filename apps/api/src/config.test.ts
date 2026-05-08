@@ -78,6 +78,7 @@ describe("API configuration", () => {
       QBITTORRENT_CATEGORY: "movies",
       QBITTORRENT_CONTENT_LAYOUT: "Original",
       POPCORN_QUEUE_RUN_EXTERNAL_TOOLS: "true",
+      POPCORN_QUEUE_DATA_ROOT: "/tmp/data-root",
       FFMPEG_BIN: "/usr/bin/ffmpeg",
       MEDIAINFO_BIN: "/usr/bin/mediainfo",
       OXIPNG_BIN: "/usr/bin/oxipng",
@@ -85,6 +86,7 @@ describe("API configuration", () => {
       POPCORN_QUEUE_OUTPUT_DIR: "/tmp/output",
       POPCORN_QUEUE_LOG_LEVEL: "debug",
       POPCORN_QUEUE_LOG_FILE: "logs/api-test.log",
+      POPCORN_QUEUE_WORKER_LOG_FILE: "logs/worker-test.log",
       POPCORN_QUEUE_LOG_TO_FILE: "false",
       POPCORN_QUEUE_LOG_TO_CONSOLE: "false"
     });
@@ -129,8 +131,13 @@ describe("API configuration", () => {
         level: "debug",
         toFile: false,
         toConsole: false
+      },
+      paths: {
+        dataRoot: "/tmp/data-root"
       }
     });
     expect(config.logging.file).toMatch(/logs[/\\]api-test\.log$/);
+    expect(config.paths.apiLogFile).toMatch(/logs[/\\]api-test\.log$/);
+    expect(config.paths.workerLogFile).toMatch(/logs[/\\]worker-test\.log$/);
   });
 });
