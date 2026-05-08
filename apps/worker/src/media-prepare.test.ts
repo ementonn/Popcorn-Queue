@@ -67,4 +67,33 @@ describe("prepareUploadMedia", () => {
     expect(await readFile(result.outputPath, "utf8")).toBe("mkv");
     expect(calls[0]).toContain("-c copy");
   });
+
+  it("copies MP4 to an MKV output path without ffmpeg when external tools are disabled", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "popcorn-mp4-copy-"));
+    const source = path.join(root, "download", "Movie.mp4");
+    await mkdir(path.dirname(source), { recursive: true });
+    await writeFile(source, "mp4");
+    let called = false;
+
+    const result = await prepareUploadMedia({
+      sourcePath: source,
+      uploadDirectory: path.join(root, "job", "media", "upload"),
+      intermediateDirectory: path.join(root, "job", "media", "intermediates"),
+      runExternalTools: false,
+      ffmpegCommand: "ffmpeg",
+      commandExecutor: async () => {
+        called = true;
+        throw new Error("ffmpeg must not run when external tools are disabled");
+      }
+    });
+
+    expect(result).toMatchObject({
+      inputPath: source,
+      outputPath: path.join(root, "job", "media", "upload", "Movie.mkv"),
+      mode: "copy",
+      remuxed: false
+    });
+    expect(await readFile(result.outputPath, "utf8")).toBe("mp4");
+    expect(called).toBe(false);
+  });
 });

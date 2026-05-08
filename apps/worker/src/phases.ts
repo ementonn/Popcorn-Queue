@@ -757,7 +757,7 @@ export class PhaseRunner {
         message: output.message
       });
 
-      if (output.status === "blocked" || output.status === "failed") {
+      if ((output.status === "blocked" || output.status === "failed") && handler.phase === "review") {
         return context.snapshotOutputs();
       }
     }

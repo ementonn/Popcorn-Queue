@@ -208,6 +208,31 @@ describe("worker phase scaffold", () => {
     expect(outputs.done).toBeUndefined();
   });
 
+  it("runs preparation through review when preflight is blocked", async () => {
+    const calls: CommandInvocation[] = [];
+    const blockedCandidate: TorrentCandidate = {
+      ...candidate,
+      title: "Perfect.Days.2023.1080p.BluRay.FLAC.x264-GROUP.MP4"
+    };
+    const context = createPhaseContext(
+      "job-blocked-review",
+      {
+        candidate: blockedCandidate
+      },
+      {
+        runExternalTools: false,
+        commandExecutor: fakeExecutor(calls)
+      }
+    );
+
+    const outputs = await new PhaseRunner().runPreparationToReview(context);
+
+    expect(outputs.preflight?.status).toBe("blocked");
+    expect(outputs.review?.readyForHumanReview).toBe(true);
+    expect(outputs.upload).toBeUndefined();
+    expect(outputs.done).toBeUndefined();
+  });
+
   it("uses final upload media for inspection and screenshots", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-final-media-"));
     const source = path.join(tempDir, "source", "Movie.mkv");
