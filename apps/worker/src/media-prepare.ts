@@ -1,4 +1,4 @@
-import { copyFile, link, mkdir } from "node:fs/promises";
+import { copyFile, link, mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { runCommand, type CommandExecutor } from "./commands.js";
 
@@ -35,15 +35,19 @@ export async function prepareUploadMedia(options: PrepareUploadMediaOptions): Pr
       await copyFile(options.sourcePath, outputPath);
       return { inputPath: options.sourcePath, outputPath, mode: "copy", remuxed: false };
     }
+    const stagedOutputPath = path.join(options.intermediateDirectory, outputName(options.sourcePath));
+    await rm(stagedOutputPath, { force: true });
     const result = await runCommand(
       options.commandExecutor,
       options.ffmpegCommand,
-      ["-hide_banner", "-loglevel", "error", "-i", options.sourcePath, "-c", "copy", outputPath],
+      ["-hide_banner", "-loglevel", "error", "-y", "-i", options.sourcePath, "-c", "copy", stagedOutputPath],
       {
         timeoutMs: 120_000
       }
     );
     if (result.exitCode !== 0) throw new Error(result.stderr || `ffmpeg remux failed with exit code ${result.exitCode}`);
+    await rm(outputPath, { force: true });
+    await rename(stagedOutputPath, outputPath);
     return { inputPath: options.sourcePath, outputPath, mode: "remux", remuxed: true };
   }
 

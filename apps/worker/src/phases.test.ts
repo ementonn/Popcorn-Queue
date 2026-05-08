@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -44,6 +44,15 @@ function fakeExecutor(calls: CommandInvocation[]): CommandExecutor {
     }
     return commandResult(invocation);
   };
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await stat(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 describe("worker phase scaffold", () => {
@@ -231,6 +240,71 @@ describe("worker phase scaffold", () => {
     expect(outputs.review?.readyForHumanReview).toBe(true);
     expect(outputs.upload).toBeUndefined();
     expect(outputs.done).toBeUndefined();
+  });
+
+  it("does not prepare media into cwd when working directory is missing", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-no-workspace-"));
+    const source = path.join(tempDir, `NoWorkspace-${Date.now()}.mkv`);
+    await writeFile(source, "mkv");
+    const cwdOutput = path.join(process.cwd(), "media", "upload", path.basename(source));
+    const prepareMedia = createDefaultPhaseHandlers().find((handler): handler is PhaseHandler<"prepare-media"> => handler.phase === "prepare-media");
+    if (!prepareMedia) throw new Error("Missing prepare-media handler");
+
+    try {
+      const output = await prepareMedia.run(
+        createPhaseContext(
+          "job-no-workspace",
+          {
+            candidate,
+            mediaPath: source
+          },
+          {
+            runExternalTools: false,
+            commandExecutor: fakeExecutor([])
+          }
+        )
+      );
+
+      expect(output.status).toBe("skipped");
+      expect(output.outputPath).toBeNull();
+      expect(output.mode).toBe("skipped");
+      expect(output.message).toMatch(/working directory/i);
+      expect(await pathExists(cwdOutput)).toBe(false);
+    } finally {
+      await rm(cwdOutput, { force: true });
+    }
+  });
+
+  it("stops preparation before review when a pre-review phase fails", async () => {
+    const handlers = createDefaultPhaseHandlers().map((handler) => {
+      if (handler.phase !== "preflight") return handler;
+      return {
+        phase: "preflight",
+        async run() {
+          return {
+            status: "failed",
+            message: "Injected preflight failure.",
+            producedAt: new Date().toISOString(),
+            openGates: [],
+            missingTools: []
+          };
+        }
+      } satisfies PhaseHandler<"preflight">;
+    });
+    const context = createPhaseContext(
+      "job-failed-review",
+      { candidate },
+      {
+        runExternalTools: false,
+        commandExecutor: fakeExecutor([])
+      }
+    );
+
+    const outputs = await new PhaseRunner(handlers).runPreparationToReview(context);
+
+    expect(outputs.preflight?.status).toBe("failed");
+    expect(outputs.review).toBeUndefined();
+    expect(outputs.upload).toBeUndefined();
   });
 
   it("uses final upload media for inspection and screenshots", async () => {

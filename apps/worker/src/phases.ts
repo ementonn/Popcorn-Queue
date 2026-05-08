@@ -282,8 +282,9 @@ async function resolvedMediaPath(context: PhaseContext): Promise<string | null> 
   return null;
 }
 
-function mediaWorkspaceDirectories(context: PhaseContext): { uploadDirectory: string; intermediateDirectory: string } {
-  const root = context.job.workingDirectory ?? process.cwd();
+function mediaWorkspaceDirectories(context: PhaseContext): { uploadDirectory: string; intermediateDirectory: string } | null {
+  if (!context.job.workingDirectory) return null;
+  const root = context.job.workingDirectory;
   return {
     uploadDirectory: path.join(root, "media", "upload"),
     intermediateDirectory: path.join(root, "media", "intermediates")
@@ -460,6 +461,15 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
         }
 
         const directories = mediaWorkspaceDirectories(context);
+        if (!directories) {
+          return {
+            ...base("skipped", "Media preparation requires a job working directory."),
+            inputPath,
+            outputPath: null,
+            mode: "skipped",
+            remuxed: false
+          };
+        }
         const prepared = await prepareUploadMedia({
           sourcePath: inputPath,
           uploadDirectory: directories.uploadDirectory,
@@ -757,7 +767,7 @@ export class PhaseRunner {
         message: output.message
       });
 
-      if ((output.status === "blocked" || output.status === "failed") && handler.phase === "review") {
+      if (output.status === "failed" || (output.status === "blocked" && handler.phase === "review")) {
         return context.snapshotOutputs();
       }
     }

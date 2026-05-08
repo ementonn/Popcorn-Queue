@@ -96,4 +96,53 @@ describe("prepareUploadMedia", () => {
     expect(await readFile(result.outputPath, "utf8")).toBe("mp4");
     expect(called).toBe(false);
   });
+
+  it("stages MP4 remux output and overwrites stale retry files after success", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "popcorn-remux-retry-"));
+    const source = path.join(root, "download", "Movie.mp4");
+    const uploadDirectory = path.join(root, "job", "media", "upload");
+    const intermediateDirectory = path.join(root, "job", "media", "intermediates");
+    const finalOutput = path.join(uploadDirectory, "Movie.mkv");
+    const tempOutput = path.join(intermediateDirectory, "Movie.mkv");
+    await mkdir(path.dirname(source), { recursive: true });
+    await mkdir(uploadDirectory, { recursive: true });
+    await mkdir(intermediateDirectory, { recursive: true });
+    await writeFile(source, "mp4");
+    await writeFile(finalOutput, "stale-final");
+    await writeFile(tempOutput, "stale-temp");
+    const calls: string[] = [];
+    const executor: CommandExecutor = async (invocation) => {
+      calls.push(`${invocation.command} ${invocation.args.join(" ")}`);
+      const outputPath = invocation.args.at(-1);
+      if (typeof outputPath === "string") await writeFile(outputPath, "fresh-remux");
+      return {
+        command: invocation.command,
+        args: invocation.args,
+        exitCode: 0,
+        signal: null,
+        stdout: "",
+        stderr: "",
+        durationMs: 1
+      };
+    };
+
+    const result = await prepareUploadMedia({
+      sourcePath: source,
+      uploadDirectory,
+      intermediateDirectory,
+      runExternalTools: true,
+      ffmpegCommand: "ffmpeg",
+      commandExecutor: executor
+    });
+
+    expect(result).toMatchObject({
+      outputPath: finalOutput,
+      mode: "remux",
+      remuxed: true
+    });
+    expect(calls[0]).toContain("-y");
+    expect(calls[0]).toContain(tempOutput);
+    expect(calls[0]).not.toContain(finalOutput);
+    expect(await readFile(finalOutput, "utf8")).toBe("fresh-remux");
+  });
 });
