@@ -19,6 +19,7 @@ model Job {
   humanStep       String   @default("Preparing upload package") @map("human_step")
   artifactsJson   String   @default("{}") @map("artifacts")
   workspaceJson   String?  @map("workspace")
+  downloadStatusJson String? @map("download_status")
   uploadPlanJson  String   @map("upload_plan")
   phasesJson      String   @map("phases")
   eventsJson      String   @map("events")

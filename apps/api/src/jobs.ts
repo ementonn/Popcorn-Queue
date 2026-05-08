@@ -4,6 +4,7 @@ import {
   buildUploadPlan,
   parseTorrentTitle,
   type BrowserCheckResult,
+  type DownloadStatus,
   type JobManifest,
   type ReviewGate,
   type TorrentCandidate,
@@ -72,6 +73,7 @@ export interface Job {
     jobRoot: string;
     manifest: string;
   };
+  downloadStatus?: DownloadStatus;
   uploadPlan: UploadPlan;
   phases: PhaseRun[];
   events: JobEvent[];
@@ -294,6 +296,14 @@ export class JobRepository {
 
   retry(id: string): Job | null {
     return this.retryFailed(id);
+  }
+
+  updateDownloadStatus(id: string, status: DownloadStatus): Job | null {
+    const job = this.jobs.get(id);
+    if (!job) return null;
+    job.downloadStatus = status;
+    job.updatedAt = nowIso();
+    return job;
   }
 
   markPreparedForReview(id: string, input: { uploadReadiness: UploadReadiness; artifacts: Job["artifacts"] }): Job | null {

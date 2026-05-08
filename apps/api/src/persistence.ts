@@ -1,5 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-import type { CacheEntry, CacheStore, NormalizedPtpResponse, UploadReadiness } from "@popcorn-queue/core";
+import type { CacheEntry, CacheStore, DownloadStatus, NormalizedPtpResponse, UploadReadiness } from "@popcorn-queue/core";
 import {
   JobRepository,
   type AttachWorkspaceInput,
@@ -27,6 +27,7 @@ interface JobRow {
   humanStep: string | null;
   artifactsJson: string | null;
   workspaceJson: string | null;
+  downloadStatusJson: string | null;
   uploadPlanJson: string;
   phasesJson: string;
   eventsJson: string;
@@ -82,6 +83,7 @@ function serializeJob(job: Job) {
     humanStep: job.humanStep,
     artifactsJson: JSON.stringify(job.artifacts),
     workspaceJson: stringifyOptional(job.workspace),
+    downloadStatusJson: stringifyOptional(job.downloadStatus),
     uploadPlanJson: JSON.stringify(job.uploadPlan),
     phasesJson: JSON.stringify(job.phases),
     eventsJson: JSON.stringify(job.events),
@@ -112,6 +114,8 @@ function deserializeJob(row: JobRow): Job {
 
   const workspace = parseOptionalJson<Job["workspace"]>(row.workspaceJson);
   if (workspace !== undefined) job.workspace = workspace;
+  const downloadStatus = parseOptionalJson<Job["downloadStatus"]>(row.downloadStatusJson);
+  if (downloadStatus !== undefined) job.downloadStatus = downloadStatus;
   const candidate = parseOptionalJson<Job["candidate"]>(row.candidateJson);
   if (candidate !== undefined) job.candidate = candidate;
   const checkResult = parseOptionalJson<Job["checkResult"]>(row.checkResultJson);
@@ -154,6 +158,7 @@ export class PrismaPersistence {
         "human_step" TEXT NOT NULL DEFAULT 'Preparing upload package',
         "artifacts" TEXT NOT NULL DEFAULT '{}',
         "workspace" TEXT,
+        "download_status" TEXT,
         "upload_plan" TEXT NOT NULL,
         "phases" TEXT NOT NULL,
         "events" TEXT NOT NULL,
@@ -165,6 +170,7 @@ export class PrismaPersistence {
     await this.addColumnIfMissing("Job", "human_step", "TEXT NOT NULL DEFAULT 'Preparing upload package'");
     await this.addColumnIfMissing("Job", "artifacts", "TEXT NOT NULL DEFAULT '{}'");
     await this.addColumnIfMissing("Job", "workspace", "TEXT");
+    await this.addColumnIfMissing("Job", "download_status", "TEXT");
     await this.prisma.$executeRawUnsafe(`
       CREATE INDEX IF NOT EXISTS "Job_createdAt_idx" ON "Job"("createdAt")
     `);
@@ -236,6 +242,10 @@ export class PrismaJobRepository {
 
   async retryFailed(id: string): Promise<Job | null> {
     return this.withJob(id, (repo) => repo.retryFailed(id));
+  }
+
+  async updateDownloadStatus(id: string, status: DownloadStatus): Promise<Job | null> {
+    return this.withJob(id, (repo) => repo.updateDownloadStatus(id, status));
   }
 
   async markPreparedForReview(id: string, input: Parameters<JobRepository["markPreparedForReview"]>[1]): Promise<Job | null> {

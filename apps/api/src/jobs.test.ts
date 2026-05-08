@@ -120,6 +120,34 @@ describe("JobRepository pre-upload state machine", () => {
     expect(failed.state).toBe("preparing");
     expect(failed.phases[0]).toMatchObject({ state: "pending", retryCount: 1, message: "Retry queued." });
   });
+
+  it("stores latest download status without adding noisy job events", () => {
+    const repo = new JobRepository();
+    let job = repo.create({ candidate });
+    const eventCount = job.events.length;
+
+    job = repo.updateDownloadStatus(job.id, {
+      client: "qbittorrent",
+      infoHash: "ABC123",
+      state: "downloading",
+      progress: 0.42,
+      downloaded: 4_200,
+      size: 10_000,
+      amountLeft: 5_800,
+      downloadSpeed: 8_388_608,
+      uploadSpeed: 0,
+      eta: 720,
+      seeds: 12,
+      peers: 3,
+      savePath: "/downloads",
+      contentPath: "/downloads/Movie.mkv",
+      lastUpdatedAt: "2026-05-08T00:00:00.000Z",
+      error: null
+    })!;
+
+    expect(job.downloadStatus).toMatchObject({ infoHash: "ABC123", progress: 0.42 });
+    expect(job.events).toHaveLength(eventCount);
+  });
 });
 
 describe("legacy persisted job normalization", () => {
