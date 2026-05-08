@@ -14,6 +14,7 @@ import {
   startUpload
 } from "./api.js";
 import { DiagnosticsPanel } from "./components/DiagnosticsPanel.js";
+import { JobDrawer } from "./components/JobDrawer.js";
 import { QueueTable } from "./components/QueueTable.js";
 import { ReviewPanel } from "./components/ReviewPanel.js";
 import type { ApiJob, GlobalLogResponse, HealthInfo, JobLogResponse } from "./types.js";
@@ -33,7 +34,7 @@ export function App() {
   const [searchTerm, setSearchTerm] = useState("");
 
   const selectedJob = useMemo(
-    () => jobs.find((job) => job.id === selectedJobId) ?? jobs[0] ?? null,
+    () => jobs.find((job) => job.id === selectedJobId) ?? null,
     [jobs, selectedJobId]
   );
 
@@ -54,7 +55,7 @@ export function App() {
     setJobs(dashboard.jobs);
     setHealth(dashboard.health);
     setGlobalLogs(dashboard.globalLogs);
-    setSelectedJobId((current) => current ?? dashboard.jobs[0]?.id ?? null);
+    setSelectedJobId((current) => (current && dashboard.jobs.some((job) => job.id === current) ? current : null));
   }, []);
 
   useEffect(() => {
@@ -207,7 +208,35 @@ export function App() {
         />
       </main>
 
-      <ReviewPanel job={selectedJob} jobLogs={jobLogs} onResolveGate={handleResolveGate} onSaveReviewDraft={handleSaveReviewDraft} />
+      <JobDrawer
+        job={selectedJob}
+        onClose={() => setSelectedJobId(null)}
+        actions={
+          selectedJob ? (
+            <>
+              <button
+                type="button"
+                className="primary"
+                disabled={selectedJob.uploadReadiness !== "ready"}
+                onClick={() => runJobAction(startUpload, "Start Upload")}
+              >
+                <Play size={15} />
+                Start Upload
+              </button>
+              <button type="button" onClick={() => runJobAction(pauseJob, "Pause")}>
+                <Pause size={15} />
+                Pause
+              </button>
+              <button type="button" onClick={() => runJobAction(retryFailed, "Retry failed steps")}>
+                <RefreshCcw size={15} />
+                Retry
+              </button>
+            </>
+          ) : null
+        }
+      >
+        <ReviewPanel job={selectedJob} jobLogs={jobLogs} onResolveGate={handleResolveGate} onSaveReviewDraft={handleSaveReviewDraft} />
+      </JobDrawer>
 
       {diagnosticsOpen ? (
         <DiagnosticsPanel

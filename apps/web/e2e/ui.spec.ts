@@ -105,6 +105,7 @@ test.describe("Popcorn Queue UI", () => {
   test("keeps review sections in upload decision order", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only review assertion.");
     await page.goto("/");
+    await page.getByRole("link", { name: "ATHENA.2022.1080p.WEB.x265-SMURF" }).click();
 
     await expect(page.locator('[data-testid="review-panel"] h3').first()).toBeVisible();
     const headings = await page.locator('[data-testid="review-panel"] h3').allTextContents();
@@ -130,6 +131,7 @@ test.describe("Popcorn Queue UI", () => {
       await route.fulfill({ json: { job: { ...apiJobs[0], reviewDraft: { ...apiJobs[0].reviewDraft, ...patch } } } });
     });
     await page.goto("/");
+    await page.getByRole("link", { name: "ATHENA.2022.1080p.WEB.x265-SMURF" }).click();
 
     const reviewPanel = page.getByTestId("review-panel");
     await expect(reviewPanel).toContainText("Source torrent");
@@ -207,8 +209,9 @@ test.describe("Popcorn Queue UI", () => {
       await route.fulfill({ status: 409, json: { error: "blocker_review_gate_open" } });
     });
     await page.goto("/");
+    await page.getByRole("link", { name: "ATHENA.2022.1080p.WEB.x265-SMURF" }).click();
 
-    await page.getByRole("button", { name: "Start Upload" }).click();
+    await page.getByTestId("job-drawer").getByRole("button", { name: "Start Upload" }).click();
     await expect(page.locator(".status-banner.error")).toContainText(
       "/api/jobs/job-athena/start-upload failed with HTTP 409: blocker_review_gate_open"
     );
