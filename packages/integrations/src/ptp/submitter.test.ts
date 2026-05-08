@@ -18,11 +18,14 @@ const draft: ReviewDraft = {
   codec: "H.265",
   container: "MKV",
   resolution: "1080p",
-  source: "WEB-DL",
+  source: "WEB",
+  imdb: "tt1234567",
+  title: "Movie",
+  year: "2024",
   remasterYear: "2024",
   remasterTitle: "Director's Cut",
-  subtitles: ["English", "Chinese"],
-  trumpable: ["No English subtitles"],
+  subtitles: ["3", "14"],
+  trumpable: ["14"],
   scene: true,
   personalRip: true,
   internal: false
@@ -80,13 +83,16 @@ describe("PtpFormSubmitter", () => {
     const form = body as FormData;
     expect(form.get("type")).toBe("Feature Film");
     expect(form.get("groupid")).toBe("123");
-    expect(form.get("codec")).toBe("Other");
-    expect(form.get("other_codec")).toBe("H.265");
-    expect(form.get("container")).toBe("Other");
-    expect(form.get("other_container")).toBe("MKV");
+    expect(form.get("codec")).toBe("H.265");
+    expect(form.get("other_codec")).toBeNull();
+    expect(form.get("container")).toBe("MKV");
+    expect(form.get("other_container")).toBeNull();
     expect(form.get("resolution")).toBe("1080p");
-    expect(form.get("source")).toBe("Other");
-    expect(form.get("other_source")).toBe("WEB-DL");
+    expect(form.get("source")).toBe("WEB");
+    expect(form.get("other_source")).toBeNull();
+    expect(form.get("imdb")).toBe("tt1234567");
+    expect(form.get("title")).toBe("Movie");
+    expect(form.get("year")).toBe("2024");
     expect(form.get("release_desc")).toBe("Release description");
     expect(form.get("nfo_text")).toBe("MediaInfo block");
     expect(form.get("AntiCsrfToken")).toBe("CSRF");
@@ -95,9 +101,72 @@ describe("PtpFormSubmitter", () => {
     expect(form.get("remaster_title")).toBe("Director's Cut");
     expect(form.get("scene")).toBe("on");
     expect(form.get("internalrip")).toBe("on");
-    expect(form.getAll("subtitles[]")).toEqual(["English", "Chinese"]);
-    expect(form.getAll("trumpable[]")).toEqual(["No English subtitles"]);
+    expect(form.getAll("subtitles[]")).toEqual(["3", "14"]);
+    expect(form.getAll("trumpable[]")).toEqual(["14"]);
     expect(form.get("file_input")).toBeInstanceOf(Blob);
+  });
+
+  it("submits Other resolution width and height", async () => {
+    const calls: FetchCall[] = [];
+    const submitter = createSubmitter(calls, [
+      response('<body data-AntiCsrfToken="CSRF"></body>'),
+      response("", {}, "https://passthepopcorn.me/torrents.php?id=123&torrentid=456")
+    ]);
+
+    await submitter.submit({
+      draft: {
+        ...draft,
+        resolution: "Other",
+        otherResolutionWidth: "3840",
+        otherResolutionHeight: "1600"
+      },
+      torrentPath: await torrentFixture()
+    });
+
+    const form = calls[1]?.init.body as FormData;
+    expect(form.get("resolution")).toBe("Other");
+    expect(form.get("other_resolution_width")).toBe("3840");
+    expect(form.get("other_resolution_height")).toBe("1600");
+  });
+
+  it("submits new movie metadata fields", async () => {
+    const calls: FetchCall[] = [];
+    const submitter = createSubmitter(calls, [
+      response('<body data-AntiCsrfToken="CSRF"></body>'),
+      response("", {}, "https://passthepopcorn.me/torrents.php?id=789&torrentid=456")
+    ]);
+
+    await submitter.submit({
+      draft: {
+        ...draft,
+        groupId: null,
+        imdb: "tt7654321",
+        title: "New Movie",
+        year: "2026",
+        image: "https://img.example/poster.jpg",
+        trailer: "https://youtube.com/watch?v=abc123",
+        tags: "drama, thriller",
+        synopsis: "Synopsis",
+        special: "1",
+        uploadToken: "upload-token",
+        artists: [{ name: "Director Name", importance: "1" }]
+      },
+      torrentPath: await torrentFixture()
+    });
+
+    expect(calls[1]?.url).toBe("https://passthepopcorn.me/upload.php");
+    const form = calls[1]?.init.body as FormData;
+    expect(form.get("imdb")).toBe("tt7654321");
+    expect(form.get("title")).toBe("New Movie");
+    expect(form.get("year")).toBe("2026");
+    expect(form.get("image")).toBe("https://img.example/poster.jpg");
+    expect(form.get("trailer")).toBe("https://youtube.com/watch?v=abc123");
+    expect(form.get("tags")).toBe("drama, thriller");
+    expect(form.get("album_desc")).toBe("Synopsis");
+    expect(form.get("special")).toBe("1");
+    expect(form.get("uploadtoken")).toBe("upload-token");
+    expect(form.getAll("artist[]")).toEqual(["Director Name"]);
+    expect(form.getAll("importance[]")).toEqual(["1"]);
   });
 
   it("logs in when no reusable CSRF token is available and persists cookies", async () => {

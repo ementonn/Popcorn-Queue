@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { PtpUploadResult, ReviewDraft } from "@popcorn-queue/core";
+import { ptpFormFieldsFromDraft, type PtpUploadResult, type ReviewDraft } from "@popcorn-queue/core";
 
 export interface PtpSubmitInput {
   draft: ReviewDraft;
@@ -187,26 +187,13 @@ export class PtpFormSubmitter implements PtpSubmitter {
 
   private async buildUploadForm(input: PtpSubmitInput, csrfToken: string): Promise<FormData> {
     const form = new FormData();
-    appendText(form, "type", input.draft.type);
-    appendText(form, "remaster_year", input.draft.remasterYear);
-    appendText(form, "remaster_title", input.draft.remasterTitle);
-    appendText(form, "codec", "Other");
-    appendText(form, "other_codec", input.draft.codec);
-    appendText(form, "container", "Other");
-    appendText(form, "other_container", input.draft.container);
-    appendText(form, "resolution", input.draft.resolution);
-    appendText(form, "other_resolution", input.draft.resolution === "Other" ? input.draft.resolution : "");
-    appendText(form, "source", "Other");
-    appendText(form, "other_source", input.draft.source);
-    appendText(form, "release_desc", input.draft.description);
+    const { fields, missing } = ptpFormFieldsFromDraft(input.draft);
+    if (missing.length) {
+      throw new PtpSubmitError(`Cannot submit PTP upload draft; missing fields: ${missing.join(", ")}`, null, false);
+    }
+    for (const [key, value] of fields) appendText(form, key, value);
     appendText(form, "nfo_text", input.nfoText ?? "");
     appendText(form, "AntiCsrfToken", csrfToken);
-    if (input.draft.groupId) appendText(form, "groupid", input.draft.groupId);
-    if (input.draft.scene) appendText(form, "scene", "on");
-    if (input.draft.personalRip || input.draft.internal) appendText(form, "internalrip", "on");
-    if (input.draft.remasterYear || input.draft.remasterTitle) appendText(form, "remaster", "on");
-    for (const subtitle of input.draft.subtitles) appendText(form, "subtitles[]", subtitle);
-    for (const trumpable of input.draft.trumpable) appendText(form, "trumpable[]", trumpable);
     const torrent = await readFile(input.torrentPath);
     form.append("file_input", new Blob([torrent], { type: "application/x-bittorrent" }), "placeholder.torrent");
     return form;

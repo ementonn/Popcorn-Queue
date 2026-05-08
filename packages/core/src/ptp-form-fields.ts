@@ -99,7 +99,7 @@ function selectOrOther<T extends readonly string[]>(value: string | null | undef
 
 function resolutionFields(draft: ReviewDraft): { selected: string; width: string; height: string } {
   const resolution = draft.resolution?.trim() ?? "";
-  if (resolution && (PTP_RESOLUTIONS as readonly string[]).includes(resolution)) {
+  if (resolution && resolution !== "Other" && (PTP_RESOLUTIONS as readonly string[]).includes(resolution)) {
     return { selected: resolution, width: "", height: "" };
   }
   const match = resolution.match(/^(\d{3,5})\s*x\s*(\d{3,5})$/i);
