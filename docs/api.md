@@ -44,7 +44,9 @@ The API creates a job, writes its workspace manifest, and queues automatic
 preparation up to the review step.
 
 The uploaded source torrent is saved to `data/jobs/<jobId>/torrent/source.torrent`
-before preparation starts.
+before preparation starts. The multipart filename is preserved separately as
+`job.torrent.filename`, so the UI can show the original source-site torrent name
+even though the internal path stays stable.
 
 ### POST /api/browser/cache/invalidate
 
@@ -55,7 +57,8 @@ Deletes one backend PTP cache key derived from `{ title, imdbId }`.
 ### GET /api/jobs
 
 Returns the current SQLite-backed upload queue. Jobs include `uploadReadiness`,
-`humanStep`, `workspace`, `artifacts`, `phases`, and `uploadPlan.reviewGates`.
+`humanStep`, `workspace`, `artifacts`, `reviewDraft`, `phases`, and
+`uploadPlan.reviewGates`.
 
 ### POST /api/jobs
 
@@ -73,8 +76,15 @@ Creates a manual upload job from JSON:
 ### POST /api/jobs/import
 
 Imports a restored job workspace from `jobPath` and `manifest`. If the restored
-manifest is already `done`, the job is marked `needs_reseed` so qBittorrent can
-be repopulated instead of silently assuming the client still has it.
+manifest is already `done`, required upload media and upload torrent paths are
+validated first. Valid done jobs are marked `needs_reseed` so qBittorrent can be
+repopulated instead of silently assuming the client still has it. Missing files
+put the job back in review with `missing_evidence`.
+
+### PATCH /api/jobs/:id/review-draft
+
+Patches the editable PTP upload draft. The draft is initialized from the upload
+plan and worker artifacts when a job reaches review.
 
 ### POST /api/jobs/:id/start-upload
 
@@ -82,8 +92,10 @@ Starts upload only when `uploadReadiness` is `ready` and no blocker gate is open
 This is the normal operator action after reviewing screenshots, MediaInfo/BDInfo,
 release draft, torrent path, and qB readiness.
 
-Unit tests and default worker tests do not submit to PTP. The upload phase stays
-draft-only until a real PTP submitter is implemented and explicitly wired.
+With `PTP_USERNAME`, `PTP_PASSWORD`, `PTP_ANNOUNCE_URL`, and optional
+`PTP_COOKIE_FILE` configured, the API runs the upload tail and submits the
+prepared `torrent/upload.torrent` to PTP. Unit tests inject a fake submitter and
+never connect to real PTP.
 
 ### POST /api/jobs/:id/pause
 

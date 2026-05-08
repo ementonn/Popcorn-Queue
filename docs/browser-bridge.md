@@ -13,6 +13,8 @@ old `ptp_checker.js` workflow.
 - Render PTP status badges and an `Up` action.
 - Offer a manual `Recheck` action that sends `bypassCache: true` for the current page.
 - Download the source torrent through the browser session.
+- Preserve the source site's torrent filename from `Content-Disposition` when it
+  is available, falling back to `<site>-<id>.torrent`.
 - Create a Popcorn Queue job through `POST /api/browser/jobs`.
 - Poll `GET /api/jobs/:id` after upload handoff and link the badge to the web job.
 

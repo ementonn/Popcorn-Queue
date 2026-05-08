@@ -30,6 +30,14 @@ Required for real PTP duplicate checks:
 - `PTP_API_USER`
 - `PTP_API_KEY`
 
+Required for real PTP upload submit:
+
+- `PTP_USERNAME`
+- `PTP_PASSWORD`
+- `PTP_ANNOUNCE_URL`
+- `PTP_COOKIE_FILE` if you want to reuse a browser-authenticated session or avoid
+  interactive 2FA. Automated tests never use these values.
+
 Optional manual integrations:
 
 - `IMGBB_API_KEY`
@@ -61,7 +69,9 @@ Expected flow:
 1. Open a supported tracker page.
 2. Click the browser bridge check action.
 3. Confirm the badge/result is returned by `/api/browser/check/batch`.
-4. Send the source torrent and candidate data to `/api/browser/jobs`.
+4. Send the source torrent and candidate data to `/api/browser/jobs`. The
+   backend stores the bytes at `torrent/source.torrent` but keeps the source
+   site's original torrent filename for display.
 5. Open the Web UI and select the new job.
 
 If you see `POST /api/browser/check/batch failed with HTTP 401: unauthorized`,
@@ -75,11 +85,16 @@ inspect the Web UI sections in order:
 1. Blockers
 2. Warnings
 3. Duplicate/PTP Result
-4. Screenshots
-5. MediaInfo / BDInfo
-6. Release Draft
-7. Torrent / qB Readiness
-8. Recent Job Log
+4. Download
+5. Screenshots
+6. MediaInfo / BDInfo
+7. Upload Draft
+8. Torrent / qB Readiness
+9. Recent Job Log
+
+`Start Upload` submits to PTP only after you save any needed Upload Draft edits
+and the job is `ready`. Without PTP submit credentials the upload phase fails
+cleanly and keeps the draft/artifacts available for retry.
 
 The main UI does not show phase-advance controls. Open Diagnostics only when you
 need raw logs, phase state, or debug routes.
