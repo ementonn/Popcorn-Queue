@@ -26,6 +26,7 @@ interface JobRow {
   uploadReadiness: string | null;
   humanStep: string | null;
   artifactsJson: string | null;
+  reviewDraftJson: string | null;
   workspaceJson: string | null;
   downloadStatusJson: string | null;
   uploadPlanJson: string;
@@ -82,6 +83,7 @@ function serializeJob(job: Job) {
     uploadReadiness: job.uploadReadiness,
     humanStep: job.humanStep,
     artifactsJson: JSON.stringify(job.artifacts),
+    reviewDraftJson: stringifyOptional(job.reviewDraft),
     workspaceJson: stringifyOptional(job.workspace),
     downloadStatusJson: stringifyOptional(job.downloadStatus),
     uploadPlanJson: JSON.stringify(job.uploadPlan),
@@ -114,6 +116,8 @@ function deserializeJob(row: JobRow): Job {
 
   const workspace = parseOptionalJson<Job["workspace"]>(row.workspaceJson);
   if (workspace !== undefined) job.workspace = workspace;
+  const reviewDraft = parseOptionalJson<Job["reviewDraft"]>(row.reviewDraftJson);
+  if (reviewDraft !== undefined) job.reviewDraft = reviewDraft;
   const downloadStatus = parseOptionalJson<Job["downloadStatus"]>(row.downloadStatusJson);
   if (downloadStatus !== undefined) job.downloadStatus = downloadStatus;
   const candidate = parseOptionalJson<Job["candidate"]>(row.candidateJson);
@@ -157,6 +161,7 @@ export class PrismaPersistence {
         "upload_readiness" TEXT NOT NULL DEFAULT 'missing_evidence',
         "human_step" TEXT NOT NULL DEFAULT 'Preparing upload package',
         "artifacts" TEXT NOT NULL DEFAULT '{}',
+        "review_draft" TEXT,
         "workspace" TEXT,
         "download_status" TEXT,
         "upload_plan" TEXT NOT NULL,
@@ -169,6 +174,7 @@ export class PrismaPersistence {
     await this.addColumnIfMissing("Job", "upload_readiness", "TEXT NOT NULL DEFAULT 'missing_evidence'");
     await this.addColumnIfMissing("Job", "human_step", "TEXT NOT NULL DEFAULT 'Preparing upload package'");
     await this.addColumnIfMissing("Job", "artifacts", "TEXT NOT NULL DEFAULT '{}'");
+    await this.addColumnIfMissing("Job", "review_draft", "TEXT");
     await this.addColumnIfMissing("Job", "workspace", "TEXT");
     await this.addColumnIfMissing("Job", "download_status", "TEXT");
     await this.prisma.$executeRawUnsafe(`
@@ -258,6 +264,22 @@ export class PrismaJobRepository {
 
   async markPreparationResult(id: string, input: PreparationResultInput): Promise<Job | null> {
     return this.withJob(id, (repo) => repo.markPreparationResult(id, input));
+  }
+
+  async updateReviewDraft(id: string, patch: Parameters<JobRepository["updateReviewDraft"]>[1]): Promise<Job | null> {
+    return this.withJob(id, (repo) => repo.updateReviewDraft(id, patch));
+  }
+
+  async markUploadResult(id: string, result: Parameters<JobRepository["markUploadResult"]>[1], phases?: Parameters<JobRepository["markUploadResult"]>[2]): Promise<Job | null> {
+    return this.withJob(id, (repo) => repo.markUploadResult(id, result, phases));
+  }
+
+  async markUploadFailed(id: string, message: string, phases?: Parameters<JobRepository["markUploadFailed"]>[2]): Promise<Job | null> {
+    return this.withJob(id, (repo) => repo.markUploadFailed(id, message, phases));
+  }
+
+  async markRestoreBlocked(id: string, input: Parameters<JobRepository["markRestoreBlocked"]>[1]): Promise<Job | null> {
+    return this.withJob(id, (repo) => repo.markRestoreBlocked(id, input));
   }
 
   async markNeedsReseed(id: string, message: string): Promise<Job | null> {

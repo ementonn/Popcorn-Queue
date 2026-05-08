@@ -1,11 +1,16 @@
 import { randomUUID } from "node:crypto";
 import {
   UPLOAD_PHASES,
+  buildReviewDraft,
   buildUploadPlan,
+  mergeReviewDraft,
   parseTorrentTitle,
   type BrowserCheckResult,
   type DownloadStatus,
   type JobManifest,
+  type PtpUploadResult,
+  type ReviewDraft,
+  type ReviewDraftPatch,
   type ReviewGate,
   type TorrentCandidate,
   type UploadReadiness,
@@ -67,7 +72,11 @@ export interface Job {
     duplicateResult?: string;
     uploadTorrent?: string;
     qbReady?: boolean;
+    ptpUrl?: string;
+    ptpGroupId?: string;
+    ptpTorrentId?: string;
   };
+  reviewDraft?: ReviewDraft;
   workspace?: {
     dataRoot: string;
     jobRoot: string;
@@ -115,6 +124,11 @@ export interface PreparationResultInput {
   workspace?: Job["workspace"];
 }
 
+export interface RestoreValidationFailureInput {
+  message: string;
+  missingFiles: string[];
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -150,6 +164,27 @@ function mergeGateStatus(nextPlan: UploadPlan, previous?: UploadPlan): UploadPla
       status: previousStatus.get(gate.id) ?? gate.status
     }))
   };
+}
+
+function buildJobReviewDraft(job: Pick<Job, "candidate" | "uploadPlan" | "artifacts" | "checkResult">): ReviewDraft | undefined {
+  if (!job.candidate) return undefined;
+  const artifacts: Parameters<typeof buildReviewDraft>[0]["artifacts"] = {};
+  if (job.artifacts.releaseName !== undefined) artifacts.releaseName = job.artifacts.releaseName;
+  if (job.artifacts.description !== undefined) artifacts.description = job.artifacts.description;
+  if (job.artifacts.mediainfo !== undefined) artifacts.mediainfo = job.artifacts.mediainfo;
+  const input: Parameters<typeof buildReviewDraft>[0] = {
+    candidate: job.candidate,
+    uploadPlan: job.uploadPlan,
+    artifacts
+  };
+  if (job.checkResult) input.checkResult = job.checkResult;
+  return buildReviewDraft(input);
+}
+
+function ensureReviewDraft(job: Job): void {
+  if (job.reviewDraft) return;
+  const draft = buildJobReviewDraft(job);
+  if (draft) job.reviewDraft = draft;
 }
 
 export class JobRepository {
@@ -224,6 +259,7 @@ export class JobRepository {
     job.candidate = input.candidate;
     if (input.checkResult) job.checkResult = input.checkResult;
     if (input.torrent) job.torrent = input.torrent;
+    ensureReviewDraft(job);
     this.jobs.set(job.id, job);
     return job;
   }
@@ -278,6 +314,7 @@ export class JobRepository {
         }
       ]
     };
+    ensureReviewDraft(job);
     this.jobs.set(job.id, job);
     return job;
   }
@@ -313,6 +350,7 @@ export class JobRepository {
     job.phase = "review";
     job.uploadReadiness = input.uploadReadiness;
     job.artifacts = input.artifacts;
+    ensureReviewDraft(job);
     job.humanStep = "Review upload package";
     this.setPhaseState(job, "review", input.uploadReadiness === "ready" ? "pending" : "warning", "Review upload package.");
     return this.record(job, input.uploadReadiness === "ready" ? "info" : "warn", "Upload package ready for review.", {
@@ -338,6 +376,7 @@ export class JobRepository {
     job.artifacts = input.artifacts;
     job.phases = input.phases;
     if (input.workspace) job.workspace = input.workspace;
+    if (job.state === "review" || job.phase === "review") ensureReviewDraft(job);
     return this.record(job, input.eventLevel, input.eventMessage, {
       phase: input.phase,
       uploadReadiness: input.uploadReadiness
@@ -353,6 +392,56 @@ export class JobRepository {
     job.humanStep = "Uploading to tracker";
     this.setPhaseState(job, "upload", "running", "Uploading.");
     return this.record(job, "info", "Upload started.", { phase: job.phase });
+  }
+
+  updateReviewDraft(id: string, patch: ReviewDraftPatch): Job | null {
+    const job = this.jobs.get(id);
+    if (!job) return null;
+    const current = job.reviewDraft ?? buildJobReviewDraft(job);
+    if (!current) return this.record(job, "warn", "Review draft is not available yet.");
+    job.reviewDraft = mergeReviewDraft(current, patch);
+    return this.record(job, "info", "Review draft updated.");
+  }
+
+  markUploadResult(id: string, result: PtpUploadResult, phases?: PhaseRun[]): Job | null {
+    const job = this.jobs.get(id);
+    if (!job) return null;
+    job.state = "done";
+    job.phase = "done";
+    job.humanStep = "Upload workflow complete";
+    job.artifacts = {
+      ...job.artifacts,
+      ptpUrl: result.ptpUrl,
+      ptpGroupId: result.groupId,
+      ptpTorrentId: result.torrentId
+    };
+    if (phases) job.phases = phases;
+    this.setPhaseState(job, "upload", "done", "PTP upload submitted.");
+    this.setPhaseState(job, "post-hook", "skipped", "No post-upload hooks are configured.");
+    this.setPhaseState(job, "done", "done", "Upload workflow complete.");
+    return this.record(job, "info", "PTP upload complete.", result);
+  }
+
+  markUploadFailed(id: string, message: string, phases?: PhaseRun[]): Job | null {
+    const job = this.jobs.get(id);
+    if (!job) return null;
+    job.state = "failed";
+    job.phase = "upload";
+    job.humanStep = "Upload failed";
+    if (phases) job.phases = phases;
+    this.setPhaseState(job, "upload", "failed", message);
+    return this.record(job, "error", "PTP upload failed.", { message });
+  }
+
+  markRestoreBlocked(id: string, input: RestoreValidationFailureInput): Job | null {
+    const job = this.jobs.get(id);
+    if (!job) return null;
+    job.state = "review";
+    job.phase = "review";
+    job.uploadReadiness = "missing_evidence";
+    job.humanStep = "Restore needs files";
+    this.setPhaseState(job, "review", "warning", input.message);
+    return this.record(job, "warn", input.message, { missingFiles: input.missingFiles });
   }
 
   retryFailed(id: string): Job | null {

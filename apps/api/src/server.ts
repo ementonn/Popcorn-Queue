@@ -1,16 +1,18 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import fastify from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
-import { buildJobWorkspacePaths, type BrowserCheckResult, type JobManifest, type TorrentCandidate } from "@popcorn-queue/core";
-import { BrowserCheckService, ImgBbUploader, PtpClient, QBittorrentClient } from "@popcorn-queue/integrations";
+import { buildJobWorkspacePaths, type BrowserCheckResult, type JobManifest, type ReviewDraftPatch, type TorrentCandidate, type UploadPhase } from "@popcorn-queue/core";
+import { BrowserCheckService, ImgBbUploader, PtpClient, PtpFormSubmitter, QBittorrentClient } from "@popcorn-queue/integrations";
+import { PhaseRunner, createPhaseContext, type CreatePhaseContextOptions, type PhaseLogLevel, type PhaseOutputMap, type PtpSubmitter } from "@popcorn-queue/worker";
 import { makeBrowserAuthHook } from "./auth.js";
 import type { ApiConfig } from "./config.js";
-import { readLogTail } from "./job-logs.js";
+import { appendJobEvent, readLogTail } from "./job-logs.js";
 import { createApiLogger } from "./logger.js";
 import { PrismaPersistence } from "./persistence.js";
 import { PreparationService } from "./preparation.js";
+import type { Job, PhaseRun, PhaseState } from "./jobs.js";
 
 interface CreateManualJobBody extends Partial<TorrentCandidate> {
   title: string;
@@ -23,6 +25,66 @@ interface ImportJobBody {
 
 export interface BuildServerOptions {
   autoPrepare?: boolean;
+  ptpSubmitter?: PtpSubmitter;
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function missingRestoredFiles(jobPath: string, manifest: JobManifest): Promise<string[]> {
+  const relativePaths = [...manifest.uploadFiles];
+  if (manifest.torrentFile) relativePaths.push(manifest.torrentFile);
+  const missing: string[] = [];
+  for (const relativePath of relativePaths) {
+    if (!(await pathExists(path.join(jobPath, relativePath)))) missing.push(relativePath);
+  }
+  return missing;
+}
+
+function phaseStateFromStatus(status: PhaseOutputMap[UploadPhase]["status"]): PhaseState {
+  if (status === "completed") return "done";
+  if (status === "failed") return "failed";
+  if (status === "skipped") return "skipped";
+  return "warning";
+}
+
+function mergePhaseRuns(job: Job, outputs: Partial<PhaseOutputMap>): PhaseRun[] {
+  return job.phases.map((run) => {
+    const output = outputs[run.phase];
+    if (!output) return run;
+    const next: PhaseRun = {
+      ...run,
+      state: phaseStateFromStatus(output.status),
+      message: output.message,
+      finishedAt: output.producedAt
+    };
+    if (!next.startedAt) next.startedAt = output.producedAt;
+    return next;
+  });
+}
+
+function jobLogPath(config: ApiConfig, job: Job): string {
+  return job.workspace?.jobRoot ? path.join(job.workspace.jobRoot, "logs", "job.log") : buildJobWorkspacePaths(config.paths.dataRoot, job.id).logs.jobLog;
+}
+
+function configuredPtpSubmitter(config: ApiConfig, override?: PtpSubmitter): PtpSubmitter | undefined {
+  if (override) return override;
+  if (!config.ptp.username || !config.ptp.password || !config.ptp.announceUrl) return undefined;
+  const submitterConfig: ConstructorParameters<typeof PtpFormSubmitter>[0] = {
+    username: config.ptp.username,
+    password: config.ptp.password,
+    announceUrl: config.ptp.announceUrl,
+    baseUrl: config.ptp.baseUrl,
+    userAgent: config.ptp.userAgent
+  };
+  if (config.ptp.cookieFile) submitterConfig.cookieFile = config.ptp.cookieFile;
+  return new PtpFormSubmitter(submitterConfig);
 }
 
 function configuredImageHosts(config: ApiConfig): string[] {
@@ -68,6 +130,7 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
     config.integrations.imageHost === "imgbb" && config.integrations.imgbbApiKey
       ? new ImgBbUploader(config.integrations.imgbbApiKey)
       : undefined;
+  const ptpSubmitter = configuredPtpSubmitter(config, options.ptpSubmitter);
   const browserAuth = makeBrowserAuthHook(config.browserToken);
   const preparation = new PreparationService({
     dataRoot: config.paths.dataRoot,
@@ -246,6 +309,15 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
       (JSON.parse(await readFile(path.join(body.jobPath, "manifest.json"), "utf8")) as JobManifest);
 
     const imported = await jobRepository.importRestored({ jobPath: body.jobPath, manifest });
+    const missingFiles = await missingRestoredFiles(body.jobPath, manifest);
+    if (missingFiles.length > 0) {
+      const job =
+        (await jobRepository.markRestoreBlocked(imported.id, {
+          message: "Restored job is missing upload files.",
+          missingFiles
+        })) ?? imported;
+      return reply.code(201).send({ job });
+    }
     let job = imported;
     if (manifest.state === "done") {
       job =
@@ -258,7 +330,47 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
   });
 
   async function startUploadJob(id: string) {
-    return jobRepository.startUpload(id);
+    const started = await jobRepository.startUpload(id);
+    if (!started || started.state !== "uploading") return started;
+    if (!started.candidate) {
+      return jobRepository.markUploadFailed(id, "Cannot upload a job without candidate metadata.");
+    }
+
+    const fallbackPaths = buildJobWorkspacePaths(config.paths.dataRoot, id);
+    const jobRoot = started.workspace?.jobRoot ?? fallbackPaths.jobRoot;
+    const logPath = jobLogPath(config, started);
+    await mkdir(path.dirname(logPath), { recursive: true });
+    const contextOptions: CreatePhaseContextOptions = {
+      log: async (level: PhaseLogLevel, message: string, payload?: unknown) => {
+        await appendJobEvent(logPath, {
+          at: new Date().toISOString(),
+          level,
+          message,
+          payload
+        });
+      }
+    };
+    if (ptpSubmitter) contextOptions.ptpSubmitter = ptpSubmitter;
+    const context = createPhaseContext(
+      id,
+      {
+        candidate: started.candidate,
+        ...(started.checkResult ? { checkResult: started.checkResult } : {}),
+        ...(started.torrent ? { torrent: started.torrent } : {}),
+        ...(started.torrent?.filePath ? { sourceTorrentPath: started.torrent.filePath } : {}),
+        ...(started.reviewDraft ? { reviewDraft: started.reviewDraft } : {}),
+        workingDirectory: jobRoot
+      },
+      contextOptions
+    );
+
+    const outputs = await new PhaseRunner().runUploadTail(context);
+    const phaseRuns = mergePhaseRuns(started, outputs);
+    const upload = outputs.upload;
+    if (upload?.status === "completed" && upload.result) {
+      return jobRepository.markUploadResult(id, upload.result, phaseRuns);
+    }
+    return jobRepository.markUploadFailed(id, upload?.message ?? "PTP upload did not complete.", phaseRuns);
   }
 
   async function retryFailedJob(id: string) {
@@ -277,6 +389,12 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
 
   app.post<{ Params: { id: string } }>("/api/jobs/:id/start", async (request, reply) => {
     const job = await startUploadJob(request.params.id);
+    if (!job) return reply.code(404).send({ error: "job_not_found" });
+    return { job };
+  });
+
+  app.patch<{ Params: { id: string }; Body: ReviewDraftPatch }>("/api/jobs/:id/review-draft", async (request, reply) => {
+    const job = await jobRepository.updateReviewDraft(request.params.id, request.body ?? {});
     if (!job) return reply.code(404).send({ error: "job_not_found" });
     return { job };
   });

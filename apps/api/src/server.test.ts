@@ -1,4 +1,6 @@
-import { access, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PtpClient } from "@popcorn-queue/integrations";
 import { buildServer } from "./server.js";
@@ -79,7 +81,7 @@ function testConfig(): ApiConfig {
   };
 }
 
-async function withServer<T>(run: (app: ReturnType<typeof buildServer>) => Promise<T>, options: { autoPrepare?: boolean } = { autoPrepare: false }): Promise<T> {
+async function withServer<T>(run: (app: ReturnType<typeof buildServer>) => Promise<T>, options: Parameters<typeof buildServer>[1] = { autoPrepare: false }): Promise<T> {
   const app = buildServer(testConfig(), options);
   try {
     await app.ready();
@@ -323,12 +325,18 @@ describe("API jobs", () => {
   });
 
   it("imports a copied done job and marks it for reseed when qBittorrent is missing it", async () => {
+    const jobPath = await mkdtemp(path.join(os.tmpdir(), "popcorn-restored-job-"));
+    await mkdir(path.join(jobPath, "media", "upload"), { recursive: true });
+    await mkdir(path.join(jobPath, "torrent"), { recursive: true });
+    await writeFile(path.join(jobPath, "media", "upload", "Restored.Movie.2024.1080p.BluRay.x264-GROUP.mkv"), "mkv");
+    await writeFile(path.join(jobPath, "torrent", "upload.torrent"), "torrent");
+
     await withServer(async (app) => {
       const response = await app.inject({
         method: "POST",
         url: "/api/jobs/import",
         payload: {
-          jobPath: "/tmp/popcorn-restored-job",
+          jobPath,
           manifest: {
             version: 1,
             jobId: "restored-job",
@@ -345,5 +353,105 @@ describe("API jobs", () => {
       expect(response.statusCode).toBe(201);
       expect(response.json<{ job: Job }>().job.state).toBe("needs_reseed");
     });
+  });
+
+  it("keeps restored done jobs in review when required upload files are missing", async () => {
+    const jobPath = await mkdtemp(path.join(os.tmpdir(), "popcorn-missing-restored-job-"));
+    await withServer(async (app) => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/jobs/import",
+        payload: {
+          jobPath,
+          manifest: {
+            version: 1,
+            jobId: "missing-restored-job",
+            createdAt: "2026-05-08T00:00:00.000Z",
+            state: "done",
+            source: { title: "Missing.Movie.2024.1080p.BluRay.x264-GROUP" },
+            uploadFiles: ["media/upload/Missing.Movie.2024.1080p.BluRay.x264-GROUP.mkv"],
+            torrentFile: "torrent/upload.torrent",
+            sourceRef: { sourceId: "source-1", originalDownloadPresent: false }
+          }
+        }
+      });
+
+      expect(response.statusCode).toBe(201);
+      const job = response.json<{ job: Job }>().job;
+      expect(job.state).toBe("review");
+      expect(job.uploadReadiness).toBe("missing_evidence");
+      expect(job.events.at(0)?.message).toBe("Restored job is missing upload files.");
+    });
+  });
+
+  it("patches the review draft and runs Start Upload through an injected PTP submitter", async () => {
+    const jobPath = await mkdtemp(path.join(os.tmpdir(), "popcorn-upload-job-"));
+    const torrentPath = path.join(jobPath, "torrent", "upload.torrent");
+    await mkdir(path.join(jobPath, "media", "upload"), { recursive: true });
+    await mkdir(path.dirname(torrentPath), { recursive: true });
+    await writeFile(path.join(jobPath, "media", "upload", "Upload.Movie.2024.1080p.WEB-DL.x265-GROUP.mkv"), "mkv");
+    await writeFile(torrentPath, "torrent");
+    const submitted: Array<{ torrentPath: string; description: string; groupId: string | null }> = [];
+
+    await withServer(
+      async (app) => {
+        const imported = await app.inject({
+          method: "POST",
+          url: "/api/jobs/import",
+          payload: {
+            jobPath,
+            manifest: {
+              version: 1,
+              jobId: "upload-restored-job",
+              createdAt: "2026-05-08T00:00:00.000Z",
+              state: "review",
+              source: { title: "Upload.Movie.2024.1080p.WEB-DL.x265-GROUP" },
+              uploadFiles: ["media/upload/Upload.Movie.2024.1080p.WEB-DL.x265-GROUP.mkv"],
+              torrentFile: "torrent/upload.torrent",
+              sourceRef: { sourceId: "source-1", originalDownloadPresent: false }
+            }
+          }
+        });
+        expect(imported.statusCode).toBe(201);
+        let job = imported.json<{ job: Job }>().job;
+        expect(job.reviewDraft?.releaseName).toContain("Upload.Movie");
+
+        const patch = await app.inject({
+          method: "PATCH",
+          url: `/api/jobs/${job.id}/review-draft`,
+          payload: {
+            description: "Edited release description",
+            groupId: "123"
+          }
+        });
+        expect(patch.statusCode).toBe(200);
+        job = patch.json<{ job: Job }>().job;
+        expect(job.reviewDraft).toMatchObject({ description: "Edited release description", groupId: "123" });
+
+        const start = await app.inject({ method: "POST", url: `/api/jobs/${job.id}/start-upload` });
+        expect(start.statusCode).toBe(200);
+        job = start.json<{ job: Job }>().job;
+        expect(job.state).toBe("done");
+        expect(job.artifacts).toMatchObject({
+          ptpUrl: "https://passthepopcorn.me/torrents.php?id=123&torrentid=456",
+          ptpGroupId: "123",
+          ptpTorrentId: "456"
+        });
+        expect(submitted).toEqual([{ torrentPath, description: "Edited release description", groupId: "123" }]);
+      },
+      {
+        autoPrepare: false,
+        ptpSubmitter: {
+          async submit(input) {
+            submitted.push({ torrentPath: input.torrentPath, description: input.draft.description, groupId: input.draft.groupId });
+            return {
+              groupId: "123",
+              torrentId: "456",
+              ptpUrl: "https://passthepopcorn.me/torrents.php?id=123&torrentid=456"
+            };
+          }
+        }
+      }
+    );
   });
 });
