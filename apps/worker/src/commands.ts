@@ -62,12 +62,15 @@ export const nodeCommandExecutor: CommandExecutor = async (invocation) =>
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let timedOut = false;
     let timeout: NodeJS.Timeout | undefined;
+    let forceKillTimeout: NodeJS.Timeout | undefined;
 
     const settle = (result: CommandResult) => {
       if (settled) return;
       settled = true;
       if (timeout) clearTimeout(timeout);
+      if (forceKillTimeout) clearTimeout(forceKillTimeout);
       resolve(result);
     };
 
@@ -75,7 +78,11 @@ export const nodeCommandExecutor: CommandExecutor = async (invocation) =>
 
     if (invocation.timeoutMs && invocation.timeoutMs > 0) {
       timeout = setTimeout(() => {
+        timedOut = true;
         child.kill("SIGTERM");
+        forceKillTimeout = setTimeout(() => {
+          child.kill("SIGKILL");
+        }, 500);
       }, invocation.timeoutMs);
     }
 
@@ -101,12 +108,19 @@ export const nodeCommandExecutor: CommandExecutor = async (invocation) =>
       );
     });
     child.on("close", (exitCode, signal) => {
+      const timeoutError: CommandResult["error"] | undefined = timedOut
+        ? {
+            code: "ETIMEDOUT",
+            message: `Command timed out after ${invocation.timeoutMs}ms.`
+          }
+        : undefined;
       settle(
         makeResult(invocation, startedAt, {
           exitCode,
           signal,
           stdout,
-          stderr
+          stderr,
+          ...(timeoutError ? { error: timeoutError } : {})
         })
       );
     });
