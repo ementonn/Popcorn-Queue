@@ -12,3 +12,5 @@ export * from "./types.js";
 export * from "./torrent-reuse.js";
 export * from "./upload-plan.js";
 export * from "./upload-readiness.js";
+export * from "./workspace.js";
+export * from "./log-redaction.js";
