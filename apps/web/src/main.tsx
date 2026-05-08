@@ -154,15 +154,17 @@ interface UiStatus {
 
 const phaseOrder = [
   "intake",
-  "metadata",
   "duplicate-check",
-  "download",
-  "extract",
-  "analyze",
+  "metadata",
+  "download-or-locate",
+  "prepare-media",
+  "inspect-media",
   "screenshots",
+  "image-host-upload",
   "torrent-create",
-  "seed-start",
+  "seed-prepare",
   "preflight",
+  "review",
   "upload",
   "post-hook",
   "done"

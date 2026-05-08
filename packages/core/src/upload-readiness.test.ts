@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeUploadReadiness, type EvidenceRequirement } from "./upload-readiness.js";
+import { computeUploadReadiness, type EvidenceRequirement } from "./index.js";
 import type { ReviewGate } from "./upload-plan.js";
 
 const blockerGate: ReviewGate = {

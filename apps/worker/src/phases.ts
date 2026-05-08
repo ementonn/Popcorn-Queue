@@ -106,17 +106,17 @@ export interface PhaseOutputMap {
     decision: RuleDecision | null;
     reviewGates: ReviewGate[];
   };
-  download: PhaseOutputBase & {
+  "download-or-locate": PhaseOutputBase & {
     sourceUrl: string | null;
     downloadUrl: string | null;
     filePath: string | null;
   };
-  extract: PhaseOutputBase & {
+  "prepare-media": PhaseOutputBase & {
     inputPath: string | null;
     primaryFilePath: string | null;
     extractionRequired: boolean;
   };
-  analyze: PhaseOutputBase & {
+  "inspect-media": PhaseOutputBase & {
     mediaPath: string | null;
     inspectionPlan: UploadPlan["media"];
     tools: Record<WorkerTool, ToolAvailability>;
@@ -133,17 +133,24 @@ export interface PhaseOutputMap {
     uploads: ImageUploadAttempt[];
     files: string[];
   };
+  "image-host-upload": PhaseOutputBase & {
+    uploads: ImageUploadAttempt[];
+    files: string[];
+  };
   "torrent-create": PhaseOutputBase & {
     reusePlan: UploadPlan["torrentReuse"];
     sourceTorrentPath: string | null;
   };
-  "seed-start": PhaseOutputBase & {
+  "seed-prepare": PhaseOutputBase & {
     torrentPath: string | null;
     client: string | null;
   };
   preflight: PhaseOutputBase & {
     openGates: ReviewGate[];
     missingTools: WorkerTool[];
+  };
+  review: PhaseOutputBase & {
+    openGates: ReviewGate[];
   };
   upload: PhaseOutputBase & {
     ptpUrl: string | null;
@@ -265,8 +272,8 @@ async function uploadPlan(context: PhaseContext): Promise<UploadPlan> {
 
 async function resolvedMediaPath(context: PhaseContext): Promise<string | null> {
   if (context.job.mediaPath) return context.job.mediaPath;
-  const extract = await context.getOutput("extract");
-  if (extract?.primaryFilePath) return extract.primaryFilePath;
+  const preparedMedia = await context.getOutput("prepare-media");
+  if (preparedMedia?.primaryFilePath) return preparedMedia.primaryFilePath;
   if (context.job.downloadPath) return context.job.downloadPath;
   return null;
 }
@@ -406,7 +413,7 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
       }
     },
     {
-      phase: "download",
+      phase: "download-or-locate",
       async run(context) {
         const existingPath = context.job.downloadPath ?? context.job.mediaPath ?? null;
         return {
@@ -418,7 +425,7 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
       }
     },
     {
-      phase: "extract",
+      phase: "prepare-media",
       async run(context) {
         const inputPath = context.job.mediaPath ?? context.job.downloadPath ?? null;
         const extractionRequired = isArchivePath(inputPath);
@@ -431,7 +438,7 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
       }
     },
     {
-      phase: "analyze",
+      phase: "inspect-media",
       async run(context) {
         const plan = await uploadPlan(context);
         const mediaPath = await resolvedMediaPath(context);
@@ -467,9 +474,9 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
       phase: "screenshots",
       async run(context) {
         const plan = await uploadPlan(context);
-        const analyze = await context.getOutput("analyze");
+        const mediaInspection = await context.getOutput("inspect-media");
         const mediaPath = await resolvedMediaPath(context);
-        const screenshotPlan = buildScreenshotPlan(plan.parsed, analyze?.summary?.durationSeconds ?? undefined);
+        const screenshotPlan = buildScreenshotPlan(plan.parsed, mediaInspection?.summary?.durationSeconds ?? undefined);
         const outputDirectory = screenshotOutputDirectory(context);
         const tools = await checkWorkerTools(context.commandExecutor, context.toolCommands);
         const ffmpeg: CommandAttempt[] = [];
@@ -540,6 +547,17 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
       }
     },
     {
+      phase: "image-host-upload",
+      async run(context) {
+        const screenshots = await context.getOutput("screenshots");
+        return {
+          ...base(screenshots ? "completed" : "skipped", screenshots ? "Image host upload results collected from screenshot phase." : "No screenshots are available for image host upload."),
+          uploads: screenshots?.uploads ?? [],
+          files: screenshots?.files ?? []
+        };
+      }
+    },
+    {
       phase: "torrent-create",
       async run(context) {
         const plan = await uploadPlan(context);
@@ -551,7 +569,7 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
       }
     },
     {
-      phase: "seed-start",
+      phase: "seed-prepare",
       async run(context) {
         return {
           ...base("skipped", "Torrent client integration is not configured in this worker scaffold."),
@@ -564,11 +582,11 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
       phase: "preflight",
       async run(context) {
         const plan = await uploadPlan(context);
-        const analyze = await context.getOutput("analyze");
+        const mediaInspection = await context.getOutput("inspect-media");
         const screenshots = await context.getOutput("screenshots");
         const openGates = plan.reviewGates.filter((gate) => gate.status === "open");
         const missingTools: WorkerTool[] = [];
-        if (analyze && !analyze.tools.mediainfo.available) missingTools.push("mediainfo");
+        if (mediaInspection && !mediaInspection.tools.mediainfo.available) missingTools.push("mediainfo");
         if (screenshots && !screenshots.tools.ffmpeg.available) missingTools.push("ffmpeg");
         if (screenshots && !screenshots.tools.oxipng.available) missingTools.push("oxipng");
         const hasBlocker = openGates.some((gate) => gate.severity === "blocker");
@@ -576,6 +594,18 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
           ...base(hasBlocker ? "blocked" : "completed", hasBlocker ? "Open blocker review gates remain." : "Preflight evidence collected."),
           openGates,
           missingTools
+        };
+      }
+    },
+    {
+      phase: "review",
+      async run(context) {
+        const plan = await uploadPlan(context);
+        const openGates = plan.reviewGates.filter((gate) => gate.status === "open");
+        const hasBlocker = openGates.some((gate) => gate.severity === "blocker");
+        return {
+          ...base(hasBlocker ? "blocked" : "completed", hasBlocker ? "Open blocker review gates remain." : "Review gate state collected."),
+          openGates
         };
       }
     },

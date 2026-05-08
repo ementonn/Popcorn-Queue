@@ -76,8 +76,8 @@ describe("worker phase scaffold", () => {
     const mediaPath = path.join(tempDir, "movie.mkv");
     await writeFile(mediaPath, "");
     const calls: CommandInvocation[] = [];
-    const analyze = createDefaultPhaseHandlers().find((handler): handler is PhaseHandler<"analyze"> => handler.phase === "analyze");
-    if (!analyze) throw new Error("Missing analyze handler");
+    const inspectMedia = createDefaultPhaseHandlers().find((handler): handler is PhaseHandler<"inspect-media"> => handler.phase === "inspect-media");
+    if (!inspectMedia) throw new Error("Missing inspect-media handler");
 
     const context = createPhaseContext(
       "job-1",
@@ -91,7 +91,7 @@ describe("worker phase scaffold", () => {
       }
     );
 
-    const output = await analyze.run(context);
+    const output = await inspectMedia.run(context);
 
     expect(output.summary?.durationSeconds).toBe(7200.5);
     expect(calls.some((call) => call.command === "mediainfo" && call.args[0] === "--Output=JSON" && call.args[1] === mediaPath)).toBe(true);
