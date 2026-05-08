@@ -1,8 +1,10 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import fastify from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
-import { buildJobWorkspacePaths, type BrowserCheckResult, type TorrentCandidate } from "@popcorn-queue/core";
-import { BrowserCheckService, PtpClient } from "@popcorn-queue/integrations";
+import { buildJobWorkspacePaths, type BrowserCheckResult, type JobManifest, type TorrentCandidate } from "@popcorn-queue/core";
+import { BrowserCheckService, PtpClient, QBittorrentClient } from "@popcorn-queue/integrations";
 import { makeBrowserAuthHook } from "./auth.js";
 import type { ApiConfig } from "./config.js";
 import { readLogTail } from "./job-logs.js";
@@ -12,6 +14,11 @@ import { PreparationService } from "./preparation.js";
 
 interface CreateManualJobBody extends Partial<TorrentCandidate> {
   title: string;
+}
+
+interface ImportJobBody {
+  jobPath: string;
+  manifest?: JobManifest;
 }
 
 export interface BuildServerOptions {
@@ -50,6 +57,13 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
   const browserChecks = new BrowserCheckService(ptpClient, cache, {
     requestDelayMs: config.ptp.requestDelayMs
   });
+  const torrentClient = config.integrations.qbittorrentUrl
+    ? new QBittorrentClient({
+        baseUrl: config.integrations.qbittorrentUrl,
+        username: config.integrations.qbittorrentUsername,
+        password: config.integrations.qbittorrentPassword
+      })
+    : null;
   const browserAuth = makeBrowserAuthHook(config.browserToken);
   const preparation = new PreparationService({
     dataRoot: config.paths.dataRoot,
@@ -206,6 +220,25 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
     return reply.code(201).send({ job });
   });
 
+  app.post<{ Body: ImportJobBody }>("/api/jobs/import", async (request, reply) => {
+    const body = request.body;
+    if (!body?.jobPath) return reply.code(400).send({ error: "job_path_required" });
+    const manifest =
+      body.manifest ??
+      (JSON.parse(await readFile(path.join(body.jobPath, "manifest.json"), "utf8")) as JobManifest);
+
+    const imported = await jobRepository.importRestored({ jobPath: body.jobPath, manifest });
+    let job = imported;
+    if (manifest.state === "done") {
+      job =
+        (await jobRepository.markNeedsReseed(
+          imported.id,
+          torrentClient ? "Restored done job needs qBittorrent reseed verification." : "qBittorrent is not configured for automatic reseed."
+        )) ?? imported;
+    }
+    return reply.code(201).send({ job });
+  });
+
   async function startUploadJob(id: string) {
     return jobRepository.startUpload(id);
   }
@@ -246,6 +279,33 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
     const job = await retryFailedJob(request.params.id);
     if (!job) return reply.code(404).send({ error: "job_not_found" });
     return { job };
+  });
+
+  app.post<{ Params: { id: string } }>("/api/jobs/:id/reseed", async (request, reply) => {
+    const existing = await jobRepository.get(request.params.id);
+    if (!existing) return reply.code(404).send({ error: "job_not_found" });
+    if (!torrentClient) {
+      const job = await jobRepository.markNeedsReseed(existing.id, "qBittorrent is not configured for automatic reseed.");
+      return { job };
+    }
+
+    const jobRoot = existing.workspace?.jobRoot ?? buildJobWorkspacePaths(config.paths.dataRoot, existing.id).jobRoot;
+    const torrentPath = path.join(jobRoot, existing.artifacts.uploadTorrent ?? "torrent/upload.torrent");
+    const downloadPath = path.join(jobRoot, "media", "upload");
+    try {
+      const addOptions = {
+        torrentPath,
+        downloadPath,
+        tags: config.integrations.qbittorrentTags
+      };
+      if (config.integrations.qbittorrentCategory) Object.assign(addOptions, { category: config.integrations.qbittorrentCategory });
+      const result = await torrentClient.addTorrent(addOptions);
+      const job = await jobRepository.markReseeded(existing.id, result.infoHash);
+      return { job };
+    } catch {
+      const job = await jobRepository.markNeedsReseed(existing.id, "reseed failed");
+      return { job };
+    }
   });
 
   app.post<{ Params: { id: string } }>("/api/jobs/:id/debug/advance", async (request, reply) => {

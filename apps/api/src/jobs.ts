@@ -4,6 +4,7 @@ import {
   buildUploadPlan,
   parseTorrentTitle,
   type BrowserCheckResult,
+  type JobManifest,
   type ReviewGate,
   type TorrentCandidate,
   type UploadReadiness,
@@ -87,6 +88,11 @@ export interface CreateJobInput {
 export interface JobRepositoryOptions {
   imageHosts?: string[];
   screenshotCount?: number;
+}
+
+export interface ImportRestoredJobInput {
+  jobPath: string;
+  manifest: JobManifest;
 }
 
 function nowIso(): string {
@@ -208,6 +214,52 @@ export class JobRepository {
 
   get(id: string): Job | null {
     return this.jobs.get(id) ?? null;
+  }
+
+  importRestored(input: ImportRestoredJobInput): Job {
+    const createdAt = input.manifest.createdAt;
+    const title = typeof input.manifest.source.title === "string" ? input.manifest.source.title : input.manifest.jobId;
+    const candidate: TorrentCandidate = {
+      site: "unknown",
+      title
+    };
+    const uploadPlan = buildUploadPlan({ candidate });
+    const state = this.restoreState(input.manifest.state);
+    const phase: JobPhase = state === "done" || state === "seeding" || state === "needs_reseed" ? "done" : "review";
+    const job: Job = {
+      id: input.manifest.jobId,
+      state,
+      phase,
+      createdAt,
+      updatedAt: nowIso(),
+      source: {
+        title
+      },
+      candidate,
+      uploadReadiness: "ready",
+      humanStep: state === "done" ? "Upload workflow complete" : "Review upload package",
+      artifacts: {
+        mediaFiles: input.manifest.uploadFiles,
+        ...(input.manifest.torrentFile ? { uploadTorrent: input.manifest.torrentFile } : {})
+      },
+      workspace: {
+        dataRoot: "",
+        jobRoot: input.jobPath,
+        manifest: `${input.jobPath}/manifest.json`
+      },
+      uploadPlan,
+      phases: makePhases(phase),
+      events: [
+        {
+          id: randomUUID(),
+          at: nowIso(),
+          level: "info",
+          message: "Restored job imported."
+        }
+      ]
+    };
+    this.jobs.set(job.id, job);
+    return job;
   }
 
   start(id: string): Job | null {
@@ -379,5 +431,10 @@ export class JobRepository {
     job.events.unshift(event);
     job.events = job.events.slice(0, 100);
     return job;
+  }
+
+  private restoreState(state: string): JobState {
+    if (state === "done" || state === "seeding" || state === "needs_reseed" || state === "review" || state === "failed") return state;
+    return "review";
   }
 }

@@ -294,4 +294,29 @@ describe("API jobs", () => {
       { autoPrepare: true }
     );
   });
+
+  it("imports a copied done job and marks it for reseed when qBittorrent is missing it", async () => {
+    await withServer(async (app) => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/jobs/import",
+        payload: {
+          jobPath: "/tmp/popcorn-restored-job",
+          manifest: {
+            version: 1,
+            jobId: "restored-job",
+            createdAt: "2026-05-08T00:00:00.000Z",
+            state: "done",
+            source: { title: "Restored.Movie.2024.1080p.BluRay.x264-GROUP" },
+            uploadFiles: ["media/upload/Restored.Movie.2024.1080p.BluRay.x264-GROUP.mkv"],
+            torrentFile: "torrent/upload.torrent",
+            sourceRef: { sourceId: "source-1", originalDownloadPresent: false }
+          }
+        }
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(response.json<{ job: Job }>().job.state).toBe("needs_reseed");
+    });
+  });
 });

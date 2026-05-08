@@ -1,6 +1,15 @@
 import { PrismaClient } from "@prisma/client";
 import type { CacheEntry, CacheStore, NormalizedPtpResponse, UploadReadiness } from "@popcorn-queue/core";
-import { JobRepository, type CreateJobInput, type Job, type JobPhase, type JobRepositoryOptions, type JobState, type PhaseState } from "./jobs.js";
+import {
+  JobRepository,
+  type CreateJobInput,
+  type ImportRestoredJobInput,
+  type Job,
+  type JobPhase,
+  type JobRepositoryOptions,
+  type JobState,
+  type PhaseState
+} from "./jobs.js";
 
 const DEFAULT_DATABASE_URL = "file:./popcorn-queue.db";
 
@@ -199,6 +208,12 @@ export class PrismaJobRepository {
     await this.persistence.ensure();
     const row = await this.persistence.prisma.job.findUnique({ where: { id } });
     return row ? deserializeJob(row) : null;
+  }
+
+  async importRestored(input: ImportRestoredJobInput): Promise<Job> {
+    const job = new JobRepository([], this.persistence.options.jobs).importRestored(input);
+    await this.save(job);
+    return job;
   }
 
   async start(id: string): Promise<Job | null> {
