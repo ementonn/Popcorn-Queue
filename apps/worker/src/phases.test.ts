@@ -2,9 +2,9 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { ReviewDraft, TorrentCandidate } from "@popcorn-queue/core";
+import { buildUploadPlan, type ReviewDraft, type TorrentCandidate } from "@popcorn-queue/core";
 import type { CommandExecutor, CommandInvocation, CommandResult } from "./commands.js";
-import { PhaseRunner, createDefaultPhaseHandlers, createPhaseContext, parseMediaInfoSummary, type PhaseHandler } from "./phases.js";
+import { MemoryPhaseOutputStore, PhaseRunner, createDefaultPhaseHandlers, createPhaseContext, parseMediaInfoSummary, sanitizeMediaInfoText, type PhaseHandler } from "./phases.js";
 
 const candidate: TorrentCandidate = {
   site: "mteam",
@@ -59,6 +59,9 @@ function fakeExecutor(calls: CommandInvocation[]): CommandExecutor {
           }
         })
       );
+    }
+    if (invocation.command === "mediainfo" && invocation.args[0] !== "--Version") {
+      return commandResult(invocation, `General\nComplete name                            : ${invocation.args[0]}\nFormat                                   : Matroska\n`);
     }
     return commandResult(invocation);
   };
@@ -122,6 +125,136 @@ describe("worker phase scaffold", () => {
 
     expect(output.summary?.durationSeconds).toBe(7200.5);
     expect(calls.some((call) => call.command === "mediainfo" && call.args[0] === "--Output=JSON" && call.args[1] === mediaPath)).toBe(true);
+  });
+
+  it("inspect-media stores text and json mediainfo artifacts", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-worker-mediainfo-"));
+    const uploadRoot = path.join(tempDir, "media", "upload");
+    const mediaPath = path.join(uploadRoot, "Movie.mkv");
+    await mkdir(uploadRoot, { recursive: true });
+    await writeFile(mediaPath, "");
+    const calls: CommandInvocation[] = [];
+    const inspectMedia = createDefaultPhaseHandlers().find((handler): handler is PhaseHandler<"inspect-media"> => handler.phase === "inspect-media");
+    if (!inspectMedia) throw new Error("Missing inspect-media handler");
+
+    const context = createPhaseContext(
+      "job-mediainfo",
+      {
+        candidate,
+        mediaPath,
+        workingDirectory: tempDir
+      },
+      {
+        runExternalTools: true,
+        commandExecutor: fakeExecutor(calls)
+      }
+    );
+
+    const output = await inspectMedia.run(context);
+
+    expect(output.mediaInfoText.result?.stdout).toContain("General");
+    expect(output.mediaInfoText.result?.stdout).toContain("Complete name                            : Movie.mkv");
+    expect(output.mediaInfoJson.result?.stdout).toContain("\"media\"");
+    expect(output.mediaInfo.result?.stdout).toBe(output.mediaInfoText.result?.stdout);
+    expect(output.summary?.format).toBe("Matroska");
+    expect(calls.some((call) => call.command === "mediainfo" && call.args[0] === mediaPath)).toBe(true);
+    expect(calls.some((call) => call.command === "mediainfo" && call.args[0] === "--Output=JSON" && call.args[1] === mediaPath)).toBe(true);
+  });
+
+  it("sanitizeMediaInfoText removes absolute upload paths", () => {
+    const input = "General\nComplete name                            : /jobs/abc/upload/Movie.mkv\nFormat                                   : Matroska\n";
+
+    expect(sanitizeMediaInfoText(input, "/jobs/abc/upload")).toContain("Complete name                            : Movie.mkv");
+  });
+
+  it("ptp upload draft uses text mediainfo in release description", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-worker-draft-mediainfo-"));
+    const mediaPath = path.join(tempDir, "media", "upload", "Movie.mkv");
+    const torrentPath = path.join(tempDir, "torrent", "upload.torrent");
+    await mkdir(path.dirname(mediaPath), { recursive: true });
+    await mkdir(path.dirname(torrentPath), { recursive: true });
+    await writeFile(mediaPath, "");
+    await writeFile(torrentPath, "torrent");
+    const textInvocation: CommandInvocation = { command: "mediainfo", args: [mediaPath], timeoutMs: 30_000 };
+    const jsonInvocation: CommandInvocation = { command: "mediainfo", args: ["--Output=JSON", mediaPath], timeoutMs: 30_000 };
+    const store = new MemoryPhaseOutputStore({
+      "inspect-media": {
+        status: "completed",
+        message: "MediaInfo command completed.",
+        producedAt: "2026-05-08T00:00:00.000Z",
+        mediaPath,
+        inspectionPlan: buildUploadPlan({ candidate }).media,
+        tools: {
+          ffmpeg: { name: "ffmpeg", command: "ffmpeg", available: true },
+          mediainfo: { name: "mediainfo", command: "mediainfo", available: true },
+          oxipng: { name: "oxipng", command: "oxipng", available: true }
+        },
+        mediaInfo: {
+          invocation: textInvocation,
+          result: commandResult(textInvocation, "General\nFormat                                   : Matroska\n")
+        },
+        mediaInfoText: {
+          invocation: textInvocation,
+          result: commandResult(textInvocation, "General\nFormat                                   : Matroska\n")
+        },
+        mediaInfoJson: {
+          invocation: jsonInvocation,
+          result: commandResult(jsonInvocation, "{\"media\":{\"track\":[{\"@type\":\"General\",\"Format\":\"Matroska\"}]}}")
+        },
+        summary: {
+          durationSeconds: 7200,
+          format: "Matroska",
+          video: { width: 1920, height: 1080, hdrFormat: null },
+          audioTrackCount: 1,
+          subtitleTrackCount: 0
+        }
+      },
+      "image-host-upload": {
+        status: "completed",
+        message: "Hosted",
+        producedAt: "2026-05-08T00:00:00.000Z",
+        files: [],
+        hostedJsonPath: null,
+        uploads: [
+          {
+            filePath: "screenshot-01.png",
+            host: "imgbb",
+            result: {
+              host: "imgbb",
+              url: "https://img.example/1.png",
+              viewerUrl: "https://img.example/1",
+              deleteUrl: null,
+              width: 1920,
+              height: 1080
+            }
+          }
+        ]
+      },
+      "torrent-create": {
+        status: "completed",
+        message: "Torrent created",
+        producedAt: "2026-05-08T00:00:00.000Z",
+        reusePlan: buildUploadPlan({ candidate }).torrentReuse,
+        sourceTorrentPath: null,
+        uploadTorrentPath: torrentPath
+      }
+    } as object);
+    const preflight = createDefaultPhaseHandlers().find((handler): handler is PhaseHandler<"preflight"> => handler.phase === "preflight");
+    if (!preflight) throw new Error("Missing preflight handler");
+
+    const output = await preflight.run(
+      createPhaseContext(
+        "job-draft-mediainfo",
+        { candidate, workingDirectory: tempDir },
+        { outputStore: store }
+      )
+    );
+
+    expect(output.uploadDraft.mediaInfo).toContain("General");
+    expect(output.uploadDraft.description).toContain("MediaInfo");
+    expect(output.uploadDraft.description).toContain("General");
+    expect(output.uploadDraft.description).not.toContain("\"track\"");
+    expect(output.uploadDraft.description).toContain("[img]https://img.example/1.png[/img]");
   });
 
   it("plans screenshots without invoking ffmpeg when external tools are disabled", async () => {

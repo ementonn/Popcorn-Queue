@@ -2,6 +2,7 @@ import { copyFile, mkdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   UPLOAD_PHASES,
+  buildReleaseDescription,
   buildScreenshotPlan,
   buildUploadPlan,
   createDownloadErrorStatus,
@@ -162,6 +163,8 @@ export interface PhaseOutputMap {
     inspectionPlan: UploadPlan["media"];
     tools: Record<WorkerTool, ToolAvailability>;
     mediaInfo: CommandAttempt;
+    mediaInfoText: CommandAttempt;
+    mediaInfoJson: CommandAttempt;
     summary: MediaInfoSummary | null;
   };
   screenshots: PhaseOutputBase & {
@@ -407,12 +410,36 @@ async function waitForTorrentComplete(context: PhaseContext, infoHash: string): 
   return false;
 }
 
-function mediaInfoInvocation(command: string, mediaPath: string): CommandInvocation {
+export function mediaInfoTextInvocation(command: string, mediaPath: string): CommandInvocation {
+  return {
+    command,
+    args: [mediaPath],
+    timeoutMs: 30_000
+  };
+}
+
+export function mediaInfoJsonInvocation(command: string, mediaPath: string): CommandInvocation {
   return {
     command,
     args: ["--Output=JSON", mediaPath],
     timeoutMs: 30_000
   };
+}
+
+export function sanitizeMediaInfoText(text: string, uploadRoot: string): string {
+  const normalizedRoot = uploadRoot.replace(/[/\\]+$/, "");
+  return text
+    .split(/\r?\n/)
+    .map((line) => {
+      const match = line.match(/^(\s*Complete name\s*:\s*)(.+)$/);
+      if (!match) return line;
+      const value = (match[2] ?? "").trim();
+      const normalizedValue = value.replace(/\\/g, "/");
+      const normalizedPrefix = normalizedRoot.replace(/\\/g, "/");
+      if (!normalizedValue.startsWith(`${normalizedPrefix}/`)) return line;
+      return `${match[1] ?? ""}${normalizedValue.slice(normalizedPrefix.length + 1)}`;
+    })
+    .join("\n");
 }
 
 function screenshotInvocation(command: string, mediaPath: string, timestamp: string, outputPath: string): CommandInvocation {
@@ -497,6 +524,25 @@ function descriptionPath(context: PhaseContext): string | null {
   return path.join(context.job.workingDirectory, "metadata", "description.md");
 }
 
+function mediaInfoUploadRoot(context: PhaseContext, mediaPath: string): string {
+  const directories = mediaWorkspaceDirectories(context);
+  if (directories && mediaPath.replace(/\\/g, "/").startsWith(directories.uploadDirectory.replace(/\\/g, "/"))) {
+    return directories.uploadDirectory;
+  }
+  return path.dirname(mediaPath);
+}
+
+function sanitizeMediaInfoAttempt(attempt: CommandAttempt, uploadRoot: string): CommandAttempt {
+  if (!attempt.result || !commandSucceeded(attempt.result)) return attempt;
+  return {
+    ...attempt,
+    result: {
+      ...attempt.result,
+      stdout: sanitizeMediaInfoText(attempt.result.stdout, uploadRoot)
+    }
+  };
+}
+
 async function buildPtpUploadDraft(context: PhaseContext): Promise<PtpUploadDraft> {
   const plan = await uploadPlan(context);
   const duplicate = await context.getOutput("duplicate-check");
@@ -504,21 +550,21 @@ async function buildPtpUploadDraft(context: PhaseContext): Promise<PtpUploadDraf
   const imageHost = await context.getOutput("image-host-upload");
   const torrentCreate = await context.getOutput("torrent-create");
   const screenshots = imageHost?.uploads.flatMap((attempt) => (attempt.result?.url ? [attempt.result.url] : [])) ?? [];
-  const mediaInfo = mediaInspection?.mediaInfo.result?.stdout ?? null;
+  const mediaInfo = mediaInspection?.mediaInfoText.result?.stdout ?? mediaInspection?.mediaInfo.result?.stdout ?? null;
   const torrentPath = torrentCreate?.uploadTorrentPath ?? null;
   const draftPath = descriptionPath(context);
-  const description = [
-    `Release: ${plan.releaseName.generated}`,
+  const releaseNotes = [
     `Source: ${context.job.candidate.site}`,
     `PTP: ${context.job.checkResult?.decision.ptpUrl ?? "new upload"}`,
-    `Duplicate check: ${duplicate?.decision?.reason ?? context.job.checkResult?.decision.reason ?? "not supplied"}`,
-    "",
-    "Screenshots:",
-    screenshots.length ? screenshots.join("\n") : "Pending screenshot uploads.",
-    "",
-    "MediaInfo:",
-    mediaInfo ?? "Pending MediaInfo."
+    `Duplicate check: ${duplicate?.decision?.reason ?? context.job.checkResult?.decision.reason ?? "not supplied"}`
   ].join("\n");
+  const descriptionInput: Parameters<typeof buildReleaseDescription>[0] = {
+    releaseName: plan.releaseName.generated,
+    releaseNotes,
+    screenshots
+  };
+  if (mediaInfo) descriptionInput.mediaInfoText = mediaInfo;
+  const description = buildReleaseDescription(descriptionInput);
 
   if (draftPath) {
     await mkdir(path.dirname(draftPath), { recursive: true });
@@ -756,29 +802,37 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
         const plan = await uploadPlan(context);
         const mediaPath = await resolvedMediaPath(context);
         const tools = await checkWorkerTools(context.commandExecutor, context.toolCommands);
-        const invocation = mediaInfoInvocation(context.toolCommands.mediainfo ?? "mediainfo", mediaPath ?? "<media-path>");
+        const textInvocation = mediaInfoTextInvocation(context.toolCommands.mediainfo ?? "mediainfo", mediaPath ?? "<media-path>");
+        const jsonInvocation = mediaInfoJsonInvocation(context.toolCommands.mediainfo ?? "mediainfo", mediaPath ?? "<media-path>");
 
-        let mediaInfo: CommandAttempt;
+        let mediaInfoText: CommandAttempt;
+        let mediaInfoJson: CommandAttempt;
         let summary: MediaInfoSummary | null = null;
         if (!context.runExternalTools) {
-          mediaInfo = skippedAttempt(invocation, "External tool execution is disabled.");
+          mediaInfoText = skippedAttempt(textInvocation, "External tool execution is disabled.");
+          mediaInfoJson = skippedAttempt(jsonInvocation, "External tool execution is disabled.");
         } else if (!tools.mediainfo.available) {
-          mediaInfo = skippedAttempt(invocation, "mediainfo is unavailable.");
+          mediaInfoText = skippedAttempt(textInvocation, "mediainfo is unavailable.");
+          mediaInfoJson = skippedAttempt(jsonInvocation, "mediainfo is unavailable.");
         } else if (!mediaPath || !(await pathExists(mediaPath))) {
-          mediaInfo = skippedAttempt(invocation, "No existing media path is available for analysis.");
+          mediaInfoText = skippedAttempt(textInvocation, "No existing media path is available for analysis.");
+          mediaInfoJson = skippedAttempt(jsonInvocation, "No existing media path is available for analysis.");
         } else {
-          mediaInfo = await maybeRun(context, mediaInfoInvocation(tools.mediainfo.command, mediaPath));
-          if (mediaInfo.result && commandSucceeded(mediaInfo.result)) {
-            summary = parseMediaInfoSummary(mediaInfo.result.stdout);
+          mediaInfoText = sanitizeMediaInfoAttempt(await maybeRun(context, mediaInfoTextInvocation(tools.mediainfo.command, mediaPath)), mediaInfoUploadRoot(context, mediaPath));
+          mediaInfoJson = await maybeRun(context, mediaInfoJsonInvocation(tools.mediainfo.command, mediaPath));
+          if (mediaInfoJson.result && commandSucceeded(mediaInfoJson.result)) {
+            summary = parseMediaInfoSummary(mediaInfoJson.result.stdout);
           }
         }
 
         return {
-          ...base("completed", mediaInfo.result ? "MediaInfo command completed." : "Media analysis plan prepared."),
+          ...base("completed", mediaInfoText.result || mediaInfoJson.result ? "MediaInfo command completed." : "Media analysis plan prepared."),
           mediaPath,
           inspectionPlan: plan.media,
           tools,
-          mediaInfo,
+          mediaInfo: mediaInfoText,
+          mediaInfoText,
+          mediaInfoJson,
           summary
         };
       }
