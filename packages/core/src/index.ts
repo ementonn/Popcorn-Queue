@@ -1,4 +1,5 @@
 export * from "./cache.js";
+export * from "./download-status.js";
 export * from "./parse.js";
 export * from "./ptp-normalize.js";
 export * from "./media.js";

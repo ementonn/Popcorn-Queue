@@ -79,4 +79,85 @@ describe("QBittorrentClient", () => {
     await expect(client.listFiles("ABC123")).resolves.toEqual([{ name: "movie.mkv", size: 5, progress: 1 }]);
     expect(calls[1]).toBe("http://127.0.0.1:10049/api/v2/torrents/files?hash=ABC123");
   });
+
+  it("reads qBittorrent torrent status without external network", async () => {
+    const calls: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      calls.push(String(input));
+      if (String(input).includes("/api/v2/auth/login")) return new Response("Ok.", { status: 200, headers: { "set-cookie": "SID=abc" } });
+      if (String(input).includes("/api/v2/torrents/info")) {
+        return Response.json([
+          {
+            hash: "ABC123",
+            state: "downloading",
+            progress: 0.42,
+            downloaded: 4_200,
+            size: 10_000,
+            amount_left: 5_800,
+            dlspeed: 8_388_608,
+            upspeed: 1024,
+            eta: 720,
+            num_seeds: 12,
+            num_leechs: 3,
+            save_path: "/downloads",
+            content_path: "/downloads/Movie.mkv"
+          }
+        ]);
+      }
+      return new Response("Not found", { status: 404 });
+    };
+
+    const client = new QBittorrentClient({
+      baseUrl: "127.0.0.1:10049",
+      username: "user",
+      password: "pass",
+      fetchImpl
+    });
+
+    await expect(client.getStatus("ABC123")).resolves.toMatchObject({
+      client: "qbittorrent",
+      infoHash: "ABC123",
+      state: "downloading",
+      progress: 0.42,
+      downloaded: 4_200,
+      size: 10_000,
+      amountLeft: 5_800,
+      downloadSpeed: 8_388_608,
+      uploadSpeed: 1024,
+      eta: 720,
+      seeds: 12,
+      peers: 3,
+      savePath: "/downloads",
+      contentPath: "/downloads/Movie.mkv",
+      error: null
+    });
+    expect(calls[1]).toBe("http://127.0.0.1:10049/api/v2/torrents/info?hashes=ABC123");
+  });
+
+  it("reports missing qBittorrent torrents as missing status", async () => {
+    const fetchImpl: typeof fetch = async (input) => {
+      if (String(input).includes("/api/v2/auth/login")) return new Response("Ok.", { status: 200, headers: { "set-cookie": "SID=abc" } });
+      if (String(input).includes("/api/v2/torrents/info")) return Response.json([]);
+      return new Response("Not found", { status: 404 });
+    };
+    const client = new QBittorrentClient({ baseUrl: "127.0.0.1:10049", username: "user", password: "pass", fetchImpl });
+
+    await expect(client.getStatus("MISSING")).resolves.toMatchObject({
+      client: "qbittorrent",
+      infoHash: "MISSING",
+      state: "missing",
+      progress: null,
+      error: "Torrent is not present in qBittorrent."
+    });
+  });
+
+  it("surfaces qBittorrent status HTTP failures", async () => {
+    const fetchImpl: typeof fetch = async (input) => {
+      if (String(input).includes("/api/v2/auth/login")) return new Response("Ok.", { status: 200, headers: { "set-cookie": "SID=abc" } });
+      return new Response("Unauthorized", { status: 401 });
+    };
+    const client = new QBittorrentClient({ baseUrl: "127.0.0.1:10049", username: "user", password: "pass", fetchImpl });
+
+    await expect(client.getStatus("ABC123")).rejects.toThrow("qBittorrent torrent status lookup failed with HTTP 401.");
+  });
 });

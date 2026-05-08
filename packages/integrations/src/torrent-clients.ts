@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { createDownloadErrorStatus, createDownloadStatus, isDownloadComplete, type DownloadStatus } from "@popcorn-queue/core";
 
 export interface TorrentClientAddOptions {
   torrentPath: string;
@@ -19,6 +20,7 @@ export interface TorrentClientFile {
 export interface TorrentClient {
   readonly name: string;
   addTorrent(options: TorrentClientAddOptions): Promise<{ infoHash: string }>;
+  getStatus(infoHash: string): Promise<DownloadStatus>;
   isComplete(infoHash: string): Promise<boolean>;
   listFiles(infoHash: string): Promise<TorrentClientFile[]>;
   removeTorrent(infoHash: string, options?: { deleteData?: boolean }): Promise<void>;
@@ -33,6 +35,15 @@ export class NotConfiguredTorrentClient implements TorrentClient {
 
   async isComplete(): Promise<boolean> {
     return false;
+  }
+
+  async getStatus(infoHash: string): Promise<DownloadStatus> {
+    return createDownloadErrorStatus({
+      client: this.name,
+      infoHash: infoHash || null,
+      state: "unavailable",
+      error: "Torrent client is not configured."
+    });
   }
 
   async listFiles(): Promise<TorrentClientFile[]> {
@@ -53,13 +64,35 @@ export interface QBittorrentClientOptions {
 
 interface QBittorrentTorrentInfo {
   hash?: string;
+  state?: string;
   progress?: number;
+  downloaded?: number;
+  size?: number;
+  total_size?: number;
+  amount_left?: number;
+  dlspeed?: number;
+  dl_speed?: number;
+  upspeed?: number;
+  up_speed?: number;
+  eta?: number;
+  num_seeds?: number;
+  num_leechs?: number;
+  save_path?: string;
+  content_path?: string;
 }
 
 interface QBittorrentTorrentFile {
   name?: string;
   size?: number;
   progress?: number;
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function readByteString(buffer: Buffer, offset: number): { value: string; start: number; end: number } {
@@ -147,13 +180,37 @@ export class QBittorrentClient implements TorrentClient {
     return Array.isArray(torrents) && torrents.length > 0;
   }
 
-  async isComplete(infoHash: string): Promise<boolean> {
-    if (!infoHash) return false;
+  async getStatus(infoHash: string): Promise<DownloadStatus> {
+    if (!infoHash) return this.createMissingStatus(null);
     await this.login();
     const response = await this.fetchImpl(this.url(`/api/v2/torrents/info?hashes=${encodeURIComponent(infoHash)}`), this.cookie ? { headers: { cookie: this.cookie } } : undefined);
-    if (!response.ok) throw new Error(`qBittorrent torrent lookup failed with HTTP ${response.status}.`);
+    if (!response.ok) throw new Error(`qBittorrent torrent status lookup failed with HTTP ${response.status}.`);
     const torrents = (await response.json()) as QBittorrentTorrentInfo[];
-    return Array.isArray(torrents) && torrents.some((torrent) => torrent.progress === 1);
+    if (!Array.isArray(torrents) || torrents.length === 0) return this.createMissingStatus(infoHash);
+    const torrent = torrents.find((candidate) => stringOrNull(candidate.hash)?.toLowerCase() === infoHash.toLowerCase()) ?? torrents[0];
+    if (!torrent) return this.createMissingStatus(infoHash);
+
+    return createDownloadStatus({
+      client: this.name,
+      infoHash: stringOrNull(torrent.hash) ?? infoHash,
+      state: stringOrNull(torrent.state) ?? "unknown",
+      progress: numberOrNull(torrent.progress),
+      downloaded: numberOrNull(torrent.downloaded),
+      size: numberOrNull(torrent.size) ?? numberOrNull(torrent.total_size),
+      amountLeft: numberOrNull(torrent.amount_left),
+      downloadSpeed: numberOrNull(torrent.dlspeed) ?? numberOrNull(torrent.dl_speed),
+      uploadSpeed: numberOrNull(torrent.upspeed) ?? numberOrNull(torrent.up_speed),
+      eta: numberOrNull(torrent.eta),
+      seeds: numberOrNull(torrent.num_seeds),
+      peers: numberOrNull(torrent.num_leechs),
+      savePath: stringOrNull(torrent.save_path),
+      contentPath: stringOrNull(torrent.content_path),
+      error: null
+    });
+  }
+
+  async isComplete(infoHash: string): Promise<boolean> {
+    return isDownloadComplete(await this.getStatus(infoHash));
   }
 
   async listFiles(infoHash: string): Promise<TorrentClientFile[]> {
@@ -203,6 +260,15 @@ export class QBittorrentClient implements TorrentClient {
     const text = await response.text();
     if (!response.ok || !/ok/i.test(text)) throw new Error(`qBittorrent login failed with HTTP ${response.status}.`);
     this.cookie = response.headers.get("set-cookie")?.split(";")[0] ?? "";
+  }
+
+  private createMissingStatus(infoHash: string | null): DownloadStatus {
+    return createDownloadErrorStatus({
+      client: this.name,
+      infoHash,
+      state: "missing",
+      error: "Torrent is not present in qBittorrent."
+    });
   }
 
   private url(pathname: string): string {
