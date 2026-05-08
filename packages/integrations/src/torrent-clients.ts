@@ -126,6 +126,8 @@ export class QBittorrentClient implements TorrentClient {
   }
 
   private url(pathname: string): string {
-    return new URL(pathname, this.options.baseUrl.replace(/\/+$/, "")).toString();
+    const baseUrl = this.options.baseUrl.trim();
+    const normalized = /^[a-z][a-z\d+\-.]*:\/\//i.test(baseUrl) ? baseUrl : `http://${baseUrl}`;
+    return new URL(pathname, normalized.replace(/\/+$/, "")).toString();
   }
 }

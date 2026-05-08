@@ -6,7 +6,12 @@ export interface DashboardData {
   globalLogs: GlobalLogResponse;
 }
 
-const apiBase = (import.meta.env.VITE_API_BASE_URL ?? import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
+const apiBase = (
+  import.meta.env.VITE_API_BASE_URL ??
+  import.meta.env.VITE_POPCORN_QUEUE_API_URL ??
+  import.meta.env.VITE_API_URL ??
+  ""
+).replace(/\/$/, "");
 
 async function parseError(response: Response): Promise<string> {
   const text = await response.text();

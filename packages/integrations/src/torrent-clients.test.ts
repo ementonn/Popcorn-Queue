@@ -37,4 +37,24 @@ describe("QBittorrentClient", () => {
 
     expect(calls.map((call) => call.url)).toEqual(["http://127.0.0.1:8080/api/v2/auth/login", "http://127.0.0.1:8080/api/v2/torrents/add"]);
   });
+
+  it("accepts qBittorrent URLs without an explicit scheme", async () => {
+    const calls: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      calls.push(String(input));
+      if (String(input).includes("/api/v2/torrents/info")) return Response.json([]);
+      return new Response("Ok.", { status: 200, headers: { "set-cookie": "SID=abc" } });
+    };
+
+    const client = new QBittorrentClient({
+      baseUrl: "127.0.0.1:10049",
+      username: "user",
+      password: "pass",
+      fetchImpl
+    });
+
+    await expect(client.hasTorrent("abc")).resolves.toBe(false);
+    expect(calls[0]).toBe("http://127.0.0.1:10049/api/v2/auth/login");
+    expect(calls[1]).toBe("http://127.0.0.1:10049/api/v2/torrents/info?hashes=abc");
+  });
 });

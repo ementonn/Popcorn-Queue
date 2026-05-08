@@ -26,6 +26,7 @@ All code for this new project lives under this directory. The legacy
 npm install
 npm test
 npm run typecheck
+npm run test:e2e
 npm run dev:web
 npm run dev:api
 ```
@@ -35,3 +36,15 @@ template. Automated tests use mocks and do not call PTP, TMDb, image hosts, or a
 torrent client. For manual browser testing, install
 `apps/userscript/popcorn-queue-bridge.user.js` in Tampermonkey and set the API
 URL, web URL, and browser token from the userscript menu.
+
+The main UI prepares jobs up to review automatically. Review screenshots,
+MediaInfo/BDInfo, duplicate result, release draft, and torrent/qB readiness,
+then press `Start Upload`. Debug phase controls live under Diagnostics only.
+
+Logs are available through:
+
+```bash
+npm run logs:api
+npm run logs:worker
+npm run logs:job -- <jobId>
+```

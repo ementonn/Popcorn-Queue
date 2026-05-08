@@ -1,12 +1,19 @@
-# Browser API
+# API
 
 All `/api/browser/*` routes require:
 
 `Authorization: Bearer <POPCORN_QUEUE_BROWSER_TOKEN>`
 
-## POST /api/browser/check/batch
+Automated tests mock external systems. Real PTP, image-host, qBittorrent, and
+media-tool calls are only used when you run the service manually with the
+matching `.env` values.
 
-Checks several tracker-page candidates against PTP.
+## Browser Bridge
+
+### POST /api/browser/check/batch
+
+Checks tracker-page candidates against PTP through the backend client and the
+permanent SQLite cache.
 
 ```json
 {
@@ -22,37 +29,32 @@ Checks several tracker-page candidates against PTP.
 }
 ```
 
-The response includes normalized parsing, rule decision, PTP URL, cache hit/miss,
-and cache age. Backend PTP cache entries are permanent until manually refreshed
-or invalidated.
+The response includes normalized parsing, rule decision, PTP URL, and cache hit
+metadata. Use `bypassCache: true` for an explicit fresh recheck.
 
-## POST /api/browser/jobs
+### POST /api/browser/jobs
 
 Multipart form fields:
 
 - `torrent`: source `.torrent` file.
 - `candidate`: JSON serialized browser candidate.
-- `checkResult`: JSON serialized result from `/api/browser/check/batch`.
+- `checkResult`: JSON serialized duplicate-check result.
 
-The API creates a queued or review job and returns its ID.
+The API creates a job, writes its workspace manifest, and queues automatic
+preparation up to the review step.
 
-## POST /api/browser/cache/invalidate
+### POST /api/browser/cache/invalidate
 
 Deletes one backend PTP cache key derived from `{ title, imdbId }`.
 
-## GET /api/jobs
+## Queue
 
-Returns the current SQLite-backed upload queue. Each job includes:
+### GET /api/jobs
 
-- `uploadPlan.metadata`: IMDb/TMDb/TVmaze enrichment plan.
-- `uploadPlan.releaseName`: normalized release-name output and warnings.
-- `uploadPlan.scene`: predbnet/SRRDB verification plan.
-- `uploadPlan.screenshots`: timestamp count, image host fallback, and tone-map hint.
-- `uploadPlan.torrentReuse`: source torrent and piece-hash reuse strategy.
-- `uploadPlan.media`: inferred container, disc type, audio/subtitle hints, and trumpable checks.
-- `uploadPlan.reviewGates`: blocker/warning/info gates that must be resolved before upload.
+Returns the current SQLite-backed upload queue. Jobs include `uploadReadiness`,
+`humanStep`, `workspace`, `artifacts`, `phases`, and `uploadPlan.reviewGates`.
 
-## POST /api/jobs
+### POST /api/jobs
 
 Creates a manual upload job from JSON:
 
@@ -65,32 +67,51 @@ Creates a manual upload job from JSON:
 }
 ```
 
-## POST /api/jobs/:id/start
+### POST /api/jobs/import
 
-Starts a job unless blocker review gates are open.
+Imports a restored job workspace from `jobPath` and `manifest`. If the restored
+manifest is already `done`, the job is marked `needs_reseed` so qBittorrent can
+be repopulated instead of silently assuming the client still has it.
 
-## POST /api/jobs/:id/pause
+### POST /api/jobs/:id/start-upload
+
+Starts upload only when `uploadReadiness` is `ready` and no blocker gate is open.
+This is the normal operator action after reviewing screenshots, MediaInfo/BDInfo,
+release draft, torrent path, and qB readiness.
+
+### POST /api/jobs/:id/pause
 
 Pauses the selected job.
 
-## POST /api/jobs/:id/retry
+### POST /api/jobs/:id/retry-failed
 
-Queues the current phase for retry and increments the phase retry count.
+Retries failed jobs or failed phases. It does not advance a healthy job.
 
-## POST /api/jobs/:id/advance
+### POST /api/jobs/:id/reseed
 
-Marks the current phase complete and moves the job to the next phase.
+Adds the restored upload torrent to qBittorrent with the job's upload directory
+as the save path. If qBittorrent is unavailable, the job remains `needs_reseed`.
 
-## POST /api/jobs/:id/plan/refresh
-
-Regenerates the Upsies-style upload plan while preserving already resolved review
-gate status.
-
-## POST /api/jobs/:id/review-gates/:gateId/resolve
+### POST /api/jobs/:id/review-gates/:gateId/resolve
 
 Marks one review gate as resolved. URL-encode `gateId` because generated IDs can
 contain `:`.
 
-## GET /api/features
+## Logs
 
-Returns the implemented/planned feature list surfaced by the web inspector.
+### GET /api/jobs/:id/logs
+
+Returns the tail of `data/jobs/<jobId>/logs/job.log`.
+
+### GET /api/logs/global
+
+Returns tails from `logs/api.log` and `logs/worker.log`.
+
+## Diagnostics-Only Debug Routes
+
+These routes exist for recovery and local debugging. The main UI keeps them
+inside Diagnostics.
+
+- `POST /api/jobs/:id/debug/advance`
+- `POST /api/jobs/:id/debug/skip`
+- `POST /api/jobs/:id/debug/force-state`
