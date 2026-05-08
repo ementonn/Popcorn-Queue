@@ -4,6 +4,7 @@ import {
   buildJobWorkspacePaths,
   createJobManifest,
   computeUploadReadiness,
+  type DownloadStatus,
   type EvidenceRequirement,
   type UploadPhase,
   type UploadReadiness
@@ -28,6 +29,7 @@ type MaybePromise<T> = T | Promise<T>;
 
 export interface PreparationJobStore {
   get(id: string): MaybePromise<Job | null>;
+  updateDownloadStatus(id: string, status: DownloadStatus): MaybePromise<Job | null>;
   markPreparedForReview(id: string, input: Parameters<JobRepository["markPreparedForReview"]>[1]): MaybePromise<Job | null>;
   markPreparationResult(id: string, input: Parameters<JobRepository["markPreparationResult"]>[1]): MaybePromise<Job | null>;
 }
@@ -65,6 +67,77 @@ function phaseStateFromStatus(status: PhaseOutputMap[UploadPhase]["status"]): Ph
 
 function outputStatus(output: PhaseOutputMap[UploadPhase] | undefined): PhaseOutputMap[UploadPhase]["status"] | undefined {
   return output?.status;
+}
+
+interface DownloadLogState {
+  lastState: string | null;
+  lastBucket: number | null;
+  completed: boolean;
+  errored: boolean;
+}
+
+function clampedProgress(status: DownloadStatus): number | null {
+  if (typeof status.progress !== "number" || !Number.isFinite(status.progress)) return null;
+  return Math.max(0, Math.min(1, status.progress));
+}
+
+function progressBucket(status: DownloadStatus): number | null {
+  const progress = clampedProgress(status);
+  if (progress === null) return null;
+  return Math.floor(progress * 20);
+}
+
+function percentLabel(status: DownloadStatus): string {
+  const progress = clampedProgress(status);
+  return progress === null ? "unknown" : `${Math.round(progress * 100)}%`;
+}
+
+function titleCaseState(state: string): string {
+  return state
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function shouldLogDownloadStatus(status: DownloadStatus, state: DownloadLogState): boolean {
+  if (status.error && !state.errored) return true;
+  const progress = clampedProgress(status);
+  if (progress === 1 && !state.completed) return true;
+  const bucket = progressBucket(status);
+  if (bucket !== null && bucket !== state.lastBucket) return true;
+  return status.state !== state.lastState && bucket === null;
+}
+
+function downloadLogMessage(status: DownloadStatus): string {
+  if (status.error) return `Download error: ${status.error}`;
+  if (clampedProgress(status) === 1) return "Download complete.";
+  if (status.progress !== null) return `Download progress: ${percentLabel(status)}.`;
+  return `Download status: ${titleCaseState(status.state)}.`;
+}
+
+function downloadLogPayload(status: DownloadStatus) {
+  return {
+    client: status.client,
+    infoHash: status.infoHash,
+    state: status.state,
+    progress: status.progress,
+    downloaded: status.downloaded,
+    size: status.size,
+    amountLeft: status.amountLeft,
+    downloadSpeed: status.downloadSpeed,
+    uploadSpeed: status.uploadSpeed,
+    eta: status.eta,
+    seeds: status.seeds,
+    peers: status.peers,
+    error: status.error
+  };
+}
+
+function updateDownloadLogState(state: DownloadLogState, status: DownloadStatus): void {
+  state.lastState = status.state;
+  state.lastBucket = progressBucket(status);
+  if (clampedProgress(status) === 1) state.completed = true;
+  if (status.error) state.errored = true;
 }
 
 function hasOutput<K extends UploadPhase>(outputs: Partial<PhaseOutputMap>, phase: K): outputs is Partial<PhaseOutputMap> & Pick<PhaseOutputMap, K> {
@@ -115,6 +188,13 @@ export class PreparationService {
       mkdir(paths.logs.dir, { recursive: true })
     ]);
 
+    const downloadLogState: DownloadLogState = {
+      lastState: null,
+      lastBucket: null,
+      completed: false,
+      errored: false
+    };
+
     const contextOptions: CreatePhaseContextOptions = {
       runExternalTools: this.options.runExternalTools,
       toolCommands: this.options.toolCommands,
@@ -125,6 +205,18 @@ export class PreparationService {
           message,
           payload
         });
+      },
+      reportDownloadStatus: async (status) => {
+        await this.options.jobs.updateDownloadStatus(job.id, status);
+        if (shouldLogDownloadStatus(status, downloadLogState)) {
+          await appendJobEvent(paths.logs.jobLog, {
+            at: nowIso(),
+            level: status.error ? "error" : "info",
+            message: downloadLogMessage(status),
+            payload: downloadLogPayload(status)
+          });
+        }
+        updateDownloadLogState(downloadLogState, status);
       }
     };
     if (!this.options.runExternalTools) contextOptions.commandExecutor = disabledCommandExecutor;

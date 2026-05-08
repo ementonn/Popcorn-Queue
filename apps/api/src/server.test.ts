@@ -166,6 +166,26 @@ describe("API cache contract", () => {
 });
 
 describe("API jobs", () => {
+  it("returns null download status for jobs without a download snapshot", async () => {
+    await withServer(async (app) => {
+      const create = await app.inject({
+        method: "POST",
+        url: "/api/jobs",
+        payload: {
+          site: "unknown",
+          title: "Movie.2024.1080p.WEB-DL.x265-GROUP",
+          imdbId: "tt1234567"
+        }
+      });
+      expect(create.statusCode).toBe(201);
+      const job = create.json<{ job: Job }>().job;
+
+      const response = await app.inject({ method: "GET", url: `/api/jobs/${job.id}/download-status` });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ downloadStatus: null });
+    });
+  });
+
   it("creates browser upload jobs from multipart submissions", async () => {
     await rm(testConfig().paths.dataRoot, { recursive: true, force: true });
     await withServer(async (app) => {

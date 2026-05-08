@@ -202,6 +202,12 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
     return { job };
   });
 
+  app.get<{ Params: { id: string } }>("/api/jobs/:id/download-status", async (request, reply) => {
+    const job = await jobRepository.get(request.params.id);
+    if (!job) return reply.code(404).send({ error: "job_not_found" });
+    return { downloadStatus: job.downloadStatus ?? null };
+  });
+
   app.get<{ Params: { id: string } }>("/api/jobs/:id/logs", async (request, reply) => {
     const job = await jobRepository.get(request.params.id);
     if (!job) return reply.code(404).send({ error: "job_not_found" });

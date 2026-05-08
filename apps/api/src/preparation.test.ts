@@ -2,6 +2,7 @@ import { copyFile, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { buildJobWorkspacePaths } from "@popcorn-queue/core";
 import { JobRepository } from "./jobs.js";
 import { PreparationService } from "./preparation.js";
 
@@ -106,6 +107,89 @@ describe("PreparationService", () => {
     expect(prepared.artifacts.uploadTorrent).toBe("torrent/upload.torrent");
     expect(prepared.artifacts.qbReady).toBe(true);
     expect(prepared.events.some((event) => event.message.includes("uploaded to PTP"))).toBe(false);
+  });
+
+  it("stores qBittorrent progress snapshots and throttles readable download logs", async () => {
+    const dataRoot = await mkdtemp(path.join(os.tmpdir(), "popcorn-prep-qb-progress-"));
+    const jobs = new JobRepository();
+    const job = jobs.create({
+      candidate: {
+        site: "pter",
+        title: "Progress.Movie.2024.1080p.WEB-DL.x265-GROUP",
+        imdbId: "tt1234567"
+      },
+      torrent: {
+        filename: "source.torrent",
+        bytes: 13,
+        filePath: path.join(dataRoot, "jobs", "job-source.torrent")
+      }
+    });
+    const paths = buildJobWorkspacePaths(dataRoot, job.id);
+    const downloadDir = path.join(paths.sourceDownloadDir, "Progress.Movie.2024.1080p.WEB-DL.x265-GROUP");
+    const downloadedMedia = path.join(downloadDir, "Progress.Movie.2024.1080p.WEB-DL.x265-GROUP.mkv");
+    await mkdir(downloadDir, { recursive: true });
+    await mkdir(path.dirname(job.torrent!.filePath!), { recursive: true });
+    await writeFile(job.torrent!.filePath!, "source torrent");
+    await writeFile(downloadedMedia, "movie");
+
+    const progressPoints = [0, 0.01, 0.049, 0.05, 0.099, 0.1, 1];
+    let statusIndex = 0;
+    const service = new PreparationService({
+      dataRoot,
+      jobs,
+      runExternalTools: false,
+      toolCommands: { ffmpeg: "ffmpeg", mediainfo: "mediainfo", oxipng: "oxipng" },
+      torrentClientOptions: {
+        waitTimeoutMs: 1000,
+        waitIntervalMs: 1
+      },
+      torrentClient: {
+        name: "mock-qb",
+        async addTorrent() {
+          return { infoHash: "PROGRESS" };
+        },
+        async getStatus(infoHash) {
+          const progress = progressPoints[Math.min(statusIndex, progressPoints.length - 1)]!;
+          statusIndex += 1;
+          return {
+            client: "mock-qb",
+            infoHash,
+            state: progress === 1 ? "uploading" : "downloading",
+            progress,
+            downloaded: Math.round(10_000 * progress),
+            size: 10_000,
+            amountLeft: Math.round(10_000 * (1 - progress)),
+            downloadSpeed: progress === 1 ? 0 : 8_388_608,
+            uploadSpeed: 0,
+            eta: progress === 1 ? 0 : 720,
+            seeds: 12,
+            peers: 3,
+            savePath: paths.sourceDownloadDir,
+            contentPath: downloadedMedia,
+            lastUpdatedAt: "2026-05-08T00:00:00.000Z",
+            error: null
+          };
+        },
+        async isComplete() {
+          return false;
+        },
+        async listFiles() {
+          return [{ name: "Progress.Movie.2024.1080p.WEB-DL.x265-GROUP/Progress.Movie.2024.1080p.WEB-DL.x265-GROUP.mkv", size: 10_000 }];
+        }
+      }
+    });
+
+    await service.runJob(job.id);
+    const prepared = jobs.get(job.id)!;
+    const jobLog = await readFile(paths.logs.jobLog, "utf8");
+    const downloadLines = jobLog.split(/\r?\n/).filter((line) => line.includes("Download "));
+
+    expect(prepared.downloadStatus).toMatchObject({ infoHash: "PROGRESS", progress: 1, state: "uploading" });
+    expect(jobLog).toContain("Download progress: 0%.");
+    expect(jobLog).toContain("Download progress: 5%.");
+    expect(jobLog).toContain("Download progress: 10%.");
+    expect(jobLog).toContain("Download complete.");
+    expect(downloadLines).toHaveLength(4);
   });
 
   it("uses the Shock Wave fixture to prepare media evidence, torrent handoff, and a PTP draft without submitting", async () => {
