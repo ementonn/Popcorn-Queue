@@ -1,3 +1,4 @@
+import { downloadDetail, downloadProgress, downloadSummary } from "../download-status.js";
 import type { ApiJob, ReviewGate } from "../types.js";
 
 interface QueueTableProps {
@@ -55,6 +56,7 @@ export function QueueTable({ jobs, selectedJobId, onSelect, onStartUpload }: Que
               <th>Release</th>
               <th>Source</th>
               <th>Step</th>
+              <th>Download</th>
               <th>Blockers</th>
               <th>Warnings</th>
               <th>Updated</th>
@@ -65,6 +67,7 @@ export function QueueTable({ jobs, selectedJobId, onSelect, onStartUpload }: Que
             {jobs.map((job) => {
               const selected = job.id === selectedJobId;
               const action = actionText(job);
+              const progress = downloadProgress(job.downloadStatus);
               return (
                 <tr key={job.id} className={selected ? "selected" : undefined} onClick={() => onSelect(job.id)}>
                   <td>
@@ -77,6 +80,17 @@ export function QueueTable({ jobs, selectedJobId, onSelect, onStartUpload }: Que
                   </td>
                   <td>{sourceLabel(job)}</td>
                   <td>{job.humanStep ?? job.phase}</td>
+                  <td className="download-cell">
+                    <div className="download-line">
+                      <span>{downloadSummary(job.downloadStatus)}</span>
+                    </div>
+                    {progress !== null ? (
+                      <div className="download-progress" aria-label={`Download ${Math.round(progress * 100)}%`}>
+                        <span style={{ width: `${progress * 100}%` }} />
+                      </div>
+                    ) : null}
+                    <span className="download-meta">{downloadDetail(job.downloadStatus)}</span>
+                  </td>
                   <td>{blockerText(job)}</td>
                   <td>{warningText(job)}</td>
                   <td>{updatedLabel(job.updatedAt)}</td>

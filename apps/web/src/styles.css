@@ -282,7 +282,7 @@ nav a:not(.active):hover {
 
 table {
   width: 100%;
-  min-width: 920px;
+  min-width: 1060px;
   border-collapse: collapse;
 }
 
@@ -332,6 +332,63 @@ tbody tr:last-child td {
   text-decoration: none;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.download-cell {
+  min-width: 184px;
+}
+
+.download-line,
+.download-review-head {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.download-line span:first-child,
+.download-review-head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.download-meta,
+.download-review-head span {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.download-review-head span {
+  margin-top: 0;
+  text-align: right;
+}
+
+.download-progress {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--muted-strong);
+  margin-top: 6px;
+}
+
+.download-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--blue);
+}
+
+.download-review {
+  display: grid;
+  gap: 8px;
 }
 
 .state-pill,

@@ -1,3 +1,4 @@
+import { downloadedBytesLabel, downloadDetail, downloadProgress, downloadSummary } from "../download-status.js";
 import type { ApiJob, JobLogResponse, ReviewGate } from "../types.js";
 
 interface ReviewPanelProps {
@@ -44,6 +45,8 @@ export function ReviewPanel({ job, jobLogs, onResolveGate }: ReviewPanelProps) {
   const mediaLines = linesFromText(job.artifacts?.mediainfo ?? job.artifacts?.bdinfo);
   const draftLines = linesFromText(job.artifacts?.description);
   const recentLogs = jobLogs.lines.length ? jobLogs.lines.slice(-8) : (job.events ?? []).slice(-8).map((event) => event.message);
+  const download = job.downloadStatus;
+  const downloadProgressValue = downloadProgress(download);
 
   return (
     <aside className="review-pane" data-testid="review-panel">
@@ -95,6 +98,35 @@ export function ReviewPanel({ job, jobLogs, onResolveGate }: ReviewPanelProps) {
           </div>
         ) : (
           empty("No duplicate result yet.")
+        )}
+      </section>
+
+      <section>
+        <h3>Download</h3>
+        {download ? (
+          <div className="download-review">
+            <div className="download-review-head">
+              <strong>{downloadSummary(download)}</strong>
+              <span>{downloadDetail(download)}</span>
+            </div>
+            {downloadProgressValue !== null ? (
+              <div className="download-progress" aria-label={`Download ${Math.round(downloadProgressValue * 100)}%`}>
+                <span style={{ width: `${downloadProgressValue * 100}%` }} />
+              </div>
+            ) : null}
+            <div className="key-value">
+              <span>Downloaded</span>
+              <strong>{downloadedBytesLabel(download)}</strong>
+              <span>Client</span>
+              <strong>{download.client}</strong>
+              <span>State</span>
+              <strong>{download.state}</strong>
+              <span>Hash</span>
+              <strong>{download.infoHash ?? "pending"}</strong>
+            </div>
+          </div>
+        ) : (
+          empty("No qB snapshot yet.")
         )}
       </section>
 

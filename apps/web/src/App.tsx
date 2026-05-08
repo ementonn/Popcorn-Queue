@@ -62,7 +62,7 @@ export function App() {
     });
     const timer = window.setInterval(() => {
       refresh().catch(() => undefined);
-    }, 10000);
+    }, 3000);
     return () => window.clearInterval(timer);
   }, [refresh]);
 
@@ -71,7 +71,22 @@ export function App() {
       setJobLogs({ lines: [] });
       return;
     }
-    loadJobLogs(selectedJob.id).then(setJobLogs).catch(() => setJobLogs({ lines: [] }));
+    let cancelled = false;
+    const load = () => {
+      loadJobLogs(selectedJob.id)
+        .then((logs) => {
+          if (!cancelled) setJobLogs(logs);
+        })
+        .catch(() => {
+          if (!cancelled) setJobLogs({ lines: [] });
+        });
+    };
+    load();
+    const timer = window.setInterval(load, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [selectedJob?.id]);
 
   const runJobAction = useCallback(

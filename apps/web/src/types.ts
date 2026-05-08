@@ -9,6 +9,25 @@ export interface ReviewGate {
   detail: string;
 }
 
+export interface DownloadStatus {
+  client: "qbittorrent" | "not-configured" | string;
+  infoHash: string | null;
+  state: string;
+  progress: number | null;
+  downloaded: number | null;
+  size: number | null;
+  amountLeft: number | null;
+  downloadSpeed: number | null;
+  uploadSpeed: number | null;
+  eta: number | null;
+  seeds: number | null;
+  peers: number | null;
+  savePath: string | null;
+  contentPath: string | null;
+  lastUpdatedAt: string;
+  error: string | null;
+}
+
 export interface ApiJob {
   id: string;
   state: JobState;
@@ -51,6 +70,7 @@ export interface ApiJob {
     bytes: number;
     contentType?: string;
   };
+  downloadStatus?: DownloadStatus;
   uploadPlan?: {
     releaseName?: {
       generated: string;
