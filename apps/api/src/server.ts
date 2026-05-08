@@ -1,10 +1,10 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import fastify from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 import { buildJobWorkspacePaths, type BrowserCheckResult, type JobManifest, type TorrentCandidate } from "@popcorn-queue/core";
-import { BrowserCheckService, PtpClient, QBittorrentClient } from "@popcorn-queue/integrations";
+import { BrowserCheckService, ImgBbUploader, PtpClient, QBittorrentClient } from "@popcorn-queue/integrations";
 import { makeBrowserAuthHook } from "./auth.js";
 import type { ApiConfig } from "./config.js";
 import { readLogTail } from "./job-logs.js";
@@ -64,6 +64,10 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
         password: config.integrations.qbittorrentPassword
       })
     : null;
+  const imageUploader =
+    config.integrations.imageHost === "imgbb" && config.integrations.imgbbApiKey
+      ? new ImgBbUploader(config.integrations.imgbbApiKey)
+      : undefined;
   const browserAuth = makeBrowserAuthHook(config.browserToken);
   const preparation = new PreparationService({
     dataRoot: config.paths.dataRoot,
@@ -73,6 +77,14 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
       ffmpeg: config.integrations.ffmpegBin,
       mediainfo: config.integrations.mediainfoBin,
       oxipng: config.integrations.oxipngBin
+    },
+    ...(imageUploader ? { imageUploader } : {}),
+    ...(torrentClient ? { torrentClient } : {}),
+    torrentClientOptions: {
+      ...(config.integrations.qbittorrentCategory ? { category: config.integrations.qbittorrentCategory } : {}),
+      ...(config.integrations.qbittorrentTags.length ? { tags: config.integrations.qbittorrentTags } : {}),
+      waitTimeoutMs: config.integrations.qbittorrentDownloadWaitMs,
+      waitIntervalMs: config.integrations.qbittorrentDownloadPollMs
     }
   });
 
@@ -383,6 +395,7 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
   app.post("/api/browser/jobs", { preHandler: browserAuth }, async (request, reply) => {
     const parts = request.parts();
     let torrentBytes = 0;
+    let torrentBuffer: Buffer | null = null;
     let torrentFilename = "source.torrent";
     let torrentContentType: string | undefined;
     let candidate: TorrentCandidate | undefined;
@@ -394,7 +407,8 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
         torrentContentType = part.mimetype;
         const chunks: Buffer[] = [];
         for await (const chunk of part.file) chunks.push(chunk as Buffer);
-        torrentBytes = Buffer.concat(chunks).byteLength;
+        torrentBuffer = Buffer.concat(chunks);
+        torrentBytes = torrentBuffer.byteLength;
       } else if (part.fieldname === "candidate") {
         candidate = JSON.parse(String(part.value)) as TorrentCandidate;
       } else if (part.fieldname === "checkResult") {
@@ -418,7 +432,31 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
     }
     if (checkResult) createInput.checkResult = checkResult;
 
-    const job = await jobRepository.createFromBrowser(createInput);
+    let job = await jobRepository.createFromBrowser(createInput);
+    if (torrentBuffer) {
+      const paths = buildJobWorkspacePaths(config.paths.dataRoot, job.id);
+      await Promise.all([
+        mkdir(paths.inputDir, { recursive: true }),
+        mkdir(paths.torrentDir, { recursive: true }),
+        mkdir(paths.sourceDownloadDir, { recursive: true }),
+        mkdir(paths.logs.dir, { recursive: true })
+      ]);
+      await writeFile(paths.sourceTorrent, torrentBuffer);
+      await writeFile(
+        paths.sourceJson,
+        `${JSON.stringify({ candidate, checkResult, torrent: { filename: torrentFilename, bytes: torrentBytes, contentType: torrentContentType } }, null, 2)}\n`,
+        "utf8"
+      );
+      job =
+        (await jobRepository.attachWorkspace(job.id, {
+          workspace: {
+            dataRoot: paths.dataRoot,
+            jobRoot: paths.jobRoot,
+            manifest: paths.manifest
+          },
+          torrentFilePath: paths.sourceTorrent
+        })) ?? job;
+    }
     enqueuePreparation(job.id);
     return reply.code(201).send({ job });
   });

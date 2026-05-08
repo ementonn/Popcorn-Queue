@@ -37,11 +37,19 @@ Optional manual integrations:
 - `QBITTORRENT_URL`
 - `QBITTORRENT_USERNAME`
 - `QBITTORRENT_PASSWORD`
+- `QBITTORRENT_DOWNLOAD_WAIT_MS`
+- `QBITTORRENT_DOWNLOAD_POLL_MS`
 - `TMDB_API_KEY`
 
 Worker binaries are disabled by default with
 `POPCORN_QUEUE_RUN_EXTERNAL_TOOLS=false`. Set it to `true` only when you want
 manual runs to execute `ffmpeg`, `mediainfo`, and `oxipng`.
+
+When qBittorrent is configured, `download-or-locate` adds the uploaded source
+torrent to qB using `data/jobs/<jobId>/download` as the save path, waits up to
+`QBITTORRENT_DOWNLOAD_WAIT_MS`, then locates the largest video file from the qB
+file list. If the torrent is still downloading, the job remains in preparation
+instead of moving to upload review.
 
 ## Browser Bridge
 

@@ -1,3 +1,4 @@
+import { access, rm } from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PtpClient } from "@popcorn-queue/integrations";
 import { buildServer } from "./server.js";
@@ -55,6 +56,8 @@ function testConfig(): ApiConfig {
       qbittorrentTags: [],
       qbittorrentCategory: "",
       qbittorrentContentLayout: "",
+      qbittorrentDownloadWaitMs: 0,
+      qbittorrentDownloadPollMs: 1,
       runExternalTools: false,
       ffmpegBin: "ffmpeg",
       mediainfoBin: "mediainfo",
@@ -164,6 +167,7 @@ describe("API cache contract", () => {
 
 describe("API jobs", () => {
   it("creates browser upload jobs from multipart submissions", async () => {
+    await rm(testConfig().paths.dataRoot, { recursive: true, force: true });
     await withServer(async (app) => {
       const boundary = "popcorn-queue-test-boundary";
       const candidate = {
@@ -215,6 +219,9 @@ describe("API jobs", () => {
       const job = response.json<{ job: Job }>().job;
       expect(job.source).toMatchObject({ site: "mteam", url: "https://tracker.example/torrent/1", title: candidate.title });
       expect(job.torrent).toMatchObject({ filename: "source.torrent", bytes: 21, contentType: "application/x-bittorrent" });
+      expect(job.torrent?.filePath).toMatch(/torrent[/\\]source\.torrent$/);
+      expect(job.workspace?.jobRoot).toContain(job.id);
+      await expect(access(job.torrent!.filePath!)).resolves.toBeUndefined();
       expect(job.state).toBe("preparing");
       expect(job.uploadPlan.screenshots.imageHosts[0]).toBe("imgbb");
       expect(job.uploadPlan.reviewGates).toContainEqual(expect.objectContaining({ id: "duplicate:slot-full", severity: "blocker" }));

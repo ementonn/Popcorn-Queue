@@ -2,10 +2,12 @@ import { PrismaClient } from "@prisma/client";
 import type { CacheEntry, CacheStore, NormalizedPtpResponse, UploadReadiness } from "@popcorn-queue/core";
 import {
   JobRepository,
+  type AttachWorkspaceInput,
   type CreateJobInput,
   type ImportRestoredJobInput,
   type Job,
   type JobPhase,
+  type PreparationResultInput,
   type JobRepositoryOptions,
   type JobState,
   type PhaseState
@@ -238,6 +240,14 @@ export class PrismaJobRepository {
 
   async markPreparedForReview(id: string, input: Parameters<JobRepository["markPreparedForReview"]>[1]): Promise<Job | null> {
     return this.withJob(id, (repo) => repo.markPreparedForReview(id, input));
+  }
+
+  async attachWorkspace(id: string, input: AttachWorkspaceInput): Promise<Job | null> {
+    return this.withJob(id, (repo) => repo.attachWorkspace(id, input));
+  }
+
+  async markPreparationResult(id: string, input: PreparationResultInput): Promise<Job | null> {
+    return this.withJob(id, (repo) => repo.markPreparationResult(id, input));
   }
 
   async markNeedsReseed(id: string, message: string): Promise<Job | null> {

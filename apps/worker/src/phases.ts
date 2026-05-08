@@ -1,4 +1,4 @@
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   UPLOAD_PHASES,
@@ -50,8 +50,22 @@ export interface WorkerJobInput {
   sourceTorrentPath?: string;
   mediaPath?: string;
   downloadPath?: string;
+  downloadDirectory?: string;
   workingDirectory?: string;
   outputDirectory?: string;
+}
+
+export interface TorrentClientFile {
+  name: string;
+  size: number;
+  progress?: number;
+}
+
+export interface TorrentDownloadClient {
+  readonly name: string;
+  addTorrent(options: { torrentPath: string; downloadPath: string; category?: string; tags?: string[]; skipHashCheck?: boolean }): Promise<{ infoHash: string }>;
+  isComplete(infoHash: string): Promise<boolean>;
+  listFiles(infoHash: string): Promise<TorrentClientFile[]>;
 }
 
 export interface CommandAttempt {
@@ -111,6 +125,9 @@ export interface PhaseOutputMap {
     sourceUrl: string | null;
     downloadUrl: string | null;
     filePath: string | null;
+    downloadDirectory: string | null;
+    infoHash: string | null;
+    client: string | null;
   };
   "prepare-media": PhaseOutputBase & {
     inputPath: string | null;
@@ -143,6 +160,7 @@ export interface PhaseOutputMap {
   "torrent-create": PhaseOutputBase & {
     reusePlan: UploadPlan["torrentReuse"];
     sourceTorrentPath: string | null;
+    uploadTorrentPath: string | null;
   };
   "seed-prepare": PhaseOutputBase & {
     torrentPath: string | null;
@@ -183,6 +201,13 @@ export interface PhaseContext {
   commandExecutor: CommandExecutor;
   toolCommands: Partial<Record<WorkerTool, string>>;
   imageUploader: ImageHostUploader | undefined;
+  torrentClient: TorrentDownloadClient | undefined;
+  torrentClientOptions: {
+    category?: string;
+    tags?: string[];
+    waitTimeoutMs: number;
+    waitIntervalMs: number;
+  };
   stopRequested(): Promise<boolean>;
   log(level: PhaseLogLevel, message: string, payload?: unknown): Promise<void>;
   getOutput<K extends UploadPhase>(phase: K): Promise<PhaseOutputMap[K] | undefined>;
@@ -201,6 +226,13 @@ export interface CreatePhaseContextOptions {
   commandExecutor?: CommandExecutor;
   toolCommands?: Partial<Record<WorkerTool, string>>;
   imageUploader?: ImageHostUploader;
+  torrentClient?: TorrentDownloadClient;
+  torrentClientOptions?: {
+    category?: string;
+    tags?: string[];
+    waitTimeoutMs?: number;
+    waitIntervalMs?: number;
+  };
   stopRequested?: () => Promise<boolean>;
   log?: (level: PhaseLogLevel, message: string, payload?: unknown) => Promise<void>;
 }
@@ -246,6 +278,13 @@ export function createPhaseContext(jobId: string, job: WorkerJobInput, options: 
     commandExecutor: options.commandExecutor ?? nodeCommandExecutor,
     toolCommands: options.toolCommands ?? {},
     imageUploader: options.imageUploader,
+    torrentClient: options.torrentClient,
+    torrentClientOptions: {
+      ...(options.torrentClientOptions?.category ? { category: options.torrentClientOptions.category } : {}),
+      ...(options.torrentClientOptions?.tags ? { tags: options.torrentClientOptions.tags } : {}),
+      waitTimeoutMs: options.torrentClientOptions?.waitTimeoutMs ?? 0,
+      waitIntervalMs: options.torrentClientOptions?.waitIntervalMs ?? 1000
+    },
     stopRequested: options.stopRequested ?? (async () => false),
     log: options.log ?? (async () => undefined),
     getOutput: <K extends UploadPhase>(phase: K) => store.get(phase),
@@ -293,6 +332,41 @@ function mediaWorkspaceDirectories(context: PhaseContext): { uploadDirectory: st
 
 function isArchivePath(filePath: string | null): boolean {
   return Boolean(filePath && /\.(?:rar|zip|7z|tar|tgz|tar\.gz)$/i.test(filePath));
+}
+
+function isMediaPath(filePath: string): boolean {
+  return /\.(?:mkv|mp4|m4v|mov|avi|ts|m2ts|iso)$/i.test(filePath);
+}
+
+function defaultDownloadDirectory(context: PhaseContext): string | null {
+  if (context.job.downloadDirectory) return context.job.downloadDirectory;
+  if (context.job.workingDirectory) return path.join(context.job.workingDirectory, "download");
+  return null;
+}
+
+function sourceTorrentPath(context: PhaseContext): string | null {
+  return context.job.sourceTorrentPath ?? context.job.torrent?.filePath ?? null;
+}
+
+function uploadTorrentPath(context: PhaseContext): string | null {
+  if (!context.job.workingDirectory) return null;
+  return path.join(context.job.workingDirectory, "torrent", "upload.torrent");
+}
+
+function selectMainMediaFile(files: TorrentClientFile[]): TorrentClientFile | null {
+  return files
+    .filter((file) => isMediaPath(file.name))
+    .sort((a, b) => b.size - a.size)[0] ?? null;
+}
+
+async function waitForTorrentComplete(context: PhaseContext, infoHash: string): Promise<boolean> {
+  const deadline = Date.now() + context.torrentClientOptions.waitTimeoutMs;
+  do {
+    if (await context.torrentClient!.isComplete(infoHash)) return true;
+    if (context.torrentClientOptions.waitTimeoutMs <= 0 || Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, context.torrentClientOptions.waitIntervalMs));
+  } while (Date.now() < deadline);
+  return false;
 }
 
 function mediaInfoInvocation(command: string, mediaPath: string): CommandInvocation {
@@ -429,18 +503,93 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
       phase: "download-or-locate",
       async run(context) {
         const existingPath = context.job.downloadPath ?? context.job.mediaPath ?? null;
+        const downloadDirectory = defaultDownloadDirectory(context);
+        const torrentPath = sourceTorrentPath(context);
+        if (existingPath) {
+          return {
+            ...base("completed", "Media path is already available."),
+            sourceUrl: context.job.candidate.sourceUrl ?? null,
+            downloadUrl: context.job.candidate.downloadUrl ?? null,
+            filePath: existingPath,
+            downloadDirectory,
+            infoHash: null,
+            client: null
+          };
+        }
+        if (!context.torrentClient) {
+          return {
+            ...base("skipped", "Torrent client integration is not configured in this worker scaffold."),
+            sourceUrl: context.job.candidate.sourceUrl ?? null,
+            downloadUrl: context.job.candidate.downloadUrl ?? null,
+            filePath: null,
+            downloadDirectory,
+            infoHash: null,
+            client: null
+          };
+        }
+        if (!torrentPath || !(await pathExists(torrentPath))) {
+          return {
+            ...base("skipped", "Source torrent file is missing."),
+            sourceUrl: context.job.candidate.sourceUrl ?? null,
+            downloadUrl: context.job.candidate.downloadUrl ?? null,
+            filePath: null,
+            downloadDirectory,
+            infoHash: null,
+            client: context.torrentClient.name
+          };
+        }
+        if (!downloadDirectory) {
+          return {
+            ...base("skipped", "Download location requires a job working directory."),
+            sourceUrl: context.job.candidate.sourceUrl ?? null,
+            downloadUrl: context.job.candidate.downloadUrl ?? null,
+            filePath: null,
+            downloadDirectory,
+            infoHash: null,
+            client: context.torrentClient.name
+          };
+        }
+
+        await mkdir(downloadDirectory, { recursive: true });
+        const addOptions: Parameters<TorrentDownloadClient["addTorrent"]>[0] = {
+          torrentPath,
+          downloadPath: downloadDirectory
+        };
+        if (context.torrentClientOptions.category) addOptions.category = context.torrentClientOptions.category;
+        if (context.torrentClientOptions.tags?.length) addOptions.tags = context.torrentClientOptions.tags;
+        const { infoHash } = await context.torrentClient.addTorrent(addOptions);
+        const complete = await waitForTorrentComplete(context, infoHash);
+        if (!complete) {
+          return {
+            ...base("blocked", "Torrent is still downloading."),
+            sourceUrl: context.job.candidate.sourceUrl ?? null,
+            downloadUrl: context.job.candidate.downloadUrl ?? null,
+            filePath: null,
+            downloadDirectory,
+            infoHash,
+            client: context.torrentClient.name
+          };
+        }
+
+        const files = await context.torrentClient.listFiles(infoHash);
+        const mainFile = selectMainMediaFile(files);
+        const filePath = mainFile ? path.join(downloadDirectory, mainFile.name) : null;
         return {
-          ...base(existingPath ? "completed" : "skipped", existingPath ? "Media path is already available." : "Download integration is not configured in this worker scaffold."),
+          ...base(filePath && (await pathExists(filePath)) ? "completed" : "blocked", filePath ? "Downloaded media located." : "No media file was found in torrent contents."),
           sourceUrl: context.job.candidate.sourceUrl ?? null,
           downloadUrl: context.job.candidate.downloadUrl ?? null,
-          filePath: existingPath
+          filePath,
+          downloadDirectory,
+          infoHash,
+          client: context.torrentClient.name
         };
       }
     },
     {
       phase: "prepare-media",
       async run(context) {
-        const inputPath = context.job.mediaPath ?? context.job.downloadPath ?? null;
+        const download = await context.getOutput("download-or-locate");
+        const inputPath = context.job.mediaPath ?? context.job.downloadPath ?? download?.filePath ?? null;
         if (!inputPath) {
           return {
             ...base("skipped", "No media path is available for preparation."),
@@ -633,21 +782,32 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
       phase: "torrent-create",
       async run(context) {
         const plan = await uploadPlan(context);
+        const sourcePath = sourceTorrentPath(context);
+        const outputPath = uploadTorrentPath(context);
+        let copiedPath: string | null = null;
+        if (sourcePath && outputPath && (await pathExists(sourcePath))) {
+          await mkdir(path.dirname(outputPath), { recursive: true });
+          await copyFile(sourcePath, outputPath);
+          copiedPath = outputPath;
+        }
         return {
-          ...base(plan.torrentReuse.canReuseImmediately ? "completed" : "skipped", plan.torrentReuse.reason),
+          ...base(copiedPath ? "completed" : plan.torrentReuse.canReuseImmediately ? "skipped" : "skipped", copiedPath ? "Upload torrent prepared from source torrent." : plan.torrentReuse.reason),
           reusePlan: plan.torrentReuse,
-          sourceTorrentPath: context.job.sourceTorrentPath ?? context.job.torrent?.filePath ?? null
+          sourceTorrentPath: sourcePath,
+          uploadTorrentPath: copiedPath
         };
       }
     },
     {
       phase: "seed-prepare",
       async run(context) {
+        const torrentCreate = await context.getOutput("torrent-create");
+        const mediaPath = await resolvedMediaPath(context);
         return {
-          ...base("skipped", "Torrent client integration is not configured in this worker scaffold."),
-          torrentPath: context.job.sourceTorrentPath ?? context.job.torrent?.filePath ?? null,
-          mediaPath: await resolvedMediaPath(context),
-          client: null
+          ...base(context.torrentClient && torrentCreate?.uploadTorrentPath && mediaPath ? "completed" : "skipped", context.torrentClient ? "Torrent client is configured for handoff." : "Torrent client integration is not configured in this worker scaffold."),
+          torrentPath: torrentCreate?.uploadTorrentPath ?? sourceTorrentPath(context),
+          mediaPath,
+          client: context.torrentClient?.name ?? null
         };
       }
     },
@@ -767,7 +927,8 @@ export class PhaseRunner {
         message: output.message
       });
 
-      if (output.status === "failed" || (output.status === "blocked" && handler.phase === "review")) {
+      const reviewGateBlock = output.status === "blocked" && (handler.phase === "duplicate-check" || handler.phase === "preflight");
+      if (output.status === "failed" || (output.status === "blocked" && !reviewGateBlock)) {
         return context.snapshotOutputs();
       }
     }

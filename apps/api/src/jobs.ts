@@ -52,6 +52,7 @@ export interface Job {
     filename: string;
     bytes: number;
     contentType?: string;
+    filePath?: string;
   };
   uploadReadiness: UploadReadiness;
   humanStep: string;
@@ -93,6 +94,23 @@ export interface JobRepositoryOptions {
 export interface ImportRestoredJobInput {
   jobPath: string;
   manifest: JobManifest;
+}
+
+export interface AttachWorkspaceInput {
+  workspace: Job["workspace"];
+  torrentFilePath?: string;
+}
+
+export interface PreparationResultInput {
+  state: JobState;
+  phase: JobPhase;
+  uploadReadiness: UploadReadiness;
+  humanStep: string;
+  artifacts: Job["artifacts"];
+  phases: PhaseRun[];
+  eventLevel: JobEvent["level"];
+  eventMessage: string;
+  workspace?: Job["workspace"];
 }
 
 function nowIso(): string {
@@ -288,6 +306,30 @@ export class JobRepository {
     job.humanStep = "Review upload package";
     this.setPhaseState(job, "review", input.uploadReadiness === "ready" ? "pending" : "warning", "Review upload package.");
     return this.record(job, input.uploadReadiness === "ready" ? "info" : "warn", "Upload package ready for review.", {
+      uploadReadiness: input.uploadReadiness
+    });
+  }
+
+  attachWorkspace(id: string, input: AttachWorkspaceInput): Job | null {
+    const job = this.jobs.get(id);
+    if (!job) return null;
+    if (input.workspace) job.workspace = input.workspace;
+    if (input.torrentFilePath && job.torrent) job.torrent.filePath = input.torrentFilePath;
+    return this.record(job, "info", "Job workspace prepared.", { jobRoot: input.workspace?.jobRoot });
+  }
+
+  markPreparationResult(id: string, input: PreparationResultInput): Job | null {
+    const job = this.jobs.get(id);
+    if (!job) return null;
+    job.state = input.state;
+    job.phase = input.phase;
+    job.uploadReadiness = input.uploadReadiness;
+    job.humanStep = input.humanStep;
+    job.artifacts = input.artifacts;
+    job.phases = input.phases;
+    if (input.workspace) job.workspace = input.workspace;
+    return this.record(job, input.eventLevel, input.eventMessage, {
+      phase: input.phase,
       uploadReadiness: input.uploadReadiness
     });
   }

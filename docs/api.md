@@ -43,6 +43,9 @@ Multipart form fields:
 The API creates a job, writes its workspace manifest, and queues automatic
 preparation up to the review step.
 
+The uploaded source torrent is saved to `data/jobs/<jobId>/torrent/source.torrent`
+before preparation starts.
+
 ### POST /api/browser/cache/invalidate
 
 Deletes one backend PTP cache key derived from `{ title, imdbId }`.
@@ -78,6 +81,9 @@ be repopulated instead of silently assuming the client still has it.
 Starts upload only when `uploadReadiness` is `ready` and no blocker gate is open.
 This is the normal operator action after reviewing screenshots, MediaInfo/BDInfo,
 release draft, torrent path, and qB readiness.
+
+Unit tests and default worker tests do not submit to PTP. The upload phase stays
+draft-only until a real PTP submitter is implemented and explicitly wired.
 
 ### POST /api/jobs/:id/pause
 

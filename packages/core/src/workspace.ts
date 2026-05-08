@@ -56,14 +56,14 @@ export interface JobManifest {
 }
 
 export function buildJobWorkspacePaths(dataRoot: string, jobId: string, sourceId = jobId): JobWorkspacePaths {
-  const sourceRoot = path.join(dataRoot, "sources", sourceId);
   const jobRoot = path.join(dataRoot, "jobs", jobId);
+  const sourceRoot = jobRoot;
   return {
     dataRoot,
     sourceRoot,
-    sourceDownloadDir: path.join(sourceRoot, "download"),
-    sourceTorrent: path.join(sourceRoot, "source.torrent"),
-    sourceJson: path.join(sourceRoot, "source.json"),
+    sourceDownloadDir: path.join(jobRoot, "download"),
+    sourceTorrent: path.join(jobRoot, "torrent", "source.torrent"),
+    sourceJson: path.join(jobRoot, "input", "source.json"),
     jobRoot,
     inputDir: path.join(jobRoot, "input"),
     mediaUploadDir: path.join(jobRoot, "media", "upload"),

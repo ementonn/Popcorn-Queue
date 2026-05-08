@@ -49,10 +49,13 @@ data/jobs/<jobId>/
     job.log
 ```
 
-`download/` keeps the original downloaded source. `media/upload/` contains the
-hardlinked, copied, or remuxed upload-ready media. Backups can copy the whole
-job folder; restoring through `/api/jobs/import` recreates the queue record, and
-done jobs are marked for qBittorrent reseeding if the client no longer has them.
+`download/` keeps the original qBittorrent download. `torrent/source.torrent`
+keeps the uploaded source torrent, and `torrent/upload.torrent` is prepared for
+the final upload package when the source torrent can be reused. `media/upload/`
+contains the hardlinked, copied, or remuxed upload-ready media. Backups can copy
+the whole job folder; restoring through `/api/jobs/import` recreates the queue
+record, and done jobs are marked for qBittorrent reseeding if the client no
+longer has them.
 
 ## Logs
 

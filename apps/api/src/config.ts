@@ -30,6 +30,8 @@ export interface ApiConfig {
     qbittorrentTags: string[];
     qbittorrentCategory: string;
     qbittorrentContentLayout: string;
+    qbittorrentDownloadWaitMs: number;
+    qbittorrentDownloadPollMs: number;
     runExternalTools: boolean;
     ffmpegBin: string;
     mediainfoBin: string;
@@ -173,6 +175,8 @@ export function loadConfig(env = process.env): ApiConfig {
       qbittorrentTags: splitCsv(env.QBITTORRENT_TAGS),
       qbittorrentCategory: env.QBITTORRENT_CATEGORY ?? "",
       qbittorrentContentLayout: env.QBITTORRENT_CONTENT_LAYOUT ?? "",
+      qbittorrentDownloadWaitMs: readNumber(env.QBITTORRENT_DOWNLOAD_WAIT_MS ?? env.POPCORN_QUEUE_DOWNLOAD_WAIT_MS, 6 * 60 * 60 * 1000),
+      qbittorrentDownloadPollMs: readNumber(env.QBITTORRENT_DOWNLOAD_POLL_MS ?? env.POPCORN_QUEUE_DOWNLOAD_POLL_MS, 15_000),
       runExternalTools: readBoolean(env.POPCORN_QUEUE_RUN_EXTERNAL_TOOLS),
       ffmpegBin: env.FFMPEG_BIN ?? "ffmpeg",
       mediainfoBin: env.MEDIAINFO_BIN ?? "mediainfo",
