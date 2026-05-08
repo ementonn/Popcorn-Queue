@@ -33,6 +33,23 @@ describe("API configuration", () => {
     }
   });
 
+  it("can let local dotenv values override stale process-level values", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "popcorn-queue-env-"));
+    const envFile = join(directory, ".env");
+    const env: Record<string, string | undefined> = {
+      POPCORN_QUEUE_BROWSER_TOKEN: "old-token"
+    };
+
+    try {
+      await writeFile(envFile, "POPCORN_QUEUE_BROWSER_TOKEN=new-token\n");
+
+      expect(loadEnvFile(envFile, env, { override: true })).toBe(true);
+      expect(env.POPCORN_QUEUE_BROWSER_TOKEN).toBe("new-token");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("maps runnable service settings from environment variables", () => {
     const config = loadConfig({
       POPCORN_QUEUE_HOST: "0.0.0.0",

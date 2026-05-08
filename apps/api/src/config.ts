@@ -40,6 +40,9 @@ export interface ApiConfig {
 }
 
 type EnvMap = NodeJS.ProcessEnv | Record<string, string | undefined>;
+interface LoadEnvOptions {
+  override?: boolean;
+}
 
 const DEFAULT_PTP_BASE_URL = "https://passthepopcorn.me/torrents.php";
 
@@ -75,7 +78,7 @@ function decodeEnvValue(rawValue: string): string {
   return (commentIndex >= 0 ? value.slice(0, commentIndex) : value).trim();
 }
 
-export function loadEnvFile(filePath: string, env: EnvMap = process.env): boolean {
+export function loadEnvFile(filePath: string, env: EnvMap = process.env, options: LoadEnvOptions = {}): boolean {
   if (!existsSync(filePath)) return false;
 
   const content = readFileSync(filePath, "utf8");
@@ -88,7 +91,7 @@ export function loadEnvFile(filePath: string, env: EnvMap = process.env): boolea
     if (equalsIndex <= 0) continue;
 
     const key = normalized.slice(0, equalsIndex).trim();
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || env[key] !== undefined) continue;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || (!options.override && env[key] !== undefined)) continue;
 
     env[key] = decodeEnvValue(normalized.slice(equalsIndex + 1));
   }
@@ -96,7 +99,7 @@ export function loadEnvFile(filePath: string, env: EnvMap = process.env): boolea
   return true;
 }
 
-export function loadLocalEnv(env: EnvMap = process.env): string[] {
+export function loadLocalEnv(env: EnvMap = process.env, options: LoadEnvOptions = {}): string[] {
   const candidates = [
     resolve(process.cwd(), ".env"),
     resolve(process.cwd(), "../..", ".env")
@@ -107,14 +110,14 @@ export function loadLocalEnv(env: EnvMap = process.env): string[] {
   for (const filePath of candidates) {
     if (seen.has(filePath)) continue;
     seen.add(filePath);
-    if (loadEnvFile(filePath, env)) loaded.push(filePath);
+    if (loadEnvFile(filePath, env, options)) loaded.push(filePath);
   }
 
   return loaded;
 }
 
 export function loadConfig(env = process.env): ApiConfig {
-  if (env === process.env) loadLocalEnv(env);
+  if (env === process.env) loadLocalEnv(env, { override: true });
   const port = readNumber(env.POPCORN_QUEUE_PORT, 3500);
 
   return {
