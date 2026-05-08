@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildUploadPlan, parseTorrentTitle, type BrowserCheckResult, type RuleDecision, type TorrentCandidate } from "./index.js";
+import {
+  buildUploadPlan,
+  parseTorrentTitle,
+  UPLOAD_PHASES,
+  type BrowserCheckResult,
+  type RuleDecision,
+  type TorrentCandidate
+} from "./index.js";
 
 function checkResult(candidate: TorrentCandidate, decision: RuleDecision): BrowserCheckResult {
   return {
@@ -24,6 +31,49 @@ function decision(status: RuleDecision["status"], reason: string): RuleDecision 
 }
 
 describe("upload plan review gates", () => {
+  it("uses the pre-upload automation phase vocabulary", () => {
+    expect(UPLOAD_PHASES).toEqual([
+      "intake",
+      "duplicate-check",
+      "metadata",
+      "download-or-locate",
+      "prepare-media",
+      "inspect-media",
+      "screenshots",
+      "image-host-upload",
+      "torrent-create",
+      "seed-prepare",
+      "preflight",
+      "review",
+      "upload",
+      "post-hook",
+      "done"
+    ]);
+    expect(UPLOAD_PHASES).not.toContain("download");
+    expect(UPLOAD_PHASES).not.toContain("extract");
+    expect(UPLOAD_PHASES).not.toContain("analyze");
+    expect(UPLOAD_PHASES).not.toContain("seed-start");
+  });
+
+  it("starts clean plans at intake and blocker plans at preflight", () => {
+    const clean = buildUploadPlan({
+      candidate: {
+        site: "mteam",
+        title: "Clean.Movie.2024.1080p.BluRay.x264-GROUP",
+        imdbId: "tt7654321"
+      }
+    });
+    expect(clean.recommendedStartPhase).toBe("intake");
+
+    const blockedCandidate: TorrentCandidate = {
+      site: "mteam",
+      title: "Blocked.Movie.2024.1080p.BluRay.x264-YIFY.mp4",
+      imdbId: null
+    };
+    const blocked = buildUploadPlan({ candidate: blockedCandidate });
+    expect(blocked.recommendedStartPhase).toBe("preflight");
+  });
+
   it("turns full PTP slots into blocker gates and starts at preflight", () => {
     const candidate: TorrentCandidate = {
       site: "mteam",
@@ -47,7 +97,7 @@ describe("upload plan review gates", () => {
     expect(plan.recommendedStartPhase).toBe("preflight");
   });
 
-  it("turns coexist decisions into warning gates and starts at duplicate-check", () => {
+  it("turns coexist decisions into warning gates and starts at intake", () => {
     const candidate: TorrentCandidate = {
       site: "mteam",
       title: "Test.Movie.2024.2160p.WEB-DL.x265-GROUP",
@@ -67,7 +117,7 @@ describe("upload plan review gates", () => {
         status: "open"
       })
     );
-    expect(plan.recommendedStartPhase).toBe("duplicate-check");
+    expect(plan.recommendedStartPhase).toBe("intake");
   });
 
   it("lets callers prioritize a configured image host", () => {

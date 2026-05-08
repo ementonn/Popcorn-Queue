@@ -10,15 +10,17 @@ import { buildTorrentReusePlan, type TorrentReusePlan } from "./torrent-reuse.js
 
 export const UPLOAD_PHASES = [
   "intake",
-  "metadata",
   "duplicate-check",
-  "download",
-  "extract",
-  "analyze",
+  "metadata",
+  "download-or-locate",
+  "prepare-media",
+  "inspect-media",
   "screenshots",
+  "image-host-upload",
   "torrent-create",
-  "seed-start",
+  "seed-prepare",
   "preflight",
+  "review",
   "upload",
   "post-hook",
   "done"
@@ -89,8 +91,7 @@ function gatesFromDecision(decision?: RuleDecision): ReviewGate[] {
 
 function recommendedPhase(gates: ReviewGate[]): UploadPhase {
   if (gates.some((gate) => gate.severity === "blocker")) return "preflight";
-  if (gates.some((gate) => gate.severity === "warning")) return "duplicate-check";
-  return "metadata";
+  return "intake";
 }
 
 export function buildUploadPlan(input: {
