@@ -124,6 +124,12 @@ export interface PreparationResultInput {
   workspace?: Job["workspace"];
 }
 
+export interface PreparationPhaseFinishedInput {
+  phase: JobPhase;
+  state: PhaseState;
+  message: string;
+}
+
 export interface RestoreValidationFailureInput {
   message: string;
   missingFiles: string[];
@@ -329,6 +335,25 @@ export class JobRepository {
     job.state = "preparing";
     job.humanStep = "Preparing upload package";
     return this.record(job, "info", "Resuming preparation after API startup.", { phase: job.phase });
+  }
+
+  markPreparationPhaseStarted(id: string, phase: JobPhase): Job | null {
+    const job = this.jobs.get(id);
+    if (!job) return null;
+    job.state = "preparing";
+    job.phase = phase;
+    job.humanStep = phase === "review" ? "Preparing review package" : "Preparing upload package";
+    this.setPhaseState(job, phase, "running", "Running.");
+    job.updatedAt = nowIso();
+    return job;
+  }
+
+  markPreparationPhaseFinished(id: string, input: PreparationPhaseFinishedInput): Job | null {
+    const job = this.jobs.get(id);
+    if (!job) return null;
+    this.setPhaseState(job, input.phase, input.state, input.message);
+    job.updatedAt = nowIso();
+    return job;
   }
 
   pause(id: string): Job | null {
@@ -557,7 +582,7 @@ export class JobRepository {
     run.state = state;
     run.message = message;
     if (state === "running" && !run.startedAt) run.startedAt = now;
-    if (state === "done" || state === "failed" || state === "warning") run.finishedAt = now;
+    if (state === "done" || state === "failed" || state === "warning" || state === "skipped") run.finishedAt = now;
   }
 
   private blockUploadStart(job: Job): Job {

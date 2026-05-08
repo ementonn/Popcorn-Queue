@@ -7,6 +7,7 @@ import {
   type ImportRestoredJobInput,
   type Job,
   type JobPhase,
+  type PreparationPhaseFinishedInput,
   type PreparationResultInput,
   type JobRepositoryOptions,
   type JobState,
@@ -236,6 +237,14 @@ export class PrismaJobRepository {
 
   async markPreparationResumed(id: string): Promise<Job | null> {
     return this.withJob(id, (repo) => repo.markPreparationResumed(id));
+  }
+
+  async markPreparationPhaseStarted(id: string, phase: JobPhase): Promise<Job | null> {
+    return this.withJob(id, (repo) => repo.markPreparationPhaseStarted(id, phase));
+  }
+
+  async markPreparationPhaseFinished(id: string, input: PreparationPhaseFinishedInput): Promise<Job | null> {
+    return this.withJob(id, (repo) => repo.markPreparationPhaseFinished(id, input));
   }
 
   async startUpload(id: string): Promise<Job | null> {

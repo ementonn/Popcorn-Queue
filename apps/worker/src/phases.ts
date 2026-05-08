@@ -236,6 +236,8 @@ export interface PhaseContext {
   stopRequested(): Promise<boolean>;
   log(level: PhaseLogLevel, message: string, payload?: unknown): Promise<void>;
   reportDownloadStatus(status: DownloadStatus): Promise<void>;
+  onPhaseStarted(phase: UploadPhase): Promise<void>;
+  onPhaseFinished(phase: UploadPhase, output: AnyPhaseOutput): Promise<void>;
   getOutput<K extends UploadPhase>(phase: K): Promise<PhaseOutputMap[K] | undefined>;
   writeOutput<K extends UploadPhase>(phase: K, output: PhaseOutputMap[K]): Promise<void>;
   snapshotOutputs(): Partial<PhaseOutputMap>;
@@ -263,6 +265,8 @@ export interface CreatePhaseContextOptions {
   stopRequested?: () => Promise<boolean>;
   log?: (level: PhaseLogLevel, message: string, payload?: unknown) => Promise<void>;
   reportDownloadStatus?: (status: DownloadStatus) => Promise<void>;
+  onPhaseStarted?: (phase: UploadPhase) => Promise<void>;
+  onPhaseFinished?: (phase: UploadPhase, output: AnyPhaseOutput) => Promise<void>;
 }
 
 export class MemoryPhaseOutputStore implements PhaseOutputStore {
@@ -317,6 +321,8 @@ export function createPhaseContext(jobId: string, job: WorkerJobInput, options: 
     stopRequested: options.stopRequested ?? (async () => false),
     log: options.log ?? (async () => undefined),
     reportDownloadStatus: options.reportDownloadStatus ?? (async () => undefined),
+    onPhaseStarted: options.onPhaseStarted ?? (async () => undefined),
+    onPhaseFinished: options.onPhaseFinished ?? (async () => undefined),
     getOutput: <K extends UploadPhase>(phase: K) => store.get(phase),
     writeOutput: <K extends UploadPhase>(phase: K, output: PhaseOutputMap[K]) => store.set(phase, output),
     snapshotOutputs: () => store.snapshot()
@@ -1039,9 +1045,11 @@ export class PhaseRunner {
         return context.snapshotOutputs();
       }
 
+      await context.onPhaseStarted(handler.phase);
       await context.log("info", "Starting phase.", { phase: handler.phase });
       const output = await handler.run(context);
       await context.writeOutput(handler.phase, output);
+      await context.onPhaseFinished(handler.phase, output);
       await context.log(output.status === "failed" ? "error" : output.status === "blocked" ? "warn" : "info", "Finished phase.", {
         phase: handler.phase,
         status: output.status,
@@ -1070,9 +1078,11 @@ export class PhaseRunner {
         return context.snapshotOutputs();
       }
 
+      await context.onPhaseStarted(handler.phase);
       await context.log("info", "Starting phase.", { phase: handler.phase });
       const output = await handler.run(context);
       await context.writeOutput(handler.phase, output);
+      await context.onPhaseFinished(handler.phase, output);
       await context.log(output.status === "failed" ? "error" : output.status === "blocked" ? "warn" : "info", "Finished phase.", {
         phase: handler.phase,
         status: output.status,

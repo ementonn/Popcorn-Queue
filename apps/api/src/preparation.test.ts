@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildJobWorkspacePaths } from "@popcorn-queue/core";
-import { JobRepository } from "./jobs.js";
+import { JobRepository, type JobPhase, type PhaseState } from "./jobs.js";
 import { PreparationService } from "./preparation.js";
 
 describe("PreparationService", () => {
@@ -190,6 +190,46 @@ describe("PreparationService", () => {
     expect(jobLog).toContain("Download progress: 10%.");
     expect(jobLog).toContain("Download complete.");
     expect(downloadLines).toHaveLength(4);
+  });
+
+  it("persists preparation phase progress while the runner advances", async () => {
+    const dataRoot = await mkdtemp(path.join(os.tmpdir(), "popcorn-prep-phase-progress-"));
+    const repo = new JobRepository();
+    const job = repo.create({
+      candidate: {
+        site: "mteam",
+        title: "Phase.Progress.2024.1080p.WEB-DL.x265-GROUP",
+        imdbId: "tt1234567"
+      }
+    });
+    const starts: JobPhase[] = [];
+    const finishes: Array<{ phase: JobPhase; state: PhaseState; message: string }> = [];
+    const jobs = {
+      get: (id: string) => repo.get(id),
+      updateDownloadStatus: (id: string, status: Parameters<JobRepository["updateDownloadStatus"]>[1]) => repo.updateDownloadStatus(id, status),
+      markPreparedForReview: (id: string, input: Parameters<JobRepository["markPreparedForReview"]>[1]) => repo.markPreparedForReview(id, input),
+      markPreparationResult: (id: string, input: Parameters<JobRepository["markPreparationResult"]>[1]) => repo.markPreparationResult(id, input),
+      markPreparationPhaseStarted: async (_id: string, phase: JobPhase) => {
+        starts.push(phase);
+        return repo.get(job.id);
+      },
+      markPreparationPhaseFinished: async (_id: string, input: { phase: JobPhase; state: PhaseState; message: string }) => {
+        finishes.push(input);
+        return repo.get(job.id);
+      }
+    };
+
+    const service = new PreparationService({
+      dataRoot,
+      jobs,
+      runExternalTools: false,
+      toolCommands: { ffmpeg: "ffmpeg", mediainfo: "mediainfo", oxipng: "oxipng" }
+    });
+
+    await service.runJob(job.id);
+
+    expect(starts).toContain("screenshots");
+    expect(finishes).toContainEqual({ phase: "screenshots", state: "done", message: "Screenshot plan prepared." });
   });
 
   it("uses the Shock Wave fixture to prepare media evidence, torrent handoff, and a PTP draft without submitting", async () => {

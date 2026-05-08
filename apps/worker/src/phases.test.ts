@@ -481,4 +481,30 @@ describe("worker phase scaffold", () => {
     expect(outputs["inspect-media"]?.mediaPath).toBe(outputs["prepare-media"]?.outputPath);
     expect(outputs.screenshots?.mediaPath).toBe(outputs["prepare-media"]?.outputPath);
   });
+
+  it("emits preparation phase lifecycle callbacks", async () => {
+    const events: string[] = [];
+    const context = createPhaseContext(
+      "job-phase-lifecycle",
+      { candidate },
+      {
+        runExternalTools: false,
+        commandExecutor: fakeExecutor([]),
+        ...({
+          onPhaseStarted: async (phase: string) => {
+            events.push(`start:${phase}`);
+          },
+          onPhaseFinished: async (phase: string, output: { status: string }) => {
+            events.push(`finish:${phase}:${output.status}`);
+          }
+        } as object)
+      }
+    );
+
+    await new PhaseRunner().runPreparationToReview(context);
+
+    expect(events).toContain("start:screenshots");
+    expect(events).toContain("finish:screenshots:completed");
+    expect(events.indexOf("start:screenshots")).toBeLessThan(events.indexOf("finish:screenshots:completed"));
+  });
 });

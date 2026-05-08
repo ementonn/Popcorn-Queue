@@ -31,6 +31,8 @@ export interface PreparationJobStore {
   get(id: string): MaybePromise<Job | null>;
   updateDownloadStatus(id: string, status: DownloadStatus): MaybePromise<Job | null>;
   markPreparedForReview(id: string, input: Parameters<JobRepository["markPreparedForReview"]>[1]): MaybePromise<Job | null>;
+  markPreparationPhaseStarted(id: string, phase: JobPhase): MaybePromise<Job | null>;
+  markPreparationPhaseFinished(id: string, input: Parameters<JobRepository["markPreparationPhaseFinished"]>[1]): MaybePromise<Job | null>;
   markPreparationResult(id: string, input: Parameters<JobRepository["markPreparationResult"]>[1]): MaybePromise<Job | null>;
 }
 
@@ -217,6 +219,16 @@ export class PreparationService {
           });
         }
         updateDownloadLogState(downloadLogState, status);
+      },
+      onPhaseStarted: async (phase) => {
+        await this.options.jobs.markPreparationPhaseStarted(job.id, phase as JobPhase);
+      },
+      onPhaseFinished: async (phase, output) => {
+        await this.options.jobs.markPreparationPhaseFinished(job.id, {
+          phase: phase as JobPhase,
+          state: phaseStateFromStatus(output.status),
+          message: output.message
+        });
       }
     };
     if (!this.options.runExternalTools) contextOptions.commandExecutor = disabledCommandExecutor;
