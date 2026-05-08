@@ -1,4 +1,4 @@
-import type { ApiJob, GlobalLogResponse, HealthInfo, JobLogResponse } from "./types.js";
+import type { ApiJob, GlobalLogResponse, HealthInfo, JobLogResponse, ReviewDraftPatch } from "./types.js";
 
 export interface DashboardData {
   jobs: ApiJob[];
@@ -74,6 +74,10 @@ export function retryFailed(jobId: string): Promise<{ job: ApiJob }> {
 
 export function resolveGate(jobId: string, gateId: string): Promise<{ job: ApiJob }> {
   return fetchJson<{ job: ApiJob }>(`/api/jobs/${jobId}/review-gates/${gateId}/resolve`, { method: "POST", body: "{}" });
+}
+
+export function saveReviewDraft(jobId: string, patch: ReviewDraftPatch): Promise<{ job: ApiJob }> {
+  return fetchJson<{ job: ApiJob }>(`/api/jobs/${jobId}/review-draft`, { method: "PATCH", body: JSON.stringify(patch) });
 }
 
 export function debugAdvance(jobId: string): Promise<{ job: ApiJob }> {

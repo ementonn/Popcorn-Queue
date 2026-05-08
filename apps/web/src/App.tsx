@@ -10,6 +10,7 @@ import {
   pauseJob,
   resolveGate,
   retryFailed,
+  saveReviewDraft,
   startUpload
 } from "./api.js";
 import { DiagnosticsPanel } from "./components/DiagnosticsPanel.js";
@@ -128,6 +129,12 @@ export function App() {
     }
   }, []);
 
+  const handleSaveReviewDraft = useCallback(async (jobId: string, patch: Parameters<typeof saveReviewDraft>[1]) => {
+    const result = await saveReviewDraft(jobId, patch);
+    setJobs((current) => updateJob(current, result.job));
+    setStatus({ tone: "success", text: `Draft saved: ${result.job.id}` });
+  }, []);
+
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -200,7 +207,7 @@ export function App() {
         />
       </main>
 
-      <ReviewPanel job={selectedJob} jobLogs={jobLogs} onResolveGate={handleResolveGate} />
+      <ReviewPanel job={selectedJob} jobLogs={jobLogs} onResolveGate={handleResolveGate} onSaveReviewDraft={handleSaveReviewDraft} />
 
       {diagnosticsOpen ? (
         <DiagnosticsPanel

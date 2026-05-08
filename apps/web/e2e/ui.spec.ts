@@ -53,6 +53,10 @@ test.describe("Popcorn Queue UI", () => {
     await page.route("**/api/jobs/*/review-gates/*/resolve", async (route) => {
       await route.fulfill({ json: { job: apiJobs[0] } });
     });
+    await page.route("**/api/jobs/*/review-draft", async (route) => {
+      const patch = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({ json: { job: { ...apiJobs[0], reviewDraft: { ...apiJobs[0].reviewDraft, ...patch } } } });
+    });
     await page.route("**/api/jobs/*/start-upload", async (route) => {
       await route.fulfill({ json: { job: { ...apiJobs[0], state: "uploading", phase: "upload" } } });
     });
@@ -111,10 +115,34 @@ test.describe("Popcorn Queue UI", () => {
       "Download",
       "Screenshots",
       "MediaInfo / BDInfo",
-      "Release Draft",
+      "Upload Draft",
       "Torrent / qB Readiness",
       "Recent Job Log"
     ]);
+  });
+
+  test("edits upload draft fields and shows source torrent display names", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only review assertion.");
+    let savedPatch: Record<string, unknown> | null = null;
+    await page.route("**/api/jobs/job-athena/review-draft", async (route) => {
+      const patch = route.request().postDataJSON() as Record<string, unknown>;
+      savedPatch = patch;
+      await route.fulfill({ json: { job: { ...apiJobs[0], reviewDraft: { ...apiJobs[0].reviewDraft, ...patch } } } });
+    });
+    await page.goto("/");
+
+    const reviewPanel = page.getByTestId("review-panel");
+    await expect(reviewPanel).toContainText("Source torrent");
+    await expect(reviewPanel).toContainText("ATHENA.2022.PTer.source.torrent");
+    await expect(reviewPanel).toContainText("PTP upload torrent");
+    await expect(reviewPanel).toContainText("torrent/upload.torrent");
+
+    await reviewPanel.getByLabel("Description").fill("Edited release description");
+    await reviewPanel.getByLabel("PTP group").fill("456");
+    await reviewPanel.getByRole("button", { name: "Save Draft" }).click();
+
+    expect(savedPatch).toMatchObject({ description: "Edited release description", groupId: "456" });
+    await expect(reviewPanel).toContainText("Saved");
   });
 
   test("shows selected job download progress in the review pane", async ({ page }, testInfo) => {
@@ -198,7 +226,7 @@ const apiJobs = [
     source: { site: "M-Team", title: "ATHENA.2022.FRENCH.1080p.NF.WEB-DL.x265-SMURF" },
     candidate: { site: "mteam", title: "ATHENA.2022.FRENCH.1080p.NF.WEB-DL.x265-SMURF", imdbId: "tt1234567" },
     checkResult: { decision: { status: "review", reason: "IMDb + resolution match" } },
-    torrent: { filename: "ATHENA.torrent", bytes: 6871947673 },
+    torrent: { filename: "ATHENA.2022.PTer.source.torrent", bytes: 6871947673 },
     downloadStatus: {
       client: "qbittorrent",
       infoHash: "ATHENAHASH",
@@ -225,6 +253,23 @@ const apiJobs = [
       description: "ATHENA release draft\nSource: WEB",
       uploadTorrent: "torrent/upload.torrent",
       qbReady: true
+    },
+    reviewDraft: {
+      releaseName: "ATHENA.2022.1080p.WEB.x265-SMURF",
+      description: "ATHENA release draft\nSource: WEB",
+      groupId: "123",
+      type: "Feature Film",
+      codec: "H.265",
+      container: "MKV",
+      resolution: "1080p",
+      source: "WEB-DL",
+      remasterYear: "",
+      remasterTitle: "",
+      subtitles: ["English"],
+      trumpable: [],
+      scene: false,
+      personalRip: false,
+      internal: false
     },
     uploadPlan: {
       releaseName: { generated: "ATHENA.2022.1080p.WEB.x265-SMURF", group: "SMURF", container: "mkv", warnings: [] },

@@ -1,10 +1,12 @@
+import { useEffect, useMemo, useState } from "react";
 import { downloadedBytesLabel, downloadDetail, downloadProgress, downloadSummary } from "../download-status.js";
-import type { ApiJob, JobLogResponse, ReviewGate } from "../types.js";
+import type { ApiJob, JobLogResponse, ReviewDraft, ReviewDraftPatch, ReviewGate } from "../types.js";
 
 interface ReviewPanelProps {
   job: ApiJob | null;
   jobLogs: JobLogResponse;
   onResolveGate(jobId: string, gateId: string): void;
+  onSaveReviewDraft(jobId: string, patch: ReviewDraftPatch): Promise<void> | void;
 }
 
 function openGates(job: ApiJob, severity: ReviewGate["severity"]): ReviewGate[] {
@@ -30,7 +32,58 @@ function empty(value: string) {
   return <p className="muted">{value}</p>;
 }
 
-export function ReviewPanel({ job, jobLogs, onResolveGate }: ReviewPanelProps) {
+function groupIdFromUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).searchParams.get("id");
+  } catch {
+    return url.match(/[?&]id=(\d+)/)?.[1] ?? null;
+  }
+}
+
+function fallbackReviewDraft(job: ApiJob): ReviewDraft {
+  return {
+    releaseName: job.artifacts?.releaseName ?? job.uploadPlan?.releaseName?.generated ?? job.candidate?.title ?? job.source.title ?? "",
+    description: job.artifacts?.description ?? "",
+    groupId: groupIdFromUrl(job.checkResult?.decision?.ptpUrl),
+    type: "Feature Film",
+    codec: "Other",
+    container: job.uploadPlan?.media?.container?.toUpperCase() ?? "MKV",
+    resolution: "1080p",
+    source: "Other",
+    remasterYear: "",
+    remasterTitle: "",
+    subtitles: job.uploadPlan?.media?.subtitles.languages ?? [],
+    trumpable: [],
+    scene: false,
+    personalRip: false,
+    internal: false
+  };
+}
+
+function commaList(value: string): string[] {
+  return [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))];
+}
+
+function draftToForm(draft: ReviewDraft) {
+  return {
+    ...draft,
+    groupId: draft.groupId ?? "",
+    subtitles: draft.subtitles.join(", "),
+    trumpable: draft.trumpable.join(", ")
+  };
+}
+
+export function ReviewPanel({ job, jobLogs, onResolveGate, onSaveReviewDraft }: ReviewPanelProps) {
+  const draft = useMemo(() => (job ? job.reviewDraft ?? fallbackReviewDraft(job) : null), [job]);
+  const [draftForm, setDraftForm] = useState(() => (draft ? draftToForm(draft) : null));
+  const [draftStatus, setDraftStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+
+  useEffect(() => {
+    setDraftForm(draft ? draftToForm(draft) : null);
+    setDraftStatus("idle");
+  }, [draft]);
+
   if (!job) {
     return (
       <aside className="review-pane" data-testid="review-panel">
@@ -155,20 +208,129 @@ export function ReviewPanel({ job, jobLogs, onResolveGate }: ReviewPanelProps) {
       </section>
 
       <section>
-        <h3>Release Draft</h3>
-        <div className="release-draft">
-          <strong>{job.artifacts?.releaseName ?? job.uploadPlan?.releaseName?.generated ?? job.candidate?.title ?? job.source.title}</strong>
-          {draftLines.length ? <pre>{draftLines.join("\n")}</pre> : empty("Description draft pending.")}
-        </div>
+        <h3>Upload Draft</h3>
+        {draftForm ? (
+          <form
+            className="draft-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setDraftStatus("saving");
+              void Promise.resolve(
+                onSaveReviewDraft(job.id, {
+                  releaseName: draftForm.releaseName,
+                  description: draftForm.description,
+                  groupId: draftForm.groupId || null,
+                  type: draftForm.type,
+                  codec: draftForm.codec,
+                  container: draftForm.container,
+                  resolution: draftForm.resolution,
+                  source: draftForm.source,
+                  remasterYear: draftForm.remasterYear,
+                  remasterTitle: draftForm.remasterTitle,
+                  subtitles: commaList(draftForm.subtitles),
+                  trumpable: commaList(draftForm.trumpable),
+                  scene: draftForm.scene,
+                  personalRip: draftForm.personalRip,
+                  internal: draftForm.internal
+                })
+              )
+                .then(() => setDraftStatus("saved"))
+                .catch(() => setDraftStatus("error"));
+            }}
+          >
+            <label className="field wide">
+              <span>Release name</span>
+              <input
+                value={draftForm.releaseName}
+                onChange={(event) => setDraftForm((current) => current && { ...current, releaseName: event.target.value })}
+              />
+            </label>
+            <label className="field">
+              <span>PTP group</span>
+              <input value={draftForm.groupId} onChange={(event) => setDraftForm((current) => current && { ...current, groupId: event.target.value })} />
+            </label>
+            <label className="field">
+              <span>Type</span>
+              <input value={draftForm.type} onChange={(event) => setDraftForm((current) => current && { ...current, type: event.target.value })} />
+            </label>
+            <label className="field">
+              <span>Codec</span>
+              <input value={draftForm.codec} onChange={(event) => setDraftForm((current) => current && { ...current, codec: event.target.value })} />
+            </label>
+            <label className="field">
+              <span>Container</span>
+              <input value={draftForm.container} onChange={(event) => setDraftForm((current) => current && { ...current, container: event.target.value })} />
+            </label>
+            <label className="field">
+              <span>Resolution</span>
+              <input value={draftForm.resolution} onChange={(event) => setDraftForm((current) => current && { ...current, resolution: event.target.value })} />
+            </label>
+            <label className="field">
+              <span>Source</span>
+              <input value={draftForm.source} onChange={(event) => setDraftForm((current) => current && { ...current, source: event.target.value })} />
+            </label>
+            <label className="field">
+              <span>Remaster year</span>
+              <input value={draftForm.remasterYear} onChange={(event) => setDraftForm((current) => current && { ...current, remasterYear: event.target.value })} />
+            </label>
+            <label className="field">
+              <span>Remaster title</span>
+              <input value={draftForm.remasterTitle} onChange={(event) => setDraftForm((current) => current && { ...current, remasterTitle: event.target.value })} />
+            </label>
+            <label className="field wide">
+              <span>Subtitles</span>
+              <input value={draftForm.subtitles} onChange={(event) => setDraftForm((current) => current && { ...current, subtitles: event.target.value })} />
+            </label>
+            <label className="field wide">
+              <span>Trumpable</span>
+              <input value={draftForm.trumpable} onChange={(event) => setDraftForm((current) => current && { ...current, trumpable: event.target.value })} />
+            </label>
+            <label className="field wide">
+              <span>Description</span>
+              <textarea value={draftForm.description} onChange={(event) => setDraftForm((current) => current && { ...current, description: event.target.value })} />
+            </label>
+            <div className="draft-toggles">
+              {(["scene", "personalRip", "internal"] as const).map((key) => (
+                <label key={key}>
+                  <input
+                    type="checkbox"
+                    checked={draftForm[key]}
+                    onChange={(event) => setDraftForm((current) => current && { ...current, [key]: event.target.checked })}
+                  />
+                  <span>{key === "personalRip" ? "Personal rip" : key}</span>
+                </label>
+              ))}
+            </div>
+            <div className="draft-actions">
+              <button type="submit" className="primary" disabled={draftStatus === "saving"}>
+                Save Draft
+              </button>
+              {draftStatus === "saved" ? <span>Saved</span> : draftStatus === "error" ? <span className="error-text">Save failed</span> : null}
+            </div>
+          </form>
+        ) : (
+          <div className="release-draft">
+            <strong>{job.artifacts?.releaseName ?? job.uploadPlan?.releaseName?.generated ?? job.candidate?.title ?? job.source.title}</strong>
+            {draftLines.length ? <pre>{draftLines.join("\n")}</pre> : empty("Description draft pending.")}
+          </div>
+        )}
       </section>
 
       <section>
         <h3>Torrent / qB Readiness</h3>
         <div className="key-value">
-          <span>Torrent</span>
-          <strong>{job.artifacts?.uploadTorrent ?? job.torrent?.filename ?? "pending"}</strong>
+          <span>Source torrent</span>
+          <strong>{job.torrent?.filename ?? "pending"}</strong>
+          <span>PTP upload torrent</span>
+          <strong>{job.artifacts?.uploadTorrent ?? "pending"}</strong>
           <span>qB handoff</span>
           <strong>{job.artifacts?.qbReady ? "ready" : "waiting"}</strong>
+          {job.artifacts?.ptpUrl ? (
+            <>
+              <span>PTP result</span>
+              <strong>{job.artifacts.ptpUrl}</strong>
+            </>
+          ) : null}
         </div>
       </section>
 

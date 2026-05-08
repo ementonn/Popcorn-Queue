@@ -30,7 +30,8 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -503,6 +504,77 @@ h3 {
   display: block;
   margin-bottom: 5px;
   color: var(--foreground);
+}
+
+.draft-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field.wide,
+.draft-toggles,
+.draft-actions {
+  grid-column: 1 / -1;
+}
+
+.field span {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.field input,
+.field textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #ffffff;
+  color: var(--foreground);
+  padding: 7px 8px;
+  outline: 0;
+}
+
+.field textarea {
+  min-height: 112px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.draft-toggles,
+.draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.draft-toggles label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.draft-actions span {
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.draft-actions .error-text {
+  color: var(--red);
 }
 
 .gate p {

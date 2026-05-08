@@ -28,6 +28,26 @@ export interface DownloadStatus {
   error: string | null;
 }
 
+export interface ReviewDraft {
+  releaseName: string;
+  description: string;
+  groupId: string | null;
+  type: string;
+  codec: string;
+  container: string;
+  resolution: string;
+  source: string;
+  remasterYear: string;
+  remasterTitle: string;
+  subtitles: string[];
+  trumpable: string[];
+  scene: boolean;
+  personalRip: boolean;
+  internal: boolean;
+}
+
+export type ReviewDraftPatch = Partial<ReviewDraft>;
+
 export interface ApiJob {
   id: string;
   state: JobState;
@@ -64,11 +84,16 @@ export interface ApiJob {
     duplicateResult?: string;
     uploadTorrent?: string;
     qbReady?: boolean;
+    ptpUrl?: string;
+    ptpGroupId?: string;
+    ptpTorrentId?: string;
   };
+  reviewDraft?: ReviewDraft;
   torrent?: {
     filename: string;
     bytes: number;
     contentType?: string;
+    filePath?: string;
   };
   downloadStatus?: DownloadStatus;
   uploadPlan?: {
