@@ -198,13 +198,13 @@ describe("API jobs", () => {
       const job = response.json<{ job: Job }>().job;
       expect(job.source).toMatchObject({ site: "mteam", url: "https://tracker.example/torrent/1", title: candidate.title });
       expect(job.torrent).toMatchObject({ filename: "source.torrent", bytes: 21, contentType: "application/x-bittorrent" });
-      expect(job.state).toBe("review");
+      expect(job.state).toBe("preparing");
       expect(job.uploadPlan.screenshots.imageHosts[0]).toBe("imgbb");
       expect(job.uploadPlan.reviewGates).toContainEqual(expect.objectContaining({ id: "duplicate:slot-full", severity: "blocker" }));
     });
   });
 
-  it("blocks advancement on open blocker gates and queues after review gates resolve", async () => {
+  it("uses intent action routes for upload starts and debug advancement", async () => {
     await withServer(async (app) => {
       const create = await app.inject({
         method: "POST",
@@ -217,14 +217,14 @@ describe("API jobs", () => {
       });
       expect(create.statusCode).toBe(201);
       let job = create.json<{ job: Job }>().job;
-      expect(job.state).toBe("review");
-      expect(job.phase).toBe("preflight");
+      expect(job.state).toBe("preparing");
+      expect(job.phase).toBe("intake");
 
-      const blocked = await app.inject({ method: "POST", url: `/api/jobs/${job.id}/advance` });
+      const blocked = await app.inject({ method: "POST", url: `/api/jobs/${job.id}/debug/advance` });
       expect(blocked.statusCode).toBe(200);
       job = blocked.json<{ job: Job }>().job;
       expect(job.state).toBe("review");
-      expect(job.phases.find((phase) => phase.phase === "preflight")).toMatchObject({ state: "blocked" });
+      expect(job.phases.find((phase) => phase.phase === "intake")).toMatchObject({ state: "warning" });
 
       for (const gate of job.uploadPlan.reviewGates) {
         const resolve = await app.inject({ method: "POST", url: `/api/jobs/${job.id}/review-gates/${encodeURIComponent(gate.id)}/resolve` });
@@ -233,13 +233,13 @@ describe("API jobs", () => {
       }
 
       expect(job.uploadPlan.reviewGates.every((gate) => gate.status === "resolved")).toBe(true);
-      expect(job.state).toBe("queued");
+      expect(job.state).toBe("review");
 
-      const start = await app.inject({ method: "POST", url: `/api/jobs/${job.id}/start` });
+      const start = await app.inject({ method: "POST", url: `/api/jobs/${job.id}/start-upload` });
       expect(start.statusCode).toBe(200);
       job = start.json<{ job: Job }>().job;
-      expect(job.state).toBe("running");
-      expect(job.phases.find((phase) => phase.phase === "preflight")).toMatchObject({ state: "running" });
+      expect(job.state).toBe("review");
+      expect(job.events.at(0)?.message).toBe("Cannot start upload until blockers and required evidence are resolved.");
     });
   });
 });

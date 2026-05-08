@@ -6,6 +6,7 @@ import {
   type BrowserCheckResult,
   type ReviewGate,
   type TorrentCandidate,
+  type UploadReadiness,
   type UploadPhase,
   type UploadPlan
 } from "@popcorn-queue/core";
@@ -13,8 +14,8 @@ import {
 export const JOB_PHASES = UPLOAD_PHASES;
 
 export type JobPhase = UploadPhase;
-export type JobState = "waiting" | "review" | "queued" | "running" | "paused" | "failed" | "done";
-export type PhaseState = "pending" | "running" | "done" | "blocked" | "failed" | "skipped";
+export type JobState = "created" | "preparing" | "review" | "uploading" | "paused" | "failed" | "done" | "needs_reseed" | "seeding";
+export type PhaseState = "pending" | "running" | "done" | "warning" | "failed" | "skipped";
 
 export interface PhaseRun {
   phase: JobPhase;
@@ -50,6 +51,24 @@ export interface Job {
     filename: string;
     bytes: number;
     contentType?: string;
+  };
+  uploadReadiness: UploadReadiness;
+  humanStep: string;
+  artifacts: {
+    mediaFiles?: string[];
+    screenshots?: string[];
+    mediainfo?: string;
+    bdinfo?: string;
+    releaseName?: string;
+    description?: string;
+    duplicateResult?: string;
+    uploadTorrent?: string;
+    qbReady?: boolean;
+  };
+  workspace?: {
+    dataRoot: string;
+    jobRoot: string;
+    manifest: string;
   };
   uploadPlan: UploadPlan;
   phases: PhaseRun[];
@@ -148,8 +167,8 @@ export class JobRepository {
     if (this.options.imageHosts) planInput.imageHosts = this.options.imageHosts;
     if (this.options.screenshotCount !== undefined) planInput.screenshotCount = this.options.screenshotCount;
     const uploadPlan = buildUploadPlan(planInput);
-    const state: JobState = hasOpenGate({ uploadPlan }, "blocker") || hasOpenGate({ uploadPlan }, "warning") ? "review" : "queued";
-    const phase = state === "review" ? uploadPlan.recommendedStartPhase : "intake";
+    const state: JobState = "preparing";
+    const phase: JobPhase = "intake";
     const job: Job = {
       id: randomUUID(),
       state,
@@ -157,14 +176,17 @@ export class JobRepository {
       createdAt,
       updatedAt: createdAt,
       source,
+      uploadReadiness: "missing_evidence",
+      humanStep: "Preparing upload package",
+      artifacts: {},
       uploadPlan,
       phases: makePhases(phase),
       events: [
         {
           id: randomUUID(),
           at: createdAt,
-          level: state === "review" ? "warn" : "info",
-          message: state === "review" ? "Job created with review gates." : "Job queued."
+          level: "info",
+          message: "Job created and preparing upload package."
         }
       ]
     };
@@ -185,14 +207,7 @@ export class JobRepository {
   }
 
   start(id: string): Job | null {
-    const job = this.jobs.get(id);
-    if (!job) return null;
-    if (hasOpenGate(job, "blocker")) {
-      return this.record(job, "warn", "Cannot start while blocker review gates are open.");
-    }
-    job.state = "running";
-    this.setPhaseState(job, job.phase, "running", "Running.");
-    return this.record(job, "info", "Job started.", { phase: job.phase });
+    return this.startUpload(id);
   }
 
   pause(id: string): Job | null {
@@ -204,6 +219,39 @@ export class JobRepository {
   }
 
   retry(id: string): Job | null {
+    return this.retryFailed(id);
+  }
+
+  markPreparedForReview(id: string, input: { uploadReadiness: UploadReadiness; artifacts: Job["artifacts"] }): Job | null {
+    const job = this.jobs.get(id);
+    if (!job) return null;
+    job.state = "review";
+    job.phase = "review";
+    job.uploadReadiness = input.uploadReadiness;
+    job.artifacts = input.artifacts;
+    job.humanStep = "Review upload package";
+    this.setPhaseState(job, "review", input.uploadReadiness === "ready" ? "pending" : "warning", "Review upload package.");
+    return this.record(job, input.uploadReadiness === "ready" ? "info" : "warn", "Upload package ready for review.", {
+      uploadReadiness: input.uploadReadiness
+    });
+  }
+
+  startUpload(id: string): Job | null {
+    const job = this.jobs.get(id);
+    if (!job) return null;
+    if (job.uploadReadiness !== "ready") {
+      job.state = "review";
+      job.humanStep = "Review upload package";
+      return this.record(job, "warn", "Cannot start upload until blockers and required evidence are resolved.");
+    }
+    job.state = "uploading";
+    job.phase = "upload";
+    job.humanStep = "Uploading to tracker";
+    this.setPhaseState(job, "upload", "running", "Uploading.");
+    return this.record(job, "info", "Upload started.", { phase: job.phase });
+  }
+
+  retryFailed(id: string): Job | null {
     const job = this.jobs.get(id);
     if (!job) return null;
     const run = job.phases.find((item) => item.phase === job.phase);
@@ -214,15 +262,34 @@ export class JobRepository {
       delete run.startedAt;
       delete run.finishedAt;
     }
-    job.state = hasOpenGate(job, "blocker") || hasOpenGate(job, "warning") ? "review" : "queued";
+    job.state = "preparing";
+    job.humanStep = "Preparing upload package";
     return this.record(job, "info", "Retry queued.", { phase: job.phase });
+  }
+
+  markNeedsReseed(id: string, message: string): Job | null {
+    const job = this.jobs.get(id);
+    if (!job) return null;
+    job.state = "needs_reseed";
+    job.humanStep = "Needs reseed";
+    return this.record(job, "warn", message);
+  }
+
+  markReseeded(id: string, infoHash: string): Job | null {
+    const job = this.jobs.get(id);
+    if (!job) return null;
+    job.state = "seeding";
+    job.humanStep = "Seeding";
+    return this.record(job, "info", "Reseed complete.", { infoHash });
   }
 
   advance(id: string): Job | null {
     const job = this.jobs.get(id);
     if (!job) return null;
     if (hasOpenGate(job, "blocker")) {
-      this.setPhaseState(job, job.phase, "blocked", "Blocked by review gate.");
+      this.setPhaseState(job, job.phase, "warning", "Blocked by review gate.");
+      job.state = "review";
+      job.humanStep = "Review upload package";
       return this.record(job, "warn", "Advance blocked by open review gate.", { phase: job.phase });
     }
 
@@ -231,12 +298,14 @@ export class JobRepository {
     if (!next) {
       job.phase = "done";
       job.state = "done";
+      job.humanStep = "Upload workflow complete";
       this.setPhaseState(job, "done", "done", "Upload workflow complete.");
       return this.record(job, "info", "Job completed.");
     }
 
     job.phase = next;
-    job.state = "running";
+    job.state = next === "upload" ? "uploading" : "preparing";
+    job.humanStep = next === "upload" ? "Uploading to tracker" : "Preparing upload package";
     this.setPhaseState(job, next, "running", "Running.");
     return this.record(job, "info", "Advanced to next phase.", { phase: next });
   }
@@ -247,7 +316,10 @@ export class JobRepository {
     const gate = job.uploadPlan.reviewGates.find((item) => item.id === gateId);
     if (!gate) return job;
     gate.status = "resolved";
-    job.state = hasOpenGate(job, "blocker") || hasOpenGate(job, "warning") ? "review" : "queued";
+    if (hasOpenGate(job, "blocker") || hasOpenGate(job, "warning")) {
+      job.state = "review";
+      job.humanStep = "Review upload package";
+    }
     return this.record(job, "info", "Review gate resolved.", { gateId });
   }
 
@@ -262,7 +334,10 @@ export class JobRepository {
     if (this.options.screenshotCount !== undefined) planInput.screenshotCount = this.options.screenshotCount;
     const nextPlan = buildUploadPlan(planInput);
     job.uploadPlan = mergeGateStatus({ ...nextPlan, parsed }, job.uploadPlan);
-    job.state = hasOpenGate(job, "blocker") || hasOpenGate(job, "warning") ? "review" : job.state;
+    if (hasOpenGate(job, "blocker") || hasOpenGate(job, "warning")) {
+      job.state = "review";
+      job.humanStep = "Review upload package";
+    }
     return this.record(job, "info", "Upload plan refreshed.");
   }
 
@@ -273,7 +348,7 @@ export class JobRepository {
     run.state = state;
     run.message = message;
     if (state === "running" && !run.startedAt) run.startedAt = now;
-    if (state === "done" || state === "failed" || state === "blocked") run.finishedAt = now;
+    if (state === "done" || state === "failed" || state === "warning") run.finishedAt = now;
   }
 
   private record(job: Job, level: JobEvent["level"], message: string, payload?: unknown): Job {

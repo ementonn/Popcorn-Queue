@@ -173,8 +173,26 @@ export function buildServer(config: ApiConfig) {
     return reply.code(201).send({ job });
   });
 
+  async function startUploadJob(id: string) {
+    return jobRepository.startUpload(id);
+  }
+
+  async function retryFailedJob(id: string) {
+    return jobRepository.retryFailed(id);
+  }
+
+  async function advanceJob(id: string) {
+    return jobRepository.advance(id);
+  }
+
+  app.post<{ Params: { id: string } }>("/api/jobs/:id/start-upload", async (request, reply) => {
+    const job = await startUploadJob(request.params.id);
+    if (!job) return reply.code(404).send({ error: "job_not_found" });
+    return { job };
+  });
+
   app.post<{ Params: { id: string } }>("/api/jobs/:id/start", async (request, reply) => {
-    const job = await jobRepository.start(request.params.id);
+    const job = await startUploadJob(request.params.id);
     if (!job) return reply.code(404).send({ error: "job_not_found" });
     return { job };
   });
@@ -185,14 +203,26 @@ export function buildServer(config: ApiConfig) {
     return { job };
   });
 
+  app.post<{ Params: { id: string } }>("/api/jobs/:id/retry-failed", async (request, reply) => {
+    const job = await retryFailedJob(request.params.id);
+    if (!job) return reply.code(404).send({ error: "job_not_found" });
+    return { job };
+  });
+
   app.post<{ Params: { id: string } }>("/api/jobs/:id/retry", async (request, reply) => {
-    const job = await jobRepository.retry(request.params.id);
+    const job = await retryFailedJob(request.params.id);
+    if (!job) return reply.code(404).send({ error: "job_not_found" });
+    return { job };
+  });
+
+  app.post<{ Params: { id: string } }>("/api/jobs/:id/debug/advance", async (request, reply) => {
+    const job = await advanceJob(request.params.id);
     if (!job) return reply.code(404).send({ error: "job_not_found" });
     return { job };
   });
 
   app.post<{ Params: { id: string } }>("/api/jobs/:id/advance", async (request, reply) => {
-    const job = await jobRepository.advance(request.params.id);
+    const job = await advanceJob(request.params.id);
     if (!job) return reply.code(404).send({ error: "job_not_found" });
     return { job };
   });

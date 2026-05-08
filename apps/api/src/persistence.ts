@@ -1,5 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-import type { CacheEntry, CacheStore, NormalizedPtpResponse } from "@popcorn-queue/core";
+import type { CacheEntry, CacheStore, NormalizedPtpResponse, UploadReadiness } from "@popcorn-queue/core";
 import { JobRepository, type CreateJobInput, type Job, type JobPhase, type JobRepositoryOptions, type JobState } from "./jobs.js";
 
 const DEFAULT_DATABASE_URL = "file:./popcorn-queue.db";
@@ -12,6 +12,10 @@ interface JobRow {
   candidateJson: string | null;
   checkResultJson: string | null;
   torrentJson: string | null;
+  uploadReadiness: string | null;
+  humanStep: string | null;
+  artifactsJson: string | null;
+  workspaceJson: string | null;
   uploadPlanJson: string;
   phasesJson: string;
   eventsJson: string;
@@ -52,6 +56,10 @@ function serializeJob(job: Job) {
     candidateJson: stringifyOptional(job.candidate),
     checkResultJson: stringifyOptional(job.checkResult),
     torrentJson: stringifyOptional(job.torrent),
+    uploadReadiness: job.uploadReadiness,
+    humanStep: job.humanStep,
+    artifactsJson: JSON.stringify(job.artifacts),
+    workspaceJson: stringifyOptional(job.workspace),
     uploadPlanJson: JSON.stringify(job.uploadPlan),
     phasesJson: JSON.stringify(job.phases),
     eventsJson: JSON.stringify(job.events),
@@ -68,11 +76,16 @@ function deserializeJob(row: JobRow): Job {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     source: parseJson<Job["source"]>(row.sourceJson),
+    uploadReadiness: (row.uploadReadiness ?? "missing_evidence") as UploadReadiness,
+    humanStep: row.humanStep ?? "Preparing upload package",
+    artifacts: parseOptionalJson<Job["artifacts"]>(row.artifactsJson) ?? {},
     uploadPlan: parseJson<Job["uploadPlan"]>(row.uploadPlanJson),
     phases: parseJson<Job["phases"]>(row.phasesJson),
     events: parseJson<Job["events"]>(row.eventsJson)
   };
 
+  const workspace = parseOptionalJson<Job["workspace"]>(row.workspaceJson);
+  if (workspace !== undefined) job.workspace = workspace;
   const candidate = parseOptionalJson<Job["candidate"]>(row.candidateJson);
   if (candidate !== undefined) job.candidate = candidate;
   const checkResult = parseOptionalJson<Job["checkResult"]>(row.checkResultJson);
@@ -111,6 +124,10 @@ export class PrismaPersistence {
         "candidate" TEXT,
         "check_result" TEXT,
         "torrent" TEXT,
+        "upload_readiness" TEXT NOT NULL DEFAULT 'missing_evidence',
+        "human_step" TEXT NOT NULL DEFAULT 'Preparing upload package',
+        "artifacts" TEXT NOT NULL DEFAULT '{}',
+        "workspace" TEXT,
         "upload_plan" TEXT NOT NULL,
         "phases" TEXT NOT NULL,
         "events" TEXT NOT NULL,
@@ -118,6 +135,10 @@ export class PrismaPersistence {
         "updatedAt" DATETIME NOT NULL
       )
     `);
+    await this.addColumnIfMissing("Job", "upload_readiness", "TEXT NOT NULL DEFAULT 'missing_evidence'");
+    await this.addColumnIfMissing("Job", "human_step", "TEXT NOT NULL DEFAULT 'Preparing upload package'");
+    await this.addColumnIfMissing("Job", "artifacts", "TEXT NOT NULL DEFAULT '{}'");
+    await this.addColumnIfMissing("Job", "workspace", "TEXT");
     await this.prisma.$executeRawUnsafe(`
       CREATE INDEX IF NOT EXISTS "Job_createdAt_idx" ON "Job"("createdAt")
     `);
@@ -129,6 +150,12 @@ export class PrismaPersistence {
         "updatedAt" DATETIME NOT NULL
       )
     `);
+  }
+
+  private async addColumnIfMissing(table: string, column: string, definition: string): Promise<void> {
+    const columns = await this.prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info("${table}")`);
+    if (columns.some((item) => item.name === column)) return;
+    await this.prisma.$executeRawUnsafe(`ALTER TABLE "${table}" ADD COLUMN "${column}" ${definition}`);
   }
 }
 
@@ -163,12 +190,32 @@ export class PrismaJobRepository {
     return this.withJob(id, (repo) => repo.start(id));
   }
 
+  async startUpload(id: string): Promise<Job | null> {
+    return this.withJob(id, (repo) => repo.startUpload(id));
+  }
+
   async pause(id: string): Promise<Job | null> {
     return this.withJob(id, (repo) => repo.pause(id));
   }
 
   async retry(id: string): Promise<Job | null> {
     return this.withJob(id, (repo) => repo.retry(id));
+  }
+
+  async retryFailed(id: string): Promise<Job | null> {
+    return this.withJob(id, (repo) => repo.retryFailed(id));
+  }
+
+  async markPreparedForReview(id: string, input: Parameters<JobRepository["markPreparedForReview"]>[1]): Promise<Job | null> {
+    return this.withJob(id, (repo) => repo.markPreparedForReview(id, input));
+  }
+
+  async markNeedsReseed(id: string, message: string): Promise<Job | null> {
+    return this.withJob(id, (repo) => repo.markNeedsReseed(id, message));
+  }
+
+  async markReseeded(id: string, infoHash: string): Promise<Job | null> {
+    return this.withJob(id, (repo) => repo.markReseeded(id, infoHash));
   }
 
   async advance(id: string): Promise<Job | null> {
