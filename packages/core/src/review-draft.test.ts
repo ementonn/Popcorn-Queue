@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { buildUploadPlan } from "./upload-plan.js";
 import { buildReviewDraft, mergeReviewDraft } from "./review-draft.js";
+import { ptpFormFieldsFromDraft } from "./ptp-form-fields.js";
+import { buildReleaseDescription } from "./release-description.js";
 import type { TorrentCandidate } from "./types.js";
 
 const candidate: TorrentCandidate = {
@@ -11,6 +13,18 @@ const candidate: TorrentCandidate = {
 };
 
 describe("review draft contract", () => {
+  it("builds PTP release description from text mediainfo and screenshots", () => {
+    const description = buildReleaseDescription({
+      releaseName: "Movie.2025.1080p.WEB-DL.x265-GROUP",
+      mediaInfoText: "General\nComplete name                            : Movie.mkv",
+      screenshots: ["https://img.example/1.png", "https://img.example/2.png", "https://img.example/3.png"]
+    });
+
+    expect(description).toContain("[size=4][b]Movie.2025.1080p.WEB-DL.x265-GROUP[/b][/size]");
+    expect(description).toContain("General");
+    expect(description).toContain("[img]https://img.example/1.png[/img]");
+  });
+
   it("initializes PTP upload fields from upload plan and artifacts", () => {
     const uploadPlan = buildUploadPlan({ candidate });
 
@@ -44,7 +58,10 @@ describe("review draft contract", () => {
       codec: "H.265",
       container: "MKV",
       resolution: "1080p",
-      source: "WEB-DL",
+      source: "WEB",
+      imdb: "tt1234567",
+      title: "Movie",
+      year: "2024",
       scene: true,
       personalRip: false,
       internal: false
@@ -72,11 +89,54 @@ describe("review draft contract", () => {
       description: "Desc",
       groupId: null,
       remasterYear: "2024",
-      subtitles: ["English", "Chinese"],
-      trumpable: ["No English subtitles", "Hardcoded subs"],
+      subtitles: ["3", "14"],
+      trumpable: ["14", "4"],
       scene: true,
       personalRip: true,
       internal: false
     });
+  });
+
+  it("maps draft values to real PTP upload field names", () => {
+    const { fields, missing } = ptpFormFieldsFromDraft({
+      releaseName: "Movie.2025.1080p.WEB-DL.x265-GROUP",
+      description: "Description",
+      groupId: "123",
+      type: "Feature Film",
+      source: "WEB",
+      codec: "H.265",
+      container: "MKV",
+      resolution: "1080p",
+      imdb: "tt1234567",
+      title: "Movie",
+      year: "2025",
+      image: "",
+      trailer: "",
+      tags: "drama",
+      synopsis: "",
+      remaster: false,
+      remasterYear: "",
+      remasterTitle: "",
+      special: "",
+      subtitles: ["3"],
+      trumpable: ["14"],
+      scene: false,
+      personalRip: true,
+      internal: false,
+      uploadToken: "token",
+      artists: [{ name: "Director Name", importance: "1" }]
+    });
+
+    expect(missing).toEqual([]);
+    expect(fields).toContainEqual(["type", "Feature Film"]);
+    expect(fields).toContainEqual(["source", "WEB"]);
+    expect(fields).toContainEqual(["codec", "H.265"]);
+    expect(fields).toContainEqual(["container", "MKV"]);
+    expect(fields).toContainEqual(["resolution", "1080p"]);
+    expect(fields).toContainEqual(["imdb", "tt1234567"]);
+    expect(fields).toContainEqual(["artist[]", "Director Name"]);
+    expect(fields).toContainEqual(["importance[]", "1"]);
+    expect(fields).toContainEqual(["subtitles[]", "3"]);
+    expect(fields).toContainEqual(["trumpable[]", "14"]);
   });
 });
