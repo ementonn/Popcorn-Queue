@@ -1,0 +1,25 @@
+{
+  "name": "@popcorn-queue/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "DATABASE_URL=${DATABASE_URL:-file:./popcorn-queue.db} prisma generate --schema prisma/schema.prisma && tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "prisma:generate": "DATABASE_URL=${DATABASE_URL:-file:./popcorn-queue.db} prisma generate --schema prisma/schema.prisma",
+    "db:push": "DATABASE_URL=${DATABASE_URL:-file:./popcorn-queue.db} prisma db push --schema prisma/schema.prisma",
+    "start": "node dist/index.js",
+    "typecheck": "DATABASE_URL=${DATABASE_URL:-file:./popcorn-queue.db} prisma generate --schema prisma/schema.prisma && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.0.0",
+    "@fastify/multipart": "^9.0.0",
+    "@popcorn-queue/core": "0.1.0",
+    "@popcorn-queue/integrations": "0.1.0",
+    "@prisma/client": "^6.19.3",
+    "fastify": "^5.0.0"
+  },
+  "devDependencies": {
+    "prisma": "^6.19.3"
+  }
+}

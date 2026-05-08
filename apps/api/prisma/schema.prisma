@@ -1,0 +1,32 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Job {
+  id              String   @id
+  state           String
+  phase           String
+  sourceJson      String   @map("source")
+  candidateJson   String?  @map("candidate")
+  checkResultJson String?  @map("check_result")
+  torrentJson     String?  @map("torrent")
+  uploadPlanJson  String   @map("upload_plan")
+  phasesJson      String   @map("phases")
+  eventsJson      String   @map("events")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([createdAt])
+}
+
+model PtpCacheEntry {
+  key       String   @id
+  dataJson  String   @map("data")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
