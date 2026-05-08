@@ -6,6 +6,7 @@ export * from "./media.js";
 export * from "./metadata.js";
 export * from "./ptp-upload-rules.js";
 export * from "./release.js";
+export * from "./review-draft.js";
 export * from "./rules.js";
 export * from "./scene.js";
 export * from "./screenshots.js";
