@@ -111,6 +111,71 @@ describe("PreparationService", () => {
     expect(prepared.events.some((event) => event.message.includes("uploaded to PTP"))).toBe(false);
   });
 
+  it("uses manual intake server media path directly without qB download", async () => {
+    const dataRoot = await mkdtemp(path.join(os.tmpdir(), "popcorn-prep-manual-"));
+    const mediaRoot = await mkdtemp(path.join(os.tmpdir(), "popcorn-media-manual-"));
+    const mediaPath = path.join(mediaRoot, "Manual.Movie.2024.1080p.WEB-DL.x265-GROUP.mkv");
+    await writeFile(mediaPath, "movie");
+    const sourceTorrentPath = path.join(dataRoot, "jobs", "manual-source.torrent");
+    await mkdir(path.dirname(sourceTorrentPath), { recursive: true });
+    await writeFile(sourceTorrentPath, "d4:infod6:lengthi1eee");
+
+    const jobs = new JobRepository();
+    const job = jobs.createFromBrowser({
+      candidate: {
+        site: "unknown",
+        title: "Manual.Movie.2024.1080p.WEB-DL.x265-GROUP",
+        imdbId: "tt1234567"
+      },
+      torrent: {
+        filename: "Manual.Movie.source.torrent",
+        bytes: 21,
+        filePath: sourceTorrentPath
+      }
+    });
+    job.source = {
+      ...job.source,
+      mediaPath,
+      ptpTarget: {
+        groupId: "205678",
+        displayTitle: "Manual Movie [2024]",
+        year: "2024",
+        imdbId: "tt1234567",
+        ptpUrl: "https://passthepopcorn.me/torrents.php?id=205678"
+      }
+    };
+
+    const addCalls: unknown[] = [];
+    const service = new PreparationService({
+      dataRoot,
+      jobs,
+      runExternalTools: false,
+      toolCommands: { ffmpeg: "ffmpeg", mediainfo: "mediainfo", oxipng: "oxipng" },
+      torrentClient: {
+        name: "mock-qb",
+        async addTorrent(options) {
+          addCalls.push(options);
+          return { infoHash: "SHOULD_NOT_BE_USED" };
+        },
+        async getStatus() {
+          throw new Error("qB status must not be requested for manual media paths");
+        },
+        async isComplete() {
+          return false;
+        },
+        async listFiles() {
+          return [];
+        }
+      }
+    });
+
+    await service.runJob(job.id);
+    const prepared = jobs.get(job.id)!;
+    expect(addCalls).toEqual([]);
+    expect(prepared.artifacts.mediaFiles?.[0]).toMatch(/^media[/\\]upload[/\\]Manual\.Movie/);
+    expect(prepared.events.some((event) => event.message.includes("Torrent is still downloading"))).toBe(false);
+  });
+
   it("computes review blockers and warnings from evidence and draft fields", () => {
     const repo = new JobRepository();
     const job = repo.create({

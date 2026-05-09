@@ -296,7 +296,8 @@ export class PreparationService {
       ...input,
       ...(job.checkResult ? { checkResult: job.checkResult } : {}),
       ...(job.torrent ? { torrent: job.torrent } : {}),
-      ...(job.torrent?.filePath ? { sourceTorrentPath: job.torrent.filePath } : {})
+      ...(job.torrent?.filePath ? { sourceTorrentPath: job.torrent.filePath } : {}),
+      ...(job.source.mediaPath ? { mediaPath: job.source.mediaPath } : {})
     };
   }
 
