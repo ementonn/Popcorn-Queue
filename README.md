@@ -48,7 +48,7 @@ npm run dev:api
 npm run dev:web
 ```
 
-`npm run configure` writes `.env`, generates a default browser token when one is not already set, enables local web login by default, and backs up an existing `.env` before saving. `npm run ptp:login` validates PTP upload login, prompts for 2FA when PTP requires it, and saves a reusable cookie file.
+`npm run configure` writes `.env`, generates a browser token when one is not already set, enables local web login by default, and prompts only for the core PTP/qBittorrent values. Prompts are plain text so you can see what you type. `npm run ptp:login` validates PTP upload login, prompts for 2FA when PTP requires it, and saves a reusable cookie file.
 
 The default development ports are:
 

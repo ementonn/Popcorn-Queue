@@ -19,10 +19,7 @@ function exampleEnv(): string {
     "PTP_ANNOUNCE_URL=",
     "PTP_COOKIE_FILE=./data/ptp-cookies.txt",
     "POPCORN_QUEUE_IMAGE_HOST=imgbb",
-    "IMGBB_API_KEY=",
-    "PTPIMG_API_KEY=",
     "QBITTORRENT_URL=",
-    "QBITTORRENT_USERNAME=",
     "QBITTORRENT_PASSWORD="
   ].join("\n");
 }
@@ -40,7 +37,8 @@ describe("configure CLI helpers", () => {
       PTP_USERNAME: "ptp-user",
       PTP_PASSWORD: "pass with # hash",
       PTP_ANNOUNCE_URL: "https://please.passthepopcorn.me/passkey/announce",
-      IMGBB_API_KEY: "imgbb-key"
+      QBITTORRENT_URL: "http://127.0.0.1:8080",
+      QBITTORRENT_PASSWORD: "qb-pass"
     };
 
     const result = await configureEnvFile({
@@ -62,11 +60,20 @@ describe("configure CLI helpers", () => {
     expect(text).toContain("PTP_API_USER=api-user");
     expect(text).toContain("PTP_USERNAME=ptp-user");
     expect(text).toContain('PTP_PASSWORD="pass with # hash"');
-    expect(text).toContain("IMGBB_API_KEY=imgbb-key");
-    expect(prompted.find((field) => field.key === "PTP_PASSWORD")).toMatchObject({ secret: true, defaultValue: "" });
-    expect(prompted.find((field) => field.key === "POPCORN_QUEUE_BROWSER_TOKEN")).toMatchObject({ secret: true, defaultValue: "generated-browser-token" });
-    expect(prompted.find((field) => field.key === "POPCORN_QUEUE_WEB_AUTH")).toMatchObject({ secret: false, defaultValue: "true" });
-    expect(prompted.find((field) => field.key === "POPCORN_QUEUE_PUBLIC_HOST")).toMatchObject({ secret: false, defaultValue: "localhost" });
+    expect(text).toContain("QBITTORRENT_URL=http://127.0.0.1:8080");
+    expect(text).toContain("QBITTORRENT_PASSWORD=qb-pass");
+    expect(text).toContain("PTP_COOKIE_FILE=./data/ptp-cookies.txt");
+    expect(text).toContain("POPCORN_QUEUE_IMAGE_HOST=imgbb");
+    expect(prompted.map((field) => field.key)).toEqual([
+      "PTP_API_USER",
+      "PTP_API_KEY",
+      "PTP_USERNAME",
+      "PTP_PASSWORD",
+      "PTP_ANNOUNCE_URL",
+      "QBITTORRENT_URL",
+      "QBITTORRENT_PASSWORD"
+    ]);
+    expect(prompted.every((field) => field.secret === false)).toBe(true);
   });
 
   it("backs up an existing .env and keeps existing values when the user presses enter", async () => {

@@ -33,28 +33,29 @@ interface ConfigureField {
   fallback?: string;
 }
 
-const configureFields: ConfigureField[] = [
+const autoFields: ConfigureField[] = [
   { key: "POPCORN_QUEUE_PUBLIC_HOST", label: "Public host", fallback: "localhost" },
   { key: "POPCORN_QUEUE_PUBLIC_SCHEME", label: "Public scheme", fallback: "http" },
   { key: "POPCORN_QUEUE_PORT", label: "API port", fallback: "3500" },
   { key: "POPCORN_QUEUE_WEB_PORT", label: "Web port", fallback: "5173" },
   { key: "POPCORN_QUEUE_BROWSER_TOKEN", label: "Browser token", secret: true },
   { key: "POPCORN_QUEUE_WEB_AUTH", label: "Require web login", fallback: "true" },
-  { key: "PTP_API_USER", label: "PTP API user" },
-  { key: "PTP_API_KEY", label: "PTP API key", secret: true },
-  { key: "PTP_USERNAME", label: "PTP username" },
-  { key: "PTP_PASSWORD", label: "PTP password", secret: true },
-  { key: "PTP_ANNOUNCE_URL", label: "PTP announce URL", secret: true },
   { key: "PTP_COOKIE_FILE", label: "PTP cookie file", fallback: "./data/ptp-cookies.txt" },
   { key: "POPCORN_QUEUE_IMAGE_HOST", label: "Image host", fallback: "imgbb" },
-  { key: "IMGBB_API_KEY", label: "imgbb API key", secret: true },
-  { key: "PTPIMG_API_KEY", label: "PTPimg API key", secret: true },
-  { key: "QBITTORRENT_URL", label: "qBittorrent URL" },
-  { key: "QBITTORRENT_USERNAME", label: "qBittorrent username" },
-  { key: "QBITTORRENT_PASSWORD", label: "qBittorrent password", secret: true },
-  { key: "QBITTORRENT_TAGS", label: "qBittorrent tags", fallback: "ptp,upload" },
-  { key: "QBITTORRENT_CATEGORY", label: "qBittorrent category" }
+  { key: "QBITTORRENT_TAGS", label: "qBittorrent tags", fallback: "ptp,upload" }
 ];
+
+const promptFields: ConfigureField[] = [
+  { key: "PTP_API_USER", label: "PTP API user" },
+  { key: "PTP_API_KEY", label: "PTP API key" },
+  { key: "PTP_USERNAME", label: "PTP username" },
+  { key: "PTP_PASSWORD", label: "PTP password" },
+  { key: "PTP_ANNOUNCE_URL", label: "PTP announce URL" },
+  { key: "QBITTORRENT_URL", label: "qBittorrent URL" },
+  { key: "QBITTORRENT_PASSWORD", label: "qBittorrent password" }
+];
+
+const configureFields = [...autoFields, ...promptFields];
 
 function decodeEnvValue(rawValue: string): string {
   let value = rawValue.trim();
@@ -134,12 +135,16 @@ export async function configureEnvFile(options: ConfigureEnvFileOptions): Promis
   const token = generateToken();
   const nextValues = new Map(existing);
 
-  for (const field of configureFields) {
+  for (const field of autoFields) {
+    nextValues.set(field.key, defaultForField(field, existing, example, token));
+  }
+
+  for (const field of promptFields) {
     const defaultValue = defaultForField(field, existing, example, token);
     const answer = await options.prompt({
       key: field.key,
       label: field.label,
-      secret: field.secret ?? false,
+      secret: false,
       defaultValue
     });
     nextValues.set(field.key, answer.trim() ? answer : defaultValue);
@@ -152,54 +157,9 @@ export async function configureEnvFile(options: ConfigureEnvFileOptions): Promis
   return { envPath: options.envPath, backupPath };
 }
 
-async function promptHidden(question: string): Promise<string> {
-  if (!process.stdin.isTTY) {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    try {
-      return await rl.question(question);
-    } finally {
-      rl.close();
-    }
-  }
-
-  process.stdout.write(question);
-  process.stdin.setRawMode(true);
-  process.stdin.resume();
-  return new Promise((resolve, reject) => {
-    let value = "";
-    const cleanup = () => {
-      process.stdin.off("data", onData);
-      process.stdin.setRawMode(false);
-      process.stdout.write("\n");
-    };
-    const onData = (chunk: Buffer) => {
-      const text = chunk.toString("utf8");
-      for (const char of text) {
-        if (char === "\u0003") {
-          cleanup();
-          reject(new Error("Interrupted."));
-          return;
-        }
-        if (char === "\r" || char === "\n") {
-          cleanup();
-          resolve(value);
-          return;
-        }
-        if (char === "\u007f" || char === "\b") {
-          value = value.slice(0, -1);
-          return;
-        }
-        value += char;
-      }
-    };
-    process.stdin.on("data", onData);
-  });
-}
-
 async function interactivePrompt(field: ConfigurePromptField): Promise<string> {
-  const hint = field.defaultValue ? (field.secret ? " [press Enter to keep/use default]" : ` [${field.defaultValue}]`) : "";
+  const hint = field.defaultValue ? ` [${field.defaultValue}]` : "";
   const question = `${field.label} (${field.key})${hint}: `;
-  if (field.secret) return promptHidden(question);
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   try {
     return await rl.question(question);
