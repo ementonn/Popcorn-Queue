@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { ptpFormFieldsFromDraft, type PtpUploadResult, type ReviewDraft } from "@popcorn-queue/core";
+import { ptpFormFieldsFromDraft, type PtpArtistDraft, type PtpUploadResult, type ReviewDraft } from "@popcorn-queue/core";
 
 export interface PtpSubmitInput {
   draft: ReviewDraft;
@@ -41,6 +41,15 @@ export class PtpSubmitError extends Error {
 interface LoginResponse {
   Result?: string;
   AntiCsrfToken?: string;
+}
+
+interface PtpTorrentInfoMovie {
+  title?: unknown;
+  year?: unknown;
+  art?: unknown;
+  plot?: unknown;
+  tags?: unknown;
+  director?: unknown;
 }
 
 const DEFAULT_BASE_URL = "https://passthepopcorn.me";
@@ -102,6 +111,33 @@ function parseUploadResult(url: string): PtpUploadResult | null {
 function appendText(form: FormData, key: string, value: string | null | undefined): void {
   if (value === null || value === undefined || value === "") return;
   form.append(key, value);
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeImdbForPtpAjax(value: string | null | undefined): string | null {
+  const match = value?.match(/(?:tt)?(\d+)/i);
+  return match?.[1] ? match[1].padStart(7, "0") : null;
+}
+
+function maybeMaximizedPosterUrl(value: unknown): string {
+  const url = stringValue(value);
+  if (!url) return "";
+  const match = url.match(/(.+?\._V1).*\.jpg/i);
+  return match?.[1] ? `${match[1]}_SY768_.jpg` : url;
+}
+
+function ptpArtistDrafts(value: unknown): PtpArtistDraft[] {
+  if (!Array.isArray(value)) return [];
+  const artists: PtpArtistDraft[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const name = stringValue((item as { name?: unknown }).name);
+    if (name) artists.push({ name, importance: "1" });
+  }
+  return artists;
 }
 
 export class PtpFormSubmitter implements PtpSubmitter {
@@ -212,7 +248,8 @@ export class PtpFormSubmitter implements PtpSubmitter {
 
   private async buildUploadForm(input: PtpSubmitInput, csrfToken: string): Promise<FormData> {
     const form = new FormData();
-    const { fields, missing } = ptpFormFieldsFromDraft(input.draft);
+    const draft = await this.draftWithPtpImdbInfo(input.draft);
+    const { fields, missing } = ptpFormFieldsFromDraft(draft);
     if (missing.length) {
       throw new PtpSubmitError(`Cannot submit PTP upload draft; missing fields: ${missing.join(", ")}`, null, false);
     }
@@ -222,6 +259,64 @@ export class PtpFormSubmitter implements PtpSubmitter {
     const torrent = await readFile(input.torrentPath);
     form.append("file_input", new Blob([torrent], { type: "application/x-bittorrent" }), "placeholder.torrent");
     return form;
+  }
+
+  private async draftWithPtpImdbInfo(draft: ReviewDraft): Promise<ReviewDraft> {
+    if (draft.groupId) return draft;
+    const imdb = normalizeImdbForPtpAjax(draft.imdb);
+    if (!imdb) return draft;
+
+    const needsLookup = !draft.title?.trim()
+      || !draft.year?.trim()
+      || !draft.tags?.trim()
+      || !draft.synopsis?.trim()
+      || !draft.image?.trim()
+      || !(draft.artists?.length);
+    if (!needsLookup) return draft;
+
+    const info = await this.fetchPtpTorrentInfo(imdb);
+    if (!info) return draft;
+    const artists = draft.artists?.length ? draft.artists : ptpArtistDrafts(info.director);
+    return {
+      ...draft,
+      title: draft.title?.trim() || stringValue(info.title),
+      year: draft.year?.trim() || stringValue(info.year),
+      image: draft.image?.trim() || maybeMaximizedPosterUrl(info.art),
+      tags: draft.tags?.trim() || stringValue(info.tags),
+      synopsis: draft.synopsis?.trim() || stringValue(info.plot),
+      artists
+    };
+  }
+
+  private async fetchPtpTorrentInfo(imdb: string): Promise<PtpTorrentInfoMovie | null> {
+    const url = new URL("/ajax.php", this.baseUrl);
+    url.searchParams.set("action", "torrent_info");
+    url.searchParams.set("imdb", imdb);
+    const response = await this.fetchImpl(url.toString(), {
+      method: "GET",
+      headers: await this.requestHeaders("application/json")
+    });
+    const text = await response.text();
+    if (text.includes("Intermission") || text.includes("We are in maintenance")) {
+      throw new PtpSubmitError("PTP is currently in maintenance mode.", response.status, true);
+    }
+    if (!response.ok) {
+      throw new PtpSubmitError(`Could not load PTP IMDb metadata; HTTP ${response.status}.`, response.status, response.status >= 500);
+    }
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch (error) {
+      throw new PtpSubmitError(`Could not parse PTP IMDb metadata: ${(error as Error).message}`, response.status, false);
+    }
+    if (!Array.isArray(data) || data.length !== 1) {
+      throw new PtpSubmitError("Could not load PTP IMDb metadata; unexpected response shape.", response.status, false);
+    }
+    const movie = data[0];
+    if (!movie || typeof movie !== "object") {
+      throw new PtpSubmitError("Could not load PTP IMDb metadata; no movie info was returned.", response.status, false);
+    }
+    return movie as PtpTorrentInfoMovie;
   }
 
   private uploadUrl(groupId: string | null): URL {

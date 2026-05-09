@@ -169,6 +169,48 @@ describe("PtpFormSubmitter", () => {
     expect(form.getAll("importance[]")).toEqual(["1"]);
   });
 
+  it("fills missing new movie metadata from PTP IMDb lookup before submitting", async () => {
+    const calls: FetchCall[] = [];
+    const submitter = createSubmitter(calls, [
+      response('<body data-AntiCsrfToken="CSRF"></body>'),
+      response(JSON.stringify([{
+        title: "Lookup Movie",
+        year: "2026",
+        art: "https://img.example/poster.jpg",
+        plot: "Lookup synopsis",
+        tags: "drama, thriller",
+        director: [{ name: "Director Name" }]
+      }]), { headers: { "content-type": "application/json" } }, "https://passthepopcorn.me/ajax.php?action=torrent_info&imdb=7654321"),
+      response("", {}, "https://passthepopcorn.me/torrents.php?id=789&torrentid=456")
+    ]);
+
+    await submitter.submit({
+      draft: {
+        ...draft,
+        groupId: null,
+        imdb: "tt7654321",
+        title: "",
+        year: "",
+        image: "",
+        tags: "",
+        synopsis: "",
+        artists: []
+      },
+      torrentPath: await torrentFixture()
+    });
+
+    expect(calls[1]?.url).toBe("https://passthepopcorn.me/ajax.php?action=torrent_info&imdb=7654321");
+    const form = calls[2]?.init.body as FormData;
+    expect(form.get("imdb")).toBe("tt7654321");
+    expect(form.get("title")).toBe("Lookup Movie");
+    expect(form.get("year")).toBe("2026");
+    expect(form.get("image")).toBe("https://img.example/poster.jpg");
+    expect(form.get("tags")).toBe("drama, thriller");
+    expect(form.get("album_desc")).toBe("Lookup synopsis");
+    expect(form.getAll("artist[]")).toEqual(["Director Name"]);
+    expect(form.getAll("importance[]")).toEqual(["1"]);
+  });
+
   it("logs in when no reusable CSRF token is available and persists cookies", async () => {
     const calls: FetchCall[] = [];
     const cookieFile = path.join(await mkdtemp(path.join(os.tmpdir(), "ptp-submit-cookie-")), "cookies.txt");
