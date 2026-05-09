@@ -10,7 +10,7 @@ interface JobDrawerProps {
 }
 
 const STORAGE_KEY = "popcorn.drawer.width";
-const DEFAULT_WIDTH = 860;
+const DEFAULT_WIDTH = 820;
 const MIN_WIDTH = 520;
 const DESKTOP_MARGIN = 260;
 
