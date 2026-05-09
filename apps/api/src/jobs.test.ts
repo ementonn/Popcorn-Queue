@@ -131,6 +131,52 @@ describe("JobRepository pre-upload state machine", () => {
     expect(failed.phases[0]).toMatchObject({ state: "pending", retryCount: 1, message: "Retry queued." });
   });
 
+  it("returns failed uploads to review so they can be uploaded again", () => {
+    const repo = new JobRepository();
+    let job = repo.markPreparedForReview(repo.create({ candidate }).id, { uploadReadiness: "ready", artifacts: {} })!;
+
+    job = repo.startUpload(job.id)!;
+    job = repo.markUploadFailed(job.id, "Upload to PTP failed: missing tags")!;
+    job = repo.retryFailed(job.id)!;
+
+    expect(job.state).toBe("review");
+    expect(job.phase).toBe("review");
+    expect(job.humanStep).toBe("Review upload package");
+    expect(job.phases.find((phase) => phase.phase === "upload")).toMatchObject({
+      state: "pending",
+      retryCount: 1,
+      message: "Retry queued."
+    });
+
+    job = repo.startUpload(job.id)!;
+    expect(job.state).toBe("uploading");
+    expect(job.phase).toBe("upload");
+  });
+
+  it("recovers upload retries that were left queued in preparation", () => {
+    const repo = new JobRepository();
+    let job = repo.markPreparedForReview(repo.create({ candidate }).id, { uploadReadiness: "ready", artifacts: {} })!;
+    job = repo.startUpload(job.id)!;
+    job.state = "preparing";
+    job.phase = "upload";
+    job.humanStep = "Preparing upload package";
+    const upload = job.phases.find((phase) => phase.phase === "upload")!;
+    upload.state = "pending";
+    upload.retryCount = 1;
+    upload.message = "Retry queued.";
+
+    job = repo.retryFailed(job.id)!;
+
+    expect(job.state).toBe("review");
+    expect(job.phase).toBe("review");
+    expect(job.humanStep).toBe("Review upload package");
+    expect(job.phases.find((phase) => phase.phase === "upload")).toMatchObject({
+      state: "pending",
+      retryCount: 2,
+      message: "Retry queued."
+    });
+  });
+
   it("resumes paused jobs to their active phase state", () => {
     const repo = new JobRepository();
     let preparing = repo.create({ candidate });

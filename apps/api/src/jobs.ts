@@ -534,10 +534,13 @@ export class JobRepository {
   retryFailed(id: string): Job | null {
     const job = this.jobs.get(id);
     if (!job) return null;
-    if (job.state !== "failed" && !job.phases.some((item) => item.state === "failed")) {
+    const retryPhase = job.phase;
+    const run = job.phases.find((item) => item.phase === retryPhase);
+    const hasFailedPhase = job.phases.some((item) => item.state === "failed");
+    const isQueuedUploadRetry = job.state === "preparing" && retryPhase === "upload" && run?.state === "pending" && job.uploadReadiness === "ready";
+    if (job.state !== "failed" && !hasFailedPhase && !isQueuedUploadRetry) {
       return this.record(job, "warn", "Retry is only available for failed jobs.", { phase: job.phase });
     }
-    const run = job.phases.find((item) => item.phase === job.phase);
     if (run) {
       run.retryCount += 1;
       run.state = "pending";
@@ -545,9 +548,17 @@ export class JobRepository {
       delete run.startedAt;
       delete run.finishedAt;
     }
+    if (retryPhase === "upload") {
+      job.state = "review";
+      job.phase = "review";
+      job.humanStep = "Review upload package";
+      this.setPhaseState(job, "review", job.uploadReadiness === "ready" ? "pending" : "warning", "Review upload package.");
+      ensureReviewDraft(job);
+      return this.record(job, "info", "Retry queued.", { phase: retryPhase });
+    }
     job.state = "preparing";
     job.humanStep = "Preparing upload package";
-    return this.record(job, "info", "Retry queued.", { phase: job.phase });
+    return this.record(job, "info", "Retry queued.", { phase: retryPhase });
   }
 
   markNeedsReseed(id: string, message: string): Job | null {
