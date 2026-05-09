@@ -3,6 +3,7 @@ import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } fro
 import {
   loadDashboard,
   loadAuthSession,
+  authSessionAfterCheckFailure,
   loadGlobalLogs,
   loadJobLogs,
   login,
@@ -169,7 +170,7 @@ export function App() {
       })
       .catch((error: unknown) => {
         if (!cancelled) {
-          setAuthSession({ authRequired: false, authenticated: true, username: null });
+          setAuthSession(authSessionAfterCheckFailure());
           setStatus({ tone: "error", text: error instanceof Error ? error.message : "Unable to check web session" });
         }
       })

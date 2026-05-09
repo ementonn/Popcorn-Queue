@@ -244,6 +244,49 @@ function configuredImageHosts(config: ApiConfig): string[] {
   return [...new Set(hosts)];
 }
 
+function urlPort(url: URL): string {
+  if (url.port) return url.port;
+  return url.protocol === "https:" ? "443" : "80";
+}
+
+function hostnameFromHostHeader(host: string | undefined): string | null {
+  if (!host) return null;
+  try {
+    return new URL(`http://${host}`).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function configuredWebPorts(config: ApiConfig): Set<string> {
+  const ports = new Set<string>();
+  for (const value of config.allowedOrigins) {
+    try {
+      ports.add(urlPort(new URL(value)));
+    } catch {
+      // Ignore invalid configured origins; loadConfig only emits URLs.
+    }
+  }
+  return ports;
+}
+
+function isSameHostWebOrigin(config: ApiConfig, origin: string, hostHeader: string | undefined): boolean {
+  const apiHostname = hostnameFromHostHeader(hostHeader);
+  if (!apiHostname) return false;
+
+  try {
+    const originUrl = new URL(origin);
+    return originUrl.hostname === apiHostname && configuredWebPorts(config).has(urlPort(originUrl));
+  } catch {
+    return false;
+  }
+}
+
+function isCorsOriginAllowed(config: ApiConfig, origin: string | undefined, hostHeader: string | undefined): boolean {
+  if (!origin || config.allowedOrigins.length === 0 || config.allowedOrigins.includes(origin)) return true;
+  return isSameHostWebOrigin(config, origin, hostHeader);
+}
+
 export function buildServer(config: ApiConfig, options: BuildServerOptions = {}) {
   const logger = createApiLogger(config);
   const autoPrepare = options.autoPrepare ?? true;
@@ -321,14 +364,14 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
   app.addHook("onReady", resumeInterruptedPreparation);
 
   app.register(cors, {
-    credentials: true,
-    methods: ["GET", "HEAD", "POST", "PATCH", "OPTIONS"],
-    origin(origin, callback) {
-      if (!origin || config.allowedOrigins.length === 0 || config.allowedOrigins.includes(origin)) {
-        callback(null, true);
-        return;
-      }
-      callback(new Error("origin_not_allowed"), false);
+    delegator(request, callback) {
+      const origin = typeof request.headers.origin === "string" ? request.headers.origin : undefined;
+      const host = typeof request.headers.host === "string" ? request.headers.host : undefined;
+      callback(null, {
+        credentials: true,
+        methods: ["GET", "HEAD", "POST", "PATCH", "OPTIONS"],
+        origin: isCorsOriginAllowed(config, origin, host)
+      });
     }
   });
   app.register(multipart, {

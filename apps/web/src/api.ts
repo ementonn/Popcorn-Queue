@@ -69,6 +69,10 @@ export function loadAuthSession(): Promise<AuthSessionInfo> {
   return fetchJson<AuthSessionInfo>("/api/auth/session");
 }
 
+export function authSessionAfterCheckFailure(): AuthSessionInfo {
+  return { authRequired: true, authenticated: false, username: null };
+}
+
 export function login(username: string, password: string): Promise<AuthSessionInfo> {
   return fetchJson<AuthSessionInfo>("/api/auth/login", {
     method: "POST",

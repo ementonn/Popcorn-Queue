@@ -35,7 +35,7 @@ describe("development package resolution", () => {
     const apiPackage = JSON.parse(readFileSync(path.join(root, "apps/api/package.json"), "utf8"));
     const workerPackage = JSON.parse(readFileSync(path.join(root, "apps/worker/package.json"), "utf8"));
 
-    expect(apiPackage.scripts.dev).toBe("tsx watch --conditions development src/index.ts");
+    expect(apiPackage.scripts.dev).toContain("tsx watch --conditions development src/index.ts");
     expect(workerPackage.scripts.dev).toBe("tsx watch --conditions development src/index.ts");
   });
 

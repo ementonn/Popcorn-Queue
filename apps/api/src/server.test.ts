@@ -397,6 +397,26 @@ describe("API jobs", () => {
     });
   });
 
+  it("allows remote dev browser origins on the configured web port for the same host as the API", async () => {
+    const config = testConfig();
+    config.allowedOrigins = ["http://localhost:5173", "http://127.0.0.1:5173"];
+
+    await withConfiguredServer(config, { autoPrepare: false }, async (app) => {
+      const response = await app.inject({
+        method: "OPTIONS",
+        url: "/api/health",
+        headers: {
+          host: "203.0.113.10:3500",
+          origin: "http://203.0.113.10:5173",
+          "access-control-request-method": "GET"
+        }
+      });
+
+      expect(response.statusCode).toBe(204);
+      expect(response.headers["access-control-allow-origin"]).toBe("http://203.0.113.10:5173");
+    });
+  });
+
   it("returns null download status for jobs without a download snapshot", async () => {
     await withServer(async (app) => {
       const create = await app.inject({
