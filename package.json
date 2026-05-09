@@ -16,6 +16,7 @@
     "logs:worker": "tail -f logs/worker.log",
     "logs:job": "sh -c 'if [ -n \"$1\" ]; then tail -f \"data/jobs/$1/logs/job.log\"; else find data/jobs -path \"*/logs/job.log\" -print 2>/dev/null || true; fi' --",
     "screenshots": "tsx scripts/generate-release-assets.ts",
+    "audit:public": "tsx scripts/public-release-audit.ts",
     "test:e2e": "playwright test",
     "test": "vitest run",
     "typecheck": "npm --workspace @popcorn-queue/core run typecheck && npm --workspace @popcorn-queue/core run build && npm --workspace @popcorn-queue/integrations run typecheck && npm --workspace @popcorn-queue/integrations run build && npm --workspace @popcorn-queue/api run typecheck && npm --workspace @popcorn-queue/web run typecheck && npm --workspace @popcorn-queue/worker run typecheck"
