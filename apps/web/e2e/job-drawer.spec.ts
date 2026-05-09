@@ -77,9 +77,16 @@ test.describe("job review drawer", () => {
     test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only drawer assertion.");
     await page.goto("/");
     await page.getByRole("link", { name: "Drawer.Movie.2026.1080p.WEB.x265-GROUP" }).click();
+    const drawer = page.getByTestId("job-drawer");
     await expect(page.getByRole("dialog", { name: /job review/i })).toBeVisible();
+    await expect(drawer.locator(".readiness")).toHaveCount(0);
+    const drawerBox = await drawer.boundingBox();
+    const closeBox = await drawer.getByRole("button", { name: "Close job review" }).boundingBox();
+    expect(drawerBox).not.toBeNull();
+    expect(closeBox).not.toBeNull();
+    expect(closeBox!.x - drawerBox!.x).toBeLessThan(32);
 
-    await page.getByRole("button", { name: "Close job review" }).click();
+    await drawer.getByRole("button", { name: "Close job review" }).click();
 
     await expect(page.getByRole("dialog", { name: /job review/i })).toHaveCount(0);
     await expect(page.getByRole("link", { name: "Drawer.Movie.2026.1080p.WEB.x265-GROUP" })).toBeVisible();
@@ -110,7 +117,98 @@ test.describe("job review drawer", () => {
     await expect(page.getByLabel("IMDb")).toHaveCount(0);
   });
 
-  test("edits advanced PTP fields in collapsible section", async ({ page }, testInfo) => {
+  test("matches PTP subtitle choices and keeps trumpable below description", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only drawer assertion.");
+    await page.goto("/");
+    await page.getByRole("link", { name: "Drawer.Movie.2026.1080p.WEB.x265-GROUP" }).click();
+
+    const reviewPanel = page.getByTestId("review-panel");
+    const subtitleLabels = await reviewPanel.evaluate((panel) => {
+      const field = Array.from(panel.querySelectorAll(".draft-field")).find(
+        (item) => item.querySelector(":scope > span")?.textContent?.trim() === "Subtitles"
+      );
+      return Array.from(field?.querySelectorAll(".draft-checkbox-row label span") ?? []).map((item) => item.textContent?.trim());
+    });
+    expect(subtitleLabels).toEqual([
+      "No Subtitles",
+      "English",
+      "English - Forced",
+      "English Intertitles",
+      "Spanish",
+      "French",
+      "Arabic",
+      "Brazilian Port.",
+      "Bulgarian",
+      "Chinese",
+      "Croatian",
+      "Czech",
+      "Danish",
+      "Dutch",
+      "Estonian",
+      "Finnish",
+      "German",
+      "Greek",
+      "Hebrew",
+      "Hindi",
+      "Hungarian",
+      "Icelandic",
+      "Indonesian",
+      "Italian",
+      "Japanese",
+      "Korean",
+      "Latvian",
+      "Lithuanian",
+      "Malay",
+      "Norwegian",
+      "Persian",
+      "Polish",
+      "Portuguese",
+      "Romanian",
+      "Russian",
+      "Serbian",
+      "Slovak",
+      "Slovenian",
+      "Swedish",
+      "Thai",
+      "Turkish",
+      "Ukrainian",
+      "Vietnamese",
+      "Welsh"
+    ]);
+
+    const fieldOrder = await reviewPanel.locator(".draft-field > span").evaluateAll((items) => items.map((item) => item.textContent?.trim()));
+    expect(fieldOrder.indexOf("Description")).toBeGreaterThanOrEqual(0);
+    expect(fieldOrder.indexOf("Trumpable")).toBeGreaterThanOrEqual(0);
+    expect(fieldOrder.indexOf("Description")).toBeLessThan(fieldOrder.indexOf("Trumpable"));
+
+    const draftOrder = await reviewPanel.evaluate((panel) => {
+      const labelTop = (text: string) =>
+        Array.from(panel.querySelectorAll("label")).find((label) => label.textContent?.trim() === text)?.getBoundingClientRect().top ?? 0;
+      const fieldTop = (text: string) =>
+        Array.from(panel.querySelectorAll(".draft-field > span")).find((label) => label.textContent?.trim() === text)?.getBoundingClientRect().top ?? 0;
+      return {
+        scene: labelTop("Scene"),
+        personalRip: labelTop("Personal rip"),
+        internal: labelTop("Internal"),
+        editionInformation: labelTop("Edition Information"),
+        subtitles: fieldTop("Subtitles")
+      };
+    });
+    expect(draftOrder.scene).toBeLessThan(draftOrder.subtitles);
+    expect(draftOrder.personalRip).toBeLessThan(draftOrder.subtitles);
+    expect(draftOrder.internal).toBeLessThan(draftOrder.subtitles);
+    expect(draftOrder.editionInformation).toBeLessThan(draftOrder.subtitles);
+
+    const checkboxWidths = await reviewPanel.evaluate((panel) => {
+      const field = Array.from(panel.querySelectorAll(".draft-field")).find(
+        (item) => item.querySelector(":scope > span")?.textContent?.trim() === "Subtitles"
+      );
+      return Array.from(field?.querySelectorAll('input[type="checkbox"]') ?? []).map((input) => input.getBoundingClientRect().width);
+    });
+    expect(Math.max(...checkboxWidths)).toBeLessThanOrEqual(18);
+  });
+
+  test("autosaves advanced PTP field edits without a save button", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only drawer assertion.");
     let savedPatch: Record<string, unknown> | null = null;
     await page.route("**/api/jobs/job-drawer/review-draft", async (route) => {
@@ -124,21 +222,53 @@ test.describe("job review drawer", () => {
     await page.getByRole("button", { name: "Advanced PTP fields" }).click();
     await page.getByLabel("IMDb").fill("tt7654321");
     await page.getByLabel("Tags").fill("drama, mystery");
-    await page.getByRole("button", { name: "Save draft" }).click();
 
-    expect(savedPatch).toMatchObject({ imdb: "tt7654321", tags: "drama, mystery" });
-    await expect(page.getByTestId("review-panel").getByText("Draft saved")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Save draft" })).toHaveCount(0);
+    await expect
+      .poll(() => savedPatch, { timeout: 2500 })
+      .toMatchObject({ imdb: "tt7654321", tags: "drama, mystery" });
+    await expect(page.getByText("Saved", { exact: true })).toBeVisible();
   });
 
-  test("shows text mediainfo artifact", async ({ page }, testInfo) => {
+  test("autosaves default PTP edition information fields and keeps edits across refresh", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only drawer assertion.");
+    let savedPatch: Record<string, unknown> | null = null;
+    await page.route("**/api/jobs/job-drawer/review-draft", async (route) => {
+      const patch = route.request().postDataJSON() as Record<string, unknown>;
+      savedPatch = patch;
+      await route.fulfill({ json: { job: { ...drawerJobs[0], reviewDraft: { ...drawerJobs[0]!.reviewDraft, ...patch } } } });
+    });
+    await page.goto("/");
+    await page.getByRole("link", { name: "Drawer.Movie.2026.1080p.WEB.x265-GROUP" }).click();
+
+    await expect(page.getByText(/^Remaster/)).toHaveCount(0);
+    await page.getByLabel("Edition Information").check();
+    await page.getByRole("button", { name: "Director's Cut" }).click();
+    await page.getByRole("button", { name: "HDR10", exact: true }).click();
+    await expect(page.getByRole("textbox", { name: "Information", exact: true })).toHaveValue("Director's Cut / HDR10");
+    await page.getByLabel("Edition year").fill("2023");
+    await page.waitForTimeout(3500);
+    await expect(page.getByLabel("Edition Information")).toBeChecked();
+    await expect(page.getByRole("textbox", { name: "Information", exact: true })).toHaveValue("Director's Cut / HDR10");
+    await expect(page.getByLabel("Edition year")).toHaveValue("2023");
+
+    await expect
+      .poll(() => savedPatch, { timeout: 2500 })
+      .toMatchObject({ remaster: true, remasterTitle: "Director's Cut / HDR10", remasterYear: "2023" });
+    await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+  });
+
+  test("keeps mediainfo in description instead of a separate review section", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only drawer assertion.");
     await page.goto("/");
     await page.getByRole("link", { name: "Drawer.Movie.2026.1080p.WEB.x265-GROUP" }).click();
 
-    await expect(page.getByText("General")).toBeVisible();
-    await expect(page.getByText("Format                                   : Matroska")).toBeVisible();
+    await expect(page.getByTestId("review-panel").getByRole("heading", { name: "MediaInfo / BDInfo" })).toHaveCount(0);
+    await expect(page.getByLabel("Description")).toHaveValue(/General[\s\S]*Format\s*: Matroska/);
   });
 });
+
+const mediaInfoDescription = "General\nFormat                                   : Matroska";
 
 const baseJob = {
   state: "review",
@@ -153,13 +283,13 @@ const baseJob = {
     mediaInfoText: "General\nFormat                                   : Matroska",
     mediaInfoJson: "{\"media\":{\"track\":[{\"@type\":\"General\",\"Format\":\"Matroska\"}]}}",
     releaseName: "Drawer.Movie.2026.1080p.WEB.x265-GROUP",
-    description: "Description",
+    description: mediaInfoDescription,
     uploadTorrent: "torrent/upload.torrent",
     qbReady: true
   },
   reviewDraft: {
     releaseName: "Drawer.Movie.2026.1080p.WEB.x265-GROUP",
-    description: "Description",
+    description: mediaInfoDescription,
     groupId: "123",
     type: "Feature Film",
     codec: "H.265",

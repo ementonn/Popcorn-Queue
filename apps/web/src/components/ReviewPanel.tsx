@@ -6,8 +6,8 @@ import { DraftEditor } from "./DraftEditor.js";
 interface ReviewPanelProps {
   job: ApiJob | null;
   jobLogs: JobLogResponse;
-  onResolveGate(jobId: string, gateId: string): void;
   onSaveReviewDraft(jobId: string, patch: ReviewDraftPatch): Promise<void> | void;
+  onRegisterDraftFlush?(jobId: string, flush: (() => Promise<void>) | null): void;
 }
 
 function openGates(job: ApiJob, severity: ReviewGate["severity"]): ReviewGate[] {
@@ -20,17 +20,13 @@ function allWarnings(job: ApiJob): string[] {
   return [...(job.artifacts?.reviewWarnings ?? []), ...gateWarnings, ...releaseWarnings];
 }
 
-function artifactBlockers(job: ApiJob): string[] {
-  return job.artifacts?.reviewBlockers ?? [];
-}
-
-function linesFromText(value?: string): string[] {
+function linesFromText(value?: string, limit = 16): string[] {
   if (!value) return [];
-  return value
+  const lines = value
     .split("\n")
     .map((line) => line.trim())
-    .filter(Boolean)
-    .slice(0, 16);
+    .filter(Boolean);
+  return limit > 0 ? lines.slice(0, limit) : lines;
 }
 
 function empty(value: string) {
@@ -77,7 +73,22 @@ function fallbackReviewDraft(job: ApiJob): ReviewDraft {
   };
 }
 
-export function ReviewPanel({ job, jobLogs, onResolveGate, onSaveReviewDraft }: ReviewPanelProps) {
+function sourceTorrentLabel(job: ApiJob): string {
+  const filename = job.torrent?.filename;
+  if (filename && filename !== "source.torrent") return filename;
+  return job.torrent?.filePath ?? filename ?? "pending";
+}
+
+function qbittorrentSeedStatus(job: ApiJob): string {
+  const qbState = job.downloadStatus?.state;
+  const postHookDone = job.phases?.some((phase) => phase.phase === "post-hook" && phase.state === "done");
+  if (job.state === "needs_reseed") return "Needs reseed";
+  if (qbState === "pausedUP") return "Paused in qBittorrent";
+  if (job.state === "seeding" || postHookDone || (job.state === "done" && qbState && ["uploading", "stalledUP", "queuedUP", "forcedUP"].includes(qbState))) return "Seeding";
+  return job.artifacts?.qbReady ? "Ready to seed" : "Waiting";
+}
+
+export function ReviewPanel({ job, jobLogs, onSaveReviewDraft, onRegisterDraftFlush }: ReviewPanelProps) {
   const draft = useMemo(() => (job ? job.reviewDraft ?? fallbackReviewDraft(job) : null), [job]);
   const [draftSaving, setDraftSaving] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
@@ -94,13 +105,8 @@ export function ReviewPanel({ job, jobLogs, onResolveGate, onSaveReviewDraft }: 
     );
   }
 
-  const blockers = openGates(job, "blocker");
-  const blockerMessages = artifactBlockers(job);
   const warnings = allWarnings(job);
   const screenshots = job.artifacts?.screenshots ?? [];
-  const mediaValue = job.artifacts?.mediaInfoText ?? job.artifacts?.mediainfo ?? job.artifacts?.bdinfo;
-  const legacyJsonMediaInfo = !job.artifacts?.mediaInfoText && Boolean(mediaValue?.trim().startsWith("{"));
-  const mediaLines = linesFromText(mediaValue);
   const draftLines = linesFromText(job.artifacts?.description);
   const recentLogs = jobLogs.lines.length ? jobLogs.lines.slice(-8) : (job.events ?? []).slice(-8).map((event) => event.message);
   const download = job.downloadStatus;
@@ -108,35 +114,6 @@ export function ReviewPanel({ job, jobLogs, onResolveGate, onSaveReviewDraft }: 
 
   return (
     <aside className="review-pane" data-testid="review-panel">
-      <div className="review-header">
-        <span className={`readiness ${job.uploadReadiness}`}>{job.uploadReadiness.replace("_", " ")}</span>
-        <strong>{job.humanStep ?? job.phase}</strong>
-      </div>
-
-      <section>
-        <h3>Blockers</h3>
-        {blockers.length || blockerMessages.length ? (
-          <div className="gate-list">
-            {blockerMessages.map((blocker) => (
-              <article className="gate blocker" key={blocker}>
-                <strong>{blocker}</strong>
-              </article>
-            ))}
-            {blockers.map((gate) => (
-              <article className="gate blocker" key={gate.id}>
-                <strong>{gate.title}</strong>
-                <p>{gate.detail}</p>
-                <button type="button" onClick={() => onResolveGate(job.id, gate.id)}>
-                  Resolve
-                </button>
-              </article>
-            ))}
-          </div>
-        ) : (
-          empty("No open blockers.")
-        )}
-      </section>
-
       <section>
         <h3>Warnings</h3>
         {warnings.length ? (
@@ -199,7 +176,8 @@ export function ReviewPanel({ job, jobLogs, onResolveGate, onSaveReviewDraft }: 
           <div className="screenshot-grid">
             {screenshots.slice(0, 6).map((screenshot, index) => (
               <a href={screenshot} key={screenshot} target="_blank" rel="noreferrer">
-                Shot {index + 1}
+                <img src={screenshot} alt={`Shot ${index + 1}`} loading="lazy" />
+                <span>Shot {index + 1}</span>
               </a>
             ))}
           </div>
@@ -209,24 +187,14 @@ export function ReviewPanel({ job, jobLogs, onResolveGate, onSaveReviewDraft }: 
       </section>
 
       <section>
-        <h3>MediaInfo / BDInfo</h3>
-        {mediaLines.length ? (
-          <>
-            {legacyJsonMediaInfo ? <p className="muted">Legacy internal MediaInfo JSON</p> : null}
-            <pre className="artifact-pre">{mediaLines.join("\n")}</pre>
-          </>
-        ) : (
-          empty(job.uploadPlan?.media ? `${job.uploadPlan.media.discType} media inspection pending.` : "Media inspection pending.")
-        )}
-      </section>
-
-      <section>
         <h3>Upload Draft</h3>
         {draft ? (
           <DraftEditor
             draft={draft}
+            draftKey={job.id}
             saving={draftSaving}
             error={draftError}
+            onRegisterFlush={(flush) => onRegisterDraftFlush?.(job.id, flush)}
             onSave={async (patch) => {
               setDraftSaving(true);
               setDraftError(null);
@@ -253,15 +221,19 @@ export function ReviewPanel({ job, jobLogs, onResolveGate, onSaveReviewDraft }: 
         <h3>Torrent / qB Readiness</h3>
         <div className="key-value">
           <span>Source torrent</span>
-          <strong>{job.torrent?.filename ?? "pending"}</strong>
+          <strong>{sourceTorrentLabel(job)}</strong>
           <span>PTP upload torrent</span>
           <strong>{job.artifacts?.uploadTorrent ?? "pending"}</strong>
-          <span>qB handoff</span>
-          <strong>{job.artifacts?.qbReady ? "ready" : "waiting"}</strong>
+          <span>qBittorrent seeding</span>
+          <strong>{qbittorrentSeedStatus(job)}</strong>
           {job.artifacts?.ptpUrl ? (
             <>
               <span>PTP result</span>
-              <strong>{job.artifacts.ptpUrl}</strong>
+              <strong>
+                <a href={job.artifacts.ptpUrl} target="_blank" rel="noreferrer">
+                  {job.artifacts.ptpUrl}
+                </a>
+              </strong>
             </>
           ) : null}
         </div>

@@ -30,7 +30,8 @@ import {
   type ToolAvailability,
   type WorkerTool
 } from "./commands.js";
-import { prepareUploadMedia } from "./media-prepare.js";
+import { ensurePtpSafeUploadPath, prepareUploadMedia } from "./media-prepare.js";
+import { createSingleFileTorrent } from "./torrent-create.js";
 
 export { UPLOAD_PHASES };
 export type { UploadPhase };
@@ -70,6 +71,7 @@ export interface TorrentClientFile {
 
 export interface TorrentDownloadClient {
   readonly name: string;
+  ping?(): Promise<void>;
   addTorrent(options: { torrentPath: string; downloadPath: string; category?: string; tags?: string[]; skipHashCheck?: boolean }): Promise<{ infoHash: string }>;
   getStatus(infoHash: string): Promise<DownloadStatus>;
   isComplete(infoHash: string): Promise<boolean>;
@@ -229,6 +231,7 @@ export interface PhaseContext {
   toolCommands: Partial<Record<WorkerTool, string>>;
   imageUploader: ImageHostUploader | undefined;
   ptpSubmitter: PtpSubmitter | undefined;
+  ptpAnnounceUrl: string | undefined;
   torrentClient: TorrentDownloadClient | undefined;
   torrentClientOptions: {
     category?: string;
@@ -258,6 +261,7 @@ export interface CreatePhaseContextOptions {
   toolCommands?: Partial<Record<WorkerTool, string>>;
   imageUploader?: ImageHostUploader;
   ptpSubmitter?: PtpSubmitter;
+  ptpAnnounceUrl?: string;
   torrentClient?: TorrentDownloadClient;
   torrentClientOptions?: {
     category?: string;
@@ -314,6 +318,7 @@ export function createPhaseContext(jobId: string, job: WorkerJobInput, options: 
     toolCommands: options.toolCommands ?? {},
     imageUploader: options.imageUploader,
     ptpSubmitter: options.ptpSubmitter,
+    ptpAnnounceUrl: options.ptpAnnounceUrl,
     torrentClient: options.torrentClient,
     torrentClientOptions: {
       ...(options.torrentClientOptions?.category ? { category: options.torrentClientOptions.category } : {}),
@@ -390,6 +395,19 @@ function sourceTorrentPath(context: PhaseContext): string | null {
 function uploadTorrentPath(context: PhaseContext): string | null {
   if (!context.job.workingDirectory) return null;
   return path.join(context.job.workingDirectory, "torrent", "upload.torrent");
+}
+
+async function createPtpUploadTorrent(context: PhaseContext): Promise<string | null> {
+  const outputPath = uploadTorrentPath(context);
+  const mediaPath = await resolvedMediaPath(context);
+  if (!context.ptpAnnounceUrl || !outputPath || !mediaPath || !(await pathExists(mediaPath))) return null;
+  const safeMediaPath = await ensurePtpSafeUploadPath(mediaPath);
+  await createSingleFileTorrent({
+    inputPath: safeMediaPath,
+    outputPath,
+    announceUrl: context.ptpAnnounceUrl
+  });
+  return outputPath;
 }
 
 function selectMainMediaFile(files: TorrentClientFile[]): TorrentClientFile | null {
@@ -553,14 +571,7 @@ async function buildPtpUploadDraft(context: PhaseContext): Promise<PtpUploadDraf
   const mediaInfo = mediaInspection?.mediaInfoText.result?.stdout ?? mediaInspection?.mediaInfo.result?.stdout ?? null;
   const torrentPath = torrentCreate?.uploadTorrentPath ?? null;
   const draftPath = descriptionPath(context);
-  const releaseNotes = [
-    `Source: ${context.job.candidate.site}`,
-    `PTP: ${context.job.checkResult?.decision.ptpUrl ?? "new upload"}`,
-    `Duplicate check: ${duplicate?.decision?.reason ?? context.job.checkResult?.decision.reason ?? "not supplied"}`
-  ].join("\n");
   const descriptionInput: Parameters<typeof buildReleaseDescription>[0] = {
-    releaseName: plan.releaseName.generated,
-    releaseNotes,
     screenshots
   };
   if (mediaInfo) descriptionInput.mediaInfoText = mediaInfo;
@@ -952,6 +963,16 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
         const plan = await uploadPlan(context);
         const sourcePath = sourceTorrentPath(context);
         const outputPath = uploadTorrentPath(context);
+        const ptpTorrentPath = await createPtpUploadTorrent(context);
+        if (ptpTorrentPath) {
+          return {
+            ...base("completed", "PTP upload torrent created from final media."),
+            reusePlan: plan.torrentReuse,
+            sourceTorrentPath: sourcePath,
+            uploadTorrentPath: ptpTorrentPath
+          };
+        }
+
         let copiedPath: string | null = null;
         if (sourcePath && outputPath && (await pathExists(sourcePath))) {
           await mkdir(path.dirname(outputPath), { recursive: true });
@@ -1026,6 +1047,16 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
             draftOnly: true
           };
         }
+        try {
+          await createPtpUploadTorrent(context);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            ...base("failed", `PTP upload torrent could not be created: ${message}`),
+            ptpUrl: null,
+            draftOnly: true
+          };
+        }
         const torrentPath = uploadTorrentPath(context);
         if (!torrentPath || !(await pathExists(torrentPath))) {
           return {
@@ -1059,11 +1090,65 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
     },
     {
       phase: "post-hook",
-      async run() {
-        return {
-          ...base("skipped", "No post-upload hooks are configured."),
-          hooksRun: []
-        };
+      async run(context) {
+        const upload = await context.getOutput("upload");
+        if (upload?.status !== "completed" || !upload.result) {
+          return {
+            ...base("skipped", "PTP upload did not complete; post-upload hooks were skipped."),
+            hooksRun: []
+          };
+        }
+        if (!context.torrentClient) {
+          return {
+            ...base("skipped", "Torrent client integration is not configured for seed handoff."),
+            hooksRun: []
+          };
+        }
+
+        const torrentPath = uploadTorrentPath(context);
+        const mediaPath = await resolvedMediaPath(context);
+        const downloadPath = mediaPath ? path.dirname(mediaPath) : mediaWorkspaceDirectories(context)?.uploadDirectory ?? null;
+        if (!torrentPath || !(await pathExists(torrentPath))) {
+          return {
+            ...base("failed", "PTP upload torrent is missing for seed handoff."),
+            hooksRun: []
+          };
+        }
+        if (!downloadPath) {
+          return {
+            ...base("failed", "Upload media directory is missing for seed handoff."),
+            hooksRun: []
+          };
+        }
+
+        try {
+          await mkdir(downloadPath, { recursive: true });
+          const addOptions: Parameters<TorrentDownloadClient["addTorrent"]>[0] = {
+            torrentPath,
+            downloadPath,
+            skipHashCheck: true
+          };
+          if (context.torrentClientOptions.category) addOptions.category = context.torrentClientOptions.category;
+          if (context.torrentClientOptions.tags?.length) addOptions.tags = context.torrentClientOptions.tags;
+          const result = await context.torrentClient.addTorrent(addOptions);
+          await context.log("info", "qBittorrent seed handoff queued.", {
+            client: context.torrentClient.name,
+            infoHash: result.infoHash,
+            torrentPath,
+            downloadPath,
+            skipHashCheck: true
+          });
+          return {
+            ...base("completed", "PTP upload torrent handed to qBittorrent for seeding."),
+            hooksRun: ["qbittorrent-seed-handoff"]
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            ...base("failed", message),
+            hooksRun: []
+          };
+        }
       }
     },
     {

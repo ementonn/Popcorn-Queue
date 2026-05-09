@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +6,7 @@ import { PtpClient } from "@popcorn-queue/integrations";
 import { buildServer } from "./server.js";
 import type { ApiConfig } from "./config.js";
 import type { BrowserCheckResult } from "@popcorn-queue/core";
+import type { CommandExecutor } from "@popcorn-queue/worker";
 import type { Job } from "./jobs.js";
 
 const persistenceState = vi.hoisted(() => ({
@@ -16,10 +17,25 @@ vi.mock("./persistence.js", async () => {
   const { MemoryCacheStore } = await import("@popcorn-queue/core");
   const { JobRepository } = await import("./jobs.js");
 
+  class CountingMemoryCacheStore<T> extends MemoryCacheStore<T> {
+    countValue = 0;
+
+    override async set(key: string, data: T) {
+      const existing = await this.get(key);
+      const entry = await super.set(key, data);
+      if (!existing) this.countValue += 1;
+      return entry;
+    }
+
+    async count(): Promise<number> {
+      return this.countValue;
+    }
+  }
+
   return {
     PrismaPersistence: class {
       readonly jobs;
-      readonly ptpCache = new MemoryCacheStore();
+      readonly ptpCache = new CountingMemoryCacheStore();
 
       constructor(options: { jobs?: ConstructorParameters<typeof JobRepository>[1] } = {}) {
         this.jobs = new JobRepository(persistenceState.initialJobs, options.jobs);
@@ -48,7 +64,7 @@ function testConfig(): ApiConfig {
       baseUrl: "https://passthepopcorn.me/torrents.php",
       userAgent: "Popcorn Queue Test",
       requestDelayMs: 0,
-      announceUrl: "",
+      announceUrl: "https://please.passthepopcorn.me/passkey/announce",
       cookieFile: ""
     },
     integrations: {
@@ -67,6 +83,7 @@ function testConfig(): ApiConfig {
       runExternalTools: false,
       ffmpegBin: "ffmpeg",
       mediainfoBin: "mediainfo",
+      mkvmergeBin: "mkvmerge",
       oxipngBin: "oxipng",
       workDir: "./data/work",
       outputDir: "./data/output"
@@ -141,6 +158,104 @@ describe("API cache contract", () => {
     });
   });
 
+  it("returns system diagnostics without worker log noise", async () => {
+    const commandExecutor: CommandExecutor = async (invocation) => {
+      if (invocation.command === "which") {
+        const command = invocation.args[0] ?? "unknown";
+        return {
+          command: invocation.command,
+          args: invocation.args,
+          exitCode: 0,
+          signal: null,
+          stdout: `/usr/bin/${command}\n`,
+          stderr: "",
+          durationMs: 1
+        };
+      }
+      return {
+        command: invocation.command,
+        args: invocation.args,
+        exitCode: 0,
+        signal: null,
+        stdout: `${invocation.command} version test\n`,
+        stderr: "",
+        durationMs: 1
+      };
+    };
+
+    await withServer(async (app) => {
+      const create = await app.inject({
+        method: "POST",
+        url: "/api/jobs",
+        payload: {
+          site: "unknown",
+          title: "Diagnostic.Movie.2024.1080p.WEB-DL.x265-GROUP",
+          imdbId: "tt1234567"
+        }
+      });
+      expect(create.statusCode).toBe(201);
+
+      const diagnostics = await app.inject({ method: "GET", url: "/api/diagnostics" });
+      expect(diagnostics.statusCode).toBe(200);
+      expect(diagnostics.json()).toMatchObject({
+        system: {
+          api: "online",
+          persistence: "sqlite",
+          ptpApiConfigured: true,
+          browserBridgeConfigured: true
+        },
+        integrations: {
+          qbittorrent: { configured: false, status: "not_checked" },
+          ptp: { configured: true, status: "not_checked" },
+          imageHost: { configured: true, status: "not_checked" }
+        },
+        queue: {
+          total: 1,
+          preparing: 1,
+          review: 0,
+          failed: 0,
+          done: 0
+        },
+        storage: {
+          dataRoot: "/tmp/popcorn-queue-test-data",
+          cacheEntries: 0,
+          jobCount: 1
+        },
+        tools: {
+          ffmpeg: { available: true, version: "ffmpeg version test", location: "/usr/bin/ffmpeg" },
+          mediainfo: { available: true, version: "mediainfo version test", location: "/usr/bin/mediainfo" },
+          mkvmerge: { available: true, version: "mkvmerge version test", location: "/usr/bin/mkvmerge" },
+          oxipng: { available: true, version: "oxipng version test", location: "/usr/bin/oxipng" }
+        },
+        logs: {
+          api: []
+        }
+      });
+      expect(diagnostics.json()).not.toHaveProperty("logs.worker");
+    }, { autoPrepare: false, commandExecutor });
+  });
+
+  it("runs manual diagnostic checks without contacting missing integrations", async () => {
+    await withServer(async (app) => {
+      const response = await app.inject({ method: "POST", url: "/api/diagnostics/check/qbittorrent" });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        target: "qbittorrent",
+        status: "missing",
+        detail: "qBittorrent URL is not configured."
+      });
+
+      const tools = await app.inject({ method: "POST", url: "/api/diagnostics/check/tools" });
+      expect(tools.statusCode).toBe(200);
+      expect(tools.json()).toMatchObject({
+        target: "tools",
+        configured: false,
+        status: "disabled",
+        detail: "External tools are disabled."
+      });
+    });
+  });
+
   it("reuses browser check results from permanent cache until invalidated", async () => {
     const search = vi.spyOn(PtpClient.prototype, "searchByCandidate").mockResolvedValue({ movies: [] });
 
@@ -180,6 +295,25 @@ describe("API jobs", () => {
     persistenceState.initialJobs = [];
   });
 
+  it("allows browser preflight for review draft saves", async () => {
+    await withServer(async (app) => {
+      const response = await app.inject({
+        method: "OPTIONS",
+        url: "/api/jobs/job-1/review-draft",
+        headers: {
+          origin: "http://localhost:5173",
+          "access-control-request-method": "PATCH",
+          "access-control-request-headers": "content-type"
+        }
+      });
+
+      expect(response.statusCode).toBe(204);
+      expect(response.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
+      expect(response.headers["access-control-allow-methods"]).toContain("PATCH");
+      expect(response.headers["access-control-allow-headers"]).toContain("content-type");
+    });
+  });
+
   it("returns null download status for jobs without a download snapshot", async () => {
     await withServer(async (app) => {
       const create = await app.inject({
@@ -197,6 +331,34 @@ describe("API jobs", () => {
       const response = await app.inject({ method: "GET", url: `/api/jobs/${job.id}/download-status` });
       expect(response.statusCode).toBe(200);
       expect(response.json()).toEqual({ downloadStatus: null });
+    });
+  });
+
+  it("resumes paused jobs through the API", async () => {
+    await withServer(async (app) => {
+      const create = await app.inject({
+        method: "POST",
+        url: "/api/jobs",
+        payload: {
+          site: "unknown",
+          title: "Movie.2024.1080p.WEB-DL.x265-GROUP",
+          imdbId: "tt1234567"
+        }
+      });
+      expect(create.statusCode).toBe(201);
+      const job = create.json<{ job: Job }>().job;
+
+      const pause = await app.inject({ method: "POST", url: `/api/jobs/${job.id}/pause` });
+      expect(pause.statusCode).toBe(200);
+      expect(pause.json<{ job: Job }>().job.state).toBe("paused");
+
+      const resume = await app.inject({ method: "POST", url: `/api/jobs/${job.id}/resume` });
+      expect(resume.statusCode).toBe(200);
+      expect(resume.json<{ job: Job }>().job).toMatchObject({
+        state: "preparing",
+        phase: "intake",
+        humanStep: "Preparing upload package"
+      });
     });
   });
 
@@ -262,7 +424,7 @@ describe("API jobs", () => {
     });
   });
 
-  it("uses intent action routes for upload starts and debug advancement", async () => {
+  it("uses intent action routes for upload starts and keeps only skip debug routing", async () => {
     await withServer(async (app) => {
       const create = await app.inject({
         method: "POST",
@@ -278,7 +440,14 @@ describe("API jobs", () => {
       expect(job.state).toBe("preparing");
       expect(job.phase).toBe("intake");
 
-      const blocked = await app.inject({ method: "POST", url: `/api/jobs/${job.id}/debug/advance` });
+      const legacyDebugAdvance = await app.inject({ method: "POST", url: `/api/jobs/${job.id}/debug/advance` });
+      expect(legacyDebugAdvance.statusCode).toBe(404);
+      const legacyAdvance = await app.inject({ method: "POST", url: `/api/jobs/${job.id}/advance` });
+      expect(legacyAdvance.statusCode).toBe(404);
+      const legacyForceState = await app.inject({ method: "POST", url: `/api/jobs/${job.id}/debug/force-state` });
+      expect(legacyForceState.statusCode).toBe(404);
+
+      const blocked = await app.inject({ method: "POST", url: `/api/jobs/${job.id}/debug/skip` });
       expect(blocked.statusCode).toBe(200);
       job = blocked.json<{ job: Job }>().job;
       expect(job.state).toBe("review");
@@ -418,7 +587,7 @@ describe("API jobs", () => {
     });
   });
 
-  it("patches the review draft and runs Start Upload through an injected PTP submitter", async () => {
+  it("patches the review draft, runs Start Upload, and hands the upload torrent to qBittorrent", async () => {
     const jobPath = await mkdtemp(path.join(os.tmpdir(), "popcorn-upload-job-"));
     const torrentPath = path.join(jobPath, "torrent", "upload.torrent");
     await mkdir(path.join(jobPath, "media", "upload"), { recursive: true });
@@ -426,6 +595,7 @@ describe("API jobs", () => {
     await writeFile(path.join(jobPath, "media", "upload", "Upload.Movie.2024.1080p.WEB-DL.x265-GROUP.mkv"), "mkv");
     await writeFile(torrentPath, "torrent");
     const submitted: Array<{ torrentPath: string; description: string; groupId: string | null }> = [];
+    const addCalls: Array<{ torrentPath: string; downloadPath: string; tags?: string[]; skipHashCheck?: boolean }> = [];
 
     await withServer(
       async (app) => {
@@ -466,15 +636,44 @@ describe("API jobs", () => {
         expect(start.statusCode).toBe(200);
         job = start.json<{ job: Job }>().job;
         expect(job.state).toBe("done");
+        expect(job.humanStep).toBe("Complete");
         expect(job.artifacts).toMatchObject({
           ptpUrl: "https://passthepopcorn.me/torrents.php?id=123&torrentid=456",
           ptpGroupId: "123",
           ptpTorrentId: "456"
         });
+        expect(job.phases.find((phase) => phase.phase === "post-hook")).toMatchObject({ state: "done" });
         expect(submitted).toEqual([{ torrentPath, description: "Edited release description", groupId: "123" }]);
+        expect(addCalls).toEqual([
+          {
+            torrentPath,
+            downloadPath: path.join(jobPath, "media", "upload"),
+            skipHashCheck: true
+          }
+        ]);
+        const uploadTorrent = (await readFile(torrentPath)).toString("binary");
+        expect(uploadTorrent).toContain("https://please.passthepopcorn.me/passkey/announce");
+        expect(uploadTorrent).toContain("Upload.Movie.2024.1080p.WEB-DL.x265-GROUP.mkv");
+        expect(uploadTorrent).not.toContain("torrent");
       },
       {
         autoPrepare: false,
+        torrentClient: {
+          name: "mock-qb",
+          async addTorrent(options) {
+            addCalls.push(options);
+            return { infoHash: "ABC123" };
+          },
+          async getStatus() {
+            throw new Error("getStatus should not run during upload handoff.");
+          },
+          async isComplete() {
+            return true;
+          },
+          async listFiles() {
+            return [];
+          }
+        },
         ptpSubmitter: {
           async submit(input) {
             submitted.push({ torrentPath: input.torrentPath, description: input.draft.description, groupId: input.draft.groupId });

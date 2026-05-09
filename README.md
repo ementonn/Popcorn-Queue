@@ -3,6 +3,16 @@
 Popcorn Queue is a TypeScript rewrite of the PTP upload workflow: a browser bridge,
 a PTP duplicate checker, a persistent upload queue, and a high-density web UI.
 
+![Popcorn Queue social preview](docs/assets/social-preview.png)
+
+## Screenshots
+
+![Queue dashboard](docs/assets/screenshot-dashboard.png)
+
+![Job review drawer](docs/assets/screenshot-job-review.png)
+
+![Diagnostics](docs/assets/screenshot-diagnostics.png)
+
 All code for this new project lives under this directory. The legacy
 `PtpUploader`, `ptp_checker`, and `Upload-Assistant` directories are reference-only.
 
@@ -27,6 +37,7 @@ npm install
 npm test
 npm run typecheck
 npm run test:e2e
+npm run screenshots
 npm run dev:web
 npm run dev:api
 ```
@@ -48,3 +59,7 @@ npm run logs:api
 npm run logs:worker
 npm run logs:job -- <jobId>
 ```
+
+Release screenshots are generated from mock data and do not call external
+services. Re-run `npm run screenshots` before refreshing README images or the
+GitHub social preview.

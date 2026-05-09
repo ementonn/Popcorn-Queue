@@ -255,6 +255,10 @@ export class PrismaJobRepository {
     return this.withJob(id, (repo) => repo.pause(id));
   }
 
+  async resume(id: string): Promise<Job | null> {
+    return this.withJob(id, (repo) => repo.resume(id));
+  }
+
   async retry(id: string): Promise<Job | null> {
     return this.withJob(id, (repo) => repo.retry(id));
   }
@@ -303,8 +307,8 @@ export class PrismaJobRepository {
     return this.withJob(id, (repo) => repo.markReseeded(id, infoHash));
   }
 
-  async advance(id: string): Promise<Job | null> {
-    return this.withJob(id, (repo) => repo.advance(id));
+  async skip(id: string): Promise<Job | null> {
+    return this.withJob(id, (repo) => repo.skip(id));
   }
 
   async resolveGate(id: string, gateId: string): Promise<Job | null> {
@@ -358,6 +362,11 @@ export class PrismaPtpCacheStore<T> implements CacheStore<T> {
   async delete(key: string): Promise<void> {
     await this.persistence.ensure();
     await this.persistence.prisma.ptpCacheEntry.deleteMany({ where: { key } });
+  }
+
+  async count(): Promise<number> {
+    await this.persistence.ensure();
+    return this.persistence.prisma.ptpCacheEntry.count();
   }
 
   private deserialize(row: PtpCacheRow): CacheEntry<T> {

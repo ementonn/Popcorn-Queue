@@ -5,8 +5,12 @@ interface QueueTableProps {
   jobs: ApiJob[];
   selectedJobId: string | null;
   onSelect(jobId: string): void;
-  onStartUpload(jobId: string): void;
+  onPause(jobId: string): void;
+  onResume(jobId: string): void;
+  onRetry(jobId: string): void;
 }
+
+type QueueAction = "upload" | "retry" | "pause" | "resume";
 
 function releaseTitle(job: ApiJob): string {
   return job.artifacts?.releaseName ?? job.uploadPlan?.releaseName?.generated ?? job.candidate?.title ?? job.source.title ?? job.id;
@@ -26,26 +30,32 @@ function openGates(job: ApiJob): ReviewGate[] {
   return job.uploadPlan?.reviewGates.filter((gate) => gate.status === "open") ?? [];
 }
 
-function blockerText(job: ApiJob): string {
-  const gates = openGates(job);
-  const blockers = gates.filter((gate) => gate.severity === "blocker").length;
-  const warnings = gates.filter((gate) => gate.severity === "warning").length;
-  if (!blockers) return "Clear";
-  return `${blockers} blocker${blockers === 1 ? "" : "s"}`;
-}
-
 function warningText(job: ApiJob): string {
   const warnings = openGates(job).filter((gate) => gate.severity === "warning").length;
   return warnings ? `${warnings} warning${warnings === 1 ? "" : "s"}` : "None";
 }
 
-function actionText(job: ApiJob): string {
-  if (job.uploadReadiness === "ready") return "Upload";
-  if (job.state === "failed") return "Retry";
-  return "Review";
+function stepLabel(job: ApiJob): string {
+  if (job.state === "done" || job.humanStep === "Upload workflow complete") return "Complete";
+  return job.humanStep ?? job.phase;
 }
 
-export function QueueTable({ jobs, selectedJobId, onSelect, onStartUpload }: QueueTableProps) {
+function queueAction(job: ApiJob): QueueAction | null {
+  if (job.state === "done") return null;
+  if (job.state === "failed") return "retry";
+  if (job.state === "review") return "upload";
+  if (job.state === "paused") return "resume";
+  return "pause";
+}
+
+function actionLabel(action: QueueAction): string {
+  if (action === "retry") return "Retry";
+  if (action === "resume") return "Resume";
+  if (action === "pause") return "Pause";
+  return "Upload";
+}
+
+export function QueueTable({ jobs, selectedJobId, onSelect, onPause, onResume, onRetry }: QueueTableProps) {
   return (
     <section className="queue" aria-label="Upload queue">
       <div className="table-wrap">
@@ -57,7 +67,6 @@ export function QueueTable({ jobs, selectedJobId, onSelect, onStartUpload }: Que
               <th>Source</th>
               <th>Step</th>
               <th>Download</th>
-              <th>Blockers</th>
               <th>Warnings</th>
               <th>Updated</th>
               <th>Action</th>
@@ -66,21 +75,21 @@ export function QueueTable({ jobs, selectedJobId, onSelect, onStartUpload }: Que
           <tbody>
             {jobs.map((job) => {
               const selected = job.id === selectedJobId;
-              const action = actionText(job);
               const progress = downloadProgress(job.downloadStatus);
+              const action = queueAction(job);
               return (
                 <tr key={job.id} className={selected ? "selected" : undefined} onClick={() => onSelect(job.id)}>
-                  <td>
+                  <td data-label="Status">
                     <span className={`state-pill ${job.state}`}>{job.state.replace("_", " ")}</span>
                   </td>
-                  <td>
+                  <td data-label="Release">
                     <a className="job-link" href={`/jobs/${job.id}`} onClick={(event) => event.preventDefault()}>
                       {releaseTitle(job)}
                     </a>
                   </td>
-                  <td>{sourceLabel(job)}</td>
-                  <td>{job.humanStep ?? job.phase}</td>
-                  <td className="download-cell">
+                  <td data-label="Source">{sourceLabel(job)}</td>
+                  <td data-label="Step">{stepLabel(job)}</td>
+                  <td className="download-cell" data-label="Download">
                     <div className="download-line">
                       <span>{downloadSummary(job.downloadStatus)}</span>
                     </div>
@@ -91,21 +100,24 @@ export function QueueTable({ jobs, selectedJobId, onSelect, onStartUpload }: Que
                     ) : null}
                     <span className="download-meta">{downloadDetail(job.downloadStatus)}</span>
                   </td>
-                  <td>{blockerText(job)}</td>
-                  <td>{warningText(job)}</td>
-                  <td>{updatedLabel(job.updatedAt)}</td>
-                  <td>
-                    <button
-                      type="button"
-                      className={job.uploadReadiness === "ready" ? "action primary" : "action"}
-                      disabled={job.uploadReadiness !== "ready"}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        if (job.uploadReadiness === "ready") onStartUpload(job.id);
-                      }}
-                    >
-                      {action}
-                    </button>
+                  <td data-label="Warnings">{warningText(job)}</td>
+                  <td data-label="Updated">{updatedLabel(job.updatedAt)}</td>
+                  <td data-label="Action">
+                    {action ? (
+                      <button
+                        type="button"
+                        className="action"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (action === "retry") onRetry(job.id);
+                          else if (action === "pause") onPause(job.id);
+                          else if (action === "resume") onResume(job.id);
+                          else onSelect(job.id);
+                        }}
+                      >
+                        {actionLabel(action)}
+                      </button>
+                    ) : null}
                   </td>
                 </tr>
               );

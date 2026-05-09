@@ -102,7 +102,6 @@ export interface ApiJob {
     duplicateResult?: string;
     uploadTorrent?: string;
     qbReady?: boolean;
-    reviewBlockers?: string[];
     reviewWarnings?: string[];
     ptpUrl?: string;
     ptpGroupId?: string;
@@ -176,11 +175,75 @@ export interface HealthInfo {
   };
 }
 
+export type DiagnosticCheckTarget = "qbittorrent" | "ptp" | "image-host" | "tools";
+export type DiagnosticCheckStatus = "not_checked" | "ok" | "configured" | "missing" | "failed" | "disabled";
+export type DiagnosticToolName = "ffmpeg" | "mediainfo" | "mkvmerge" | "oxipng";
+
+export interface DiagnosticTool {
+  tool: DiagnosticToolName;
+  command: string;
+  available: boolean;
+  version: string | null;
+  location: string | null;
+  error: string | null;
+}
+
+export interface DiagnosticCheckResult {
+  target: DiagnosticCheckTarget;
+  configured: boolean;
+  status: DiagnosticCheckStatus;
+  detail: string;
+  checkedAt?: string;
+  tools?: Record<DiagnosticToolName, DiagnosticTool>;
+}
+
+export interface DiagnosticsInfo {
+  system: {
+    api: "online" | "offline" | string;
+    persistence: string;
+    publicWebUrl?: string;
+    publicApiUrl?: string;
+    browserBridgeConfigured: boolean;
+    ptpApiConfigured: boolean;
+    externalToolsEnabled: boolean;
+  };
+  integrations: {
+    qbittorrent: Omit<DiagnosticCheckResult, "target">;
+    ptp: Omit<DiagnosticCheckResult, "target">;
+    imageHost: Omit<DiagnosticCheckResult, "target">;
+    tools: Omit<DiagnosticCheckResult, "target">;
+  };
+  queue: {
+    total: number;
+    preparing: number;
+    review: number;
+    failed: number;
+    done: number;
+    paused: number;
+    uploading: number;
+    seeding: number;
+    needsReseed: number;
+    stuck: Array<{ id: string; state: string; phase: string; updatedAt: string; title: string }>;
+    recentFailures: Array<{ id: string; message: string; title: string }>;
+  };
+  tools: Record<DiagnosticToolName, DiagnosticTool>;
+  storage: {
+    dataRoot: string;
+    databasePath: string | null;
+    jobCount: number;
+    cacheEntries: number | null;
+    databaseBytes: number | null;
+    dataRootFreeBytes: number | null;
+  };
+  logs: {
+    api: string[];
+  };
+}
+
 export interface JobLogResponse {
   lines: string[];
 }
 
 export interface GlobalLogResponse {
   api: string[];
-  worker: string[];
 }

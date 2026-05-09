@@ -9,10 +9,18 @@ describe("QBittorrentClient", () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "popcorn-qb-"));
     const torrentPath = path.join(directory, "upload.torrent");
     await writeFile(torrentPath, "d4:infod6:lengthi5e4:name9:movie.mkvee");
-    const calls: Array<{ url: string; method?: string }> = [];
+    const calls: Array<{ url: string; method?: string; savepath?: string | null; category?: string | null; tags?: string | null; skipChecking?: string | null }> = [];
     const fetchImpl: typeof fetch = async (input, init) => {
       const call: { url: string; method?: string } = { url: String(input) };
       if (init?.method) call.method = init.method;
+      if (String(input).endsWith("/api/v2/torrents/add") && init?.body instanceof FormData) {
+        Object.assign(call, {
+          savepath: init.body.get("savepath")?.toString() ?? null,
+          category: init.body.get("category")?.toString() ?? null,
+          tags: init.body.get("tags")?.toString() ?? null,
+          skipChecking: init.body.get("skip_checking")?.toString() ?? null
+        });
+      }
       calls.push(call);
       if (String(input).endsWith("/api/v2/auth/login")) return new Response("Ok.", { status: 200, headers: { "set-cookie": "SID=abc" } });
       if (String(input).endsWith("/api/v2/torrents/add")) return new Response("Ok.", { status: 200 });
@@ -31,11 +39,18 @@ describe("QBittorrentClient", () => {
         torrentPath,
         downloadPath: "/tmp/media",
         category: "ptp",
-        tags: ["ptp", "upload"]
+        tags: ["ptp", "upload"],
+        skipHashCheck: true
       })
     ).resolves.toMatchObject({ infoHash: expect.stringMatching(/^[A-F0-9]{40}$/) });
 
     expect(calls.map((call) => call.url)).toEqual(["http://127.0.0.1:8080/api/v2/auth/login", "http://127.0.0.1:8080/api/v2/torrents/add"]);
+    expect(calls[1]).toMatchObject({
+      savepath: "/tmp/media",
+      category: "ptp",
+      tags: "ptp,upload",
+      skipChecking: "true"
+    });
   });
 
   it("accepts qBittorrent URLs without an explicit scheme", async () => {

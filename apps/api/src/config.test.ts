@@ -83,6 +83,7 @@ describe("API configuration", () => {
       POPCORN_QUEUE_DATA_ROOT: "/tmp/data-root",
       FFMPEG_BIN: "/usr/bin/ffmpeg",
       MEDIAINFO_BIN: "/usr/bin/mediainfo",
+      MKVMERGE_BIN: "/usr/bin/mkvmerge",
       OXIPNG_BIN: "/usr/bin/oxipng",
       POPCORN_QUEUE_WORK_DIR: "/tmp/work",
       POPCORN_QUEUE_OUTPUT_DIR: "/tmp/output",
@@ -127,6 +128,7 @@ describe("API configuration", () => {
         runExternalTools: true,
         ffmpegBin: "/usr/bin/ffmpeg",
         mediainfoBin: "/usr/bin/mediainfo",
+        mkvmergeBin: "/usr/bin/mkvmerge",
         oxipngBin: "/usr/bin/oxipng",
         workDir: "/tmp/work",
         outputDir: "/tmp/output"

@@ -1,6 +1,6 @@
 import { spawn, type SpawnOptionsWithoutStdio } from "node:child_process";
 
-export type WorkerTool = "ffmpeg" | "mediainfo" | "oxipng";
+export type WorkerTool = "ffmpeg" | "mediainfo" | "mkvmerge" | "oxipng";
 
 export interface CommandInvocation {
   command: string;
@@ -31,6 +31,7 @@ export interface ToolAvailability {
   command: string;
   available: boolean;
   version: string | null;
+  location: string | null;
   error: string | null;
 }
 
@@ -137,11 +138,22 @@ function availabilityArgs(tool: WorkerTool): string[] {
 }
 
 function firstVersionLine(result: CommandResult): string | null {
-  const output = `${result.stdout}\n${result.stderr}`
+  const lines = `${result.stdout}\n${result.stderr}`
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .find(Boolean);
-  return output ?? null;
+    .filter(Boolean);
+  return lines.find((line) => /\d/.test(line)) ?? lines[0] ?? null;
+}
+
+async function resolveCommandLocation(command: string, executor: CommandExecutor): Promise<string | null> {
+  if (command.includes("/")) return command;
+  const result = await executor({
+    command: "which",
+    args: [command],
+    timeoutMs: 5000
+  });
+  if (!commandSucceeded(result)) return null;
+  return firstVersionLine(result);
 }
 
 export async function checkToolAvailability(
@@ -154,12 +166,14 @@ export async function checkToolAvailability(
     args: availabilityArgs(tool),
     timeoutMs: 5000
   });
+  const available = commandSucceeded(result);
   return {
     tool,
     command,
-    available: commandSucceeded(result),
-    version: commandSucceeded(result) ? firstVersionLine(result) : null,
-    error: commandSucceeded(result) ? null : result.error?.message ?? (result.stderr.trim() || `Exit code ${result.exitCode ?? "unknown"}`)
+    available,
+    version: available ? firstVersionLine(result) : null,
+    location: available ? await resolveCommandLocation(command, executor) : null,
+    error: available ? null : result.error?.message ?? (result.stderr.trim() || `Exit code ${result.exitCode ?? "unknown"}`)
   };
 }
 
@@ -167,12 +181,13 @@ export async function checkWorkerTools(
   executor: CommandExecutor = nodeCommandExecutor,
   commands: Partial<Record<WorkerTool, string>> = {}
 ): Promise<Record<WorkerTool, ToolAvailability>> {
-  const [ffmpeg, mediainfo, oxipng] = await Promise.all([
+  const [ffmpeg, mediainfo, mkvmerge, oxipng] = await Promise.all([
     checkToolAvailability("ffmpeg", executor, commands.ffmpeg ?? "ffmpeg"),
     checkToolAvailability("mediainfo", executor, commands.mediainfo ?? "mediainfo"),
+    checkToolAvailability("mkvmerge", executor, commands.mkvmerge ?? "mkvmerge"),
     checkToolAvailability("oxipng", executor, commands.oxipng ?? "oxipng")
   ]);
-  return { ffmpeg, mediainfo, oxipng };
+  return { ffmpeg, mediainfo, mkvmerge, oxipng };
 }
 
 export async function runCommand(

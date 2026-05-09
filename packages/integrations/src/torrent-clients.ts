@@ -24,6 +24,7 @@ export interface TorrentClient {
   isComplete(infoHash: string): Promise<boolean>;
   listFiles(infoHash: string): Promise<TorrentClientFile[]>;
   removeTorrent(infoHash: string, options?: { deleteData?: boolean }): Promise<void>;
+  ping?(): Promise<void>;
 }
 
 export class NotConfiguredTorrentClient implements TorrentClient {
@@ -244,6 +245,10 @@ export class QBittorrentClient implements TorrentClient {
       body: form
     });
     if (!response.ok) throw new Error(`qBittorrent torrent removal failed with HTTP ${response.status}.`);
+  }
+
+  async ping(): Promise<void> {
+    await this.login();
   }
 
   private async login(): Promise<void> {

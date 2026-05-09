@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { CommandExecutor } from "./commands.js";
-import { prepareUploadMedia } from "./media-prepare.js";
+import { ensurePtpSafeUploadPath, prepareUploadMedia } from "./media-prepare.js";
 
 describe("prepareUploadMedia", () => {
   it("places uploadable MKV files in media/upload using hardlink or copy", async () => {
@@ -30,6 +30,44 @@ describe("prepareUploadMedia", () => {
     const inputStat = await stat(source);
     const outputStat = await stat(result.outputPath);
     if (result.mode === "hardlink") expect(outputStat.ino).toBe(inputStat.ino);
+  });
+
+  it("transliterates and sanitizes upload filenames before torrent creation", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "popcorn-media-safe-name-"));
+    const source = path.join(root, "download", "脑洞大开.Flying.Mind.2024.1080p.WEB-DL.HEVC.10bit.HDR.AAC2.0-ZmWeb.mkv");
+    await mkdir(path.dirname(source), { recursive: true });
+    await writeFile(source, "mkv");
+
+    const result = await prepareUploadMedia({
+      sourcePath: source,
+      uploadDirectory: path.join(root, "job", "media", "upload"),
+      intermediateDirectory: path.join(root, "job", "media", "intermediates"),
+      runExternalTools: false,
+      ffmpegCommand: "ffmpeg",
+      commandExecutor: async () => {
+        throw new Error("ffmpeg must not run for MKV hardlink/copy");
+      }
+    });
+
+    const uploadName = path.basename(result.outputPath);
+    expect(uploadName).toMatch(/Flying\.Mind\.2024/);
+    expect(uploadName).toMatch(/\.mkv$/);
+    expect(uploadName).not.toContain("脑洞大开");
+    expect(uploadName).toMatch(/^[\x20-\x7E]+$/);
+    expect(uploadName).not.toMatch(/[\\/:*?"<>|]/);
+  });
+
+  it("creates a safe upload-path alias for already prepared legacy filenames", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "popcorn-media-legacy-name-"));
+    const unsafePath = path.join(root, "media", "upload", "脑洞大开.Flying.Mind.2024.mkv");
+    await mkdir(path.dirname(unsafePath), { recursive: true });
+    await writeFile(unsafePath, "mkv");
+
+    const safePath = await ensurePtpSafeUploadPath(unsafePath);
+
+    expect(path.basename(safePath)).toBe("Nao Dong Da Kai.Flying.Mind.2024.mkv");
+    expect(await readFile(safePath, "utf8")).toBe("mkv");
+    expect(await readFile(unsafePath, "utf8")).toBe("mkv");
   });
 
   it("remuxes MP4 to MKV through the injected executor", async () => {

@@ -349,6 +349,7 @@ describe("PreparationService", () => {
       jobs,
       runExternalTools: true,
       toolCommands: { ffmpeg: "ffmpeg", mediainfo: "/home/emt/ptp/opt/mediainfo-23.06/bin/mediainfo", oxipng: "oxipng" },
+      ptpAnnounceUrl: "https://please.passthepopcorn.me/passkey/announce",
       imageUploader: {
         name: "imgbb",
         async uploadImage(filePath) {
@@ -401,6 +402,8 @@ describe("PreparationService", () => {
     await service.runJob(job.id);
     const prepared = jobs.get(job.id)!;
     const manifest = JSON.parse(await readFile(path.join(dataRoot, "jobs", job.id, "manifest.json"), "utf8")) as { uploadFiles: string[]; torrentFile: string | null };
+    const uploadTorrent = await readFile(path.join(dataRoot, "jobs", job.id, "torrent", "upload.torrent"));
+    const uploadTorrentText = uploadTorrent.toString("binary");
 
     expect(prepared.state).toBe("review");
     expect(prepared.uploadReadiness).toBe("ready");
@@ -414,8 +417,16 @@ describe("PreparationService", () => {
     expect(uploadedImages).toHaveLength(6);
     expect(prepared.artifacts.uploadTorrent).toBe("torrent/upload.torrent");
     expect(prepared.artifacts.qbReady).toBe(true);
-    expect(prepared.artifacts.description).toContain("Shock.Wave.2.2020.1080p.WEB.x265.HDR-HVAC");
-    expect(prepared.artifacts.description).toContain("1080p HDR x265 slot is open.");
+    expect(uploadTorrentText).toContain("https://please.passthepopcorn.me/passkey/announce");
+    expect(uploadTorrentText).toContain("shock-wave-2-sample.mkv");
+    expect(uploadTorrentText).toContain("private");
+    expect(uploadTorrentText).not.toContain("movie.mp4");
+    expect(prepared.artifacts.description).not.toContain("MediaInfo:");
+    expect(prepared.artifacts.description?.startsWith("General")).toBe(true);
+    expect(prepared.artifacts.description).toContain("[img]https://imgbb.test/screenshot-01.png[/img]");
+    expect(prepared.artifacts.description).not.toContain("Source:");
+    expect(prepared.artifacts.description).not.toContain("PTP:");
+    expect(prepared.artifacts.description).not.toContain("Duplicate check:");
     expect(prepared.phases.find((phase) => phase.phase === "prepare-media")).toMatchObject({ state: "done" });
     expect(prepared.phases.find((phase) => phase.phase === "screenshots")).toMatchObject({ state: "done" });
     expect(prepared.phases.find((phase) => phase.phase === "seed-prepare")).toMatchObject({ state: "done" });

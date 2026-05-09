@@ -18,6 +18,11 @@ function releaseTitle(job: ApiJob): string {
   return job.artifacts?.releaseName ?? job.reviewDraft?.releaseName ?? job.uploadPlan?.releaseName?.generated ?? job.candidate?.title ?? job.source.title ?? job.id;
 }
 
+function stepLabel(job: ApiJob): string {
+  if (job.state === "done" || job.humanStep === "Upload workflow complete") return "Complete";
+  return job.humanStep ?? job.phase;
+}
+
 function clampWidth(value: number): number {
   if (typeof window === "undefined") return value;
   const max = window.innerWidth <= 700 ? window.innerWidth : Math.max(MIN_WIDTH, window.innerWidth - DESKTOP_MARGIN);
@@ -79,16 +84,13 @@ export function JobDrawer({ job, onClose, actions, children }: JobDrawerProps) {
     >
       <div className="job-drawer__resizer" data-testid="job-drawer-resizer" onPointerDown={beginResize} />
       <header className="job-drawer__header">
-        <div>
-          <span className={`readiness ${job.uploadReadiness}`}>{job.uploadReadiness.replace("_", " ")}</span>
+        <button className="job-drawer__close" type="button" aria-label="Close job review" onClick={onClose}>
+          <X size={16} />
+        </button>
+        {actions ? <div className="job-drawer__actions">{actions}</div> : null}
+        <div className="job-drawer__title">
           <h2>{title}</h2>
-          <p>{job.humanStep ?? job.phase}</p>
-        </div>
-        <div className="job-drawer__controls">
-          {actions ? <div className="job-drawer__actions">{actions}</div> : null}
-          <button type="button" aria-label="Close job review" onClick={onClose}>
-            <X size={16} />
-          </button>
+          <p>{stepLabel(job)}</p>
         </div>
       </header>
       <div className="job-drawer__body">{children}</div>

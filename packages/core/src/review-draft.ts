@@ -1,5 +1,6 @@
 import type { UploadPlan } from "./upload-plan.js";
 import type { BrowserCheckResult, TorrentCandidate } from "./types.js";
+import { PTP_SUBTITLE_OPTIONS } from "./ptp-options.js";
 
 export interface PtpArtistDraft {
   name: string;
@@ -125,13 +126,122 @@ function booleanValue(value: unknown): boolean | undefined {
   return Boolean(value);
 }
 
-const SUBTITLE_LABEL_TO_ID = new Map([
-  ["english", "3"],
-  ["chinese", "14"],
+function compactKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+const SUBTITLE_ALIASES = [
+  ["en", "3"],
+  ["eng", "3"],
+  ["english cc", "3"],
+  ["english sdh", "3"],
+  ["en forced", "50"],
+  ["english forced", "50"],
+  ["en intertitles", "51"],
+  ["english intertitles", "51"],
+  ["es", "4"],
+  ["spa", "4"],
+  ["fr", "5"],
+  ["fre", "5"],
+  ["de", "6"],
+  ["ger", "6"],
+  ["ru", "7"],
+  ["rus", "7"],
+  ["ja", "8"],
+  ["jpn", "8"],
+  ["nl", "9"],
+  ["dut", "9"],
+  ["da", "10"],
+  ["dan", "10"],
+  ["sv", "11"],
+  ["swe", "11"],
+  ["no", "12"],
+  ["nor", "12"],
+  ["ro", "13"],
+  ["rum", "13"],
+  ["zh", "14"],
+  ["chi", "14"],
   ["mandarin", "14"],
-  ["no subtitles", "44"],
-  ["nosubtitles", "44"]
-]);
+  ["chinese simplified", "14"],
+  ["chinese traditional", "14"],
+  ["fi", "15"],
+  ["fin", "15"],
+  ["it", "16"],
+  ["ita", "16"],
+  ["pl", "17"],
+  ["pol", "17"],
+  ["tr", "18"],
+  ["tur", "18"],
+  ["ko", "19"],
+  ["kor", "19"],
+  ["th", "20"],
+  ["tha", "20"],
+  ["pt", "21"],
+  ["por", "21"],
+  ["ar", "22"],
+  ["ara", "22"],
+  ["hr", "23"],
+  ["hrv", "23"],
+  ["scr", "23"],
+  ["hu", "24"],
+  ["hun", "24"],
+  ["vi", "25"],
+  ["vie", "25"],
+  ["el", "26"],
+  ["gre", "26"],
+  ["is", "28"],
+  ["ice", "28"],
+  ["bg", "29"],
+  ["bul", "29"],
+  ["cs", "30"],
+  ["cz", "30"],
+  ["cze", "30"],
+  ["sr", "31"],
+  ["srp", "31"],
+  ["scc", "31"],
+  ["uk", "34"],
+  ["ukr", "34"],
+  ["lv", "37"],
+  ["lav", "37"],
+  ["et", "38"],
+  ["est", "38"],
+  ["lt", "39"],
+  ["lit", "39"],
+  ["he", "40"],
+  ["heb", "40"],
+  ["hi", "41"],
+  ["hin", "41"],
+  ["sk", "42"],
+  ["slo", "42"],
+  ["sl", "43"],
+  ["slv", "43"],
+  ["id", "47"],
+  ["ind", "47"],
+  ["pt br", "49"],
+  ["pt-br", "49"],
+  ["brazilian", "49"],
+  ["brazilian portuguese", "49"],
+  ["portuguese br", "49"],
+  ["portuguese-br", "49"],
+  ["fa", "52"],
+  ["far", "52"],
+  ["persian", "52"],
+  ["ms", "54"],
+  ["my", "54"],
+  ["mys", "54"],
+  ["cy", "55"],
+  ["wel", "55"]
+] as const;
+
+const SUBTITLE_LABEL_TO_ID = new Map<string, string>();
+for (const option of PTP_SUBTITLE_OPTIONS) {
+  SUBTITLE_LABEL_TO_ID.set(option.label.toLowerCase(), option.id);
+  SUBTITLE_LABEL_TO_ID.set(compactKey(option.label), option.id);
+}
+for (const [label, id] of SUBTITLE_ALIASES) {
+  SUBTITLE_LABEL_TO_ID.set(label.toLowerCase(), id);
+  SUBTITLE_LABEL_TO_ID.set(compactKey(label), id);
+}
 
 const TRUMPABLE_LABEL_TO_ID = new Map([
   ["no english subtitles", "14"],
@@ -144,7 +254,7 @@ const TRUMPABLE_LABEL_TO_ID = new Map([
 function mappedId(value: string, mapping: Map<string, string>): string {
   if (/^\d+$/.test(value)) return value;
   const lower = value.toLowerCase();
-  return mapping.get(lower) ?? mapping.get(lower.replace(/[^a-z0-9]/g, "")) ?? value;
+  return mapping.get(lower) ?? mapping.get(compactKey(lower)) ?? value;
 }
 
 function stringList(value: unknown, mapping?: Map<string, string>): string[] | undefined {

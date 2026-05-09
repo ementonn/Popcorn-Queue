@@ -35,6 +35,7 @@ export interface ApiConfig {
     runExternalTools: boolean;
     ffmpegBin: string;
     mediainfoBin: string;
+    mkvmergeBin: string;
     oxipngBin: string;
     workDir: string;
     outputDir: string;
@@ -180,6 +181,7 @@ export function loadConfig(env = process.env): ApiConfig {
       runExternalTools: readBoolean(env.POPCORN_QUEUE_RUN_EXTERNAL_TOOLS),
       ffmpegBin: env.FFMPEG_BIN ?? "ffmpeg",
       mediainfoBin: env.MEDIAINFO_BIN ?? "mediainfo",
+      mkvmergeBin: env.MKVMERGE_BIN ?? "mkvmerge",
       oxipngBin: env.OXIPNG_BIN ?? "oxipng",
       workDir: env.POPCORN_QUEUE_WORK_DIR ?? "./data/work",
       outputDir: env.POPCORN_QUEUE_OUTPUT_DIR ?? "./data/output"

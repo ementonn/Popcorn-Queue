@@ -1,9 +1,10 @@
-import type { ApiJob, GlobalLogResponse, HealthInfo, JobLogResponse, ReviewDraftPatch } from "./types.js";
+import type { ApiJob, DiagnosticCheckResult, DiagnosticCheckTarget, DiagnosticsInfo, GlobalLogResponse, HealthInfo, JobLogResponse, ReviewDraftPatch } from "./types.js";
 
 export interface DashboardData {
   jobs: ApiJob[];
   health: HealthInfo;
   globalLogs: GlobalLogResponse;
+  diagnostics: DiagnosticsInfo | null;
 }
 
 const apiBase = (
@@ -43,13 +44,14 @@ export async function fetchJson<T>(path: string, init?: RequestInit): Promise<T>
 }
 
 export async function loadDashboard(): Promise<DashboardData> {
-  const [jobs, health, globalLogs] = await Promise.all([
+  const [jobs, health, globalLogs, diagnostics] = await Promise.all([
     fetchJson<{ jobs: ApiJob[] }>("/api/jobs"),
     fetchJson<HealthInfo>("/api/health"),
-    loadGlobalLogs()
+    loadGlobalLogs(),
+    loadDiagnostics()
   ]);
 
-  return { jobs: jobs.jobs, health, globalLogs };
+  return { jobs: jobs.jobs, health, globalLogs, diagnostics };
 }
 
 export function loadJobLogs(jobId: string): Promise<JobLogResponse> {
@@ -57,7 +59,15 @@ export function loadJobLogs(jobId: string): Promise<JobLogResponse> {
 }
 
 export function loadGlobalLogs(): Promise<GlobalLogResponse> {
-  return fetchJson<GlobalLogResponse>("/api/logs/global").catch(() => ({ api: [], worker: [] }));
+  return fetchJson<GlobalLogResponse>("/api/logs/global").catch(() => ({ api: [] }));
+}
+
+export function loadDiagnostics(): Promise<DiagnosticsInfo | null> {
+  return fetchJson<DiagnosticsInfo>("/api/diagnostics").catch(() => null);
+}
+
+export function runDiagnosticCheck(target: DiagnosticCheckTarget): Promise<DiagnosticCheckResult> {
+  return fetchJson<DiagnosticCheckResult>(`/api/diagnostics/check/${target}`, { method: "POST", body: "{}" });
 }
 
 export function startUpload(jobId: string): Promise<{ job: ApiJob }> {
@@ -66,6 +76,10 @@ export function startUpload(jobId: string): Promise<{ job: ApiJob }> {
 
 export function pauseJob(jobId: string): Promise<{ job: ApiJob }> {
   return fetchJson<{ job: ApiJob }>(`/api/jobs/${jobId}/pause`, { method: "POST", body: "{}" });
+}
+
+export function resumeJob(jobId: string): Promise<{ job: ApiJob }> {
+  return fetchJson<{ job: ApiJob }>(`/api/jobs/${jobId}/resume`, { method: "POST", body: "{}" });
 }
 
 export function retryFailed(jobId: string): Promise<{ job: ApiJob }> {
@@ -80,14 +94,6 @@ export function saveReviewDraft(jobId: string, patch: ReviewDraftPatch): Promise
   return fetchJson<{ job: ApiJob }>(`/api/jobs/${jobId}/review-draft`, { method: "PATCH", body: JSON.stringify(patch) });
 }
 
-export function debugAdvance(jobId: string): Promise<{ job: ApiJob }> {
-  return fetchJson<{ job: ApiJob }>(`/api/jobs/${jobId}/debug/advance`, { method: "POST", body: "{}" });
-}
-
 export function debugSkip(jobId: string): Promise<{ job: ApiJob }> {
   return fetchJson<{ job: ApiJob }>(`/api/jobs/${jobId}/debug/skip`, { method: "POST", body: "{}" });
-}
-
-export function debugForceState(jobId: string): Promise<{ job: ApiJob }> {
-  return fetchJson<{ job: ApiJob }>(`/api/jobs/${jobId}/debug/force-state`, { method: "POST", body: "{}" });
 }

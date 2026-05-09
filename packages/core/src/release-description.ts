@@ -19,7 +19,7 @@ export function buildReleaseDescription(input: ReleaseDescriptionInput): string 
   if (bdInfoText) {
     sections.push(`BDInfo:\n${bdInfoText}`);
   } else if (mediaInfoText) {
-    sections.push(`MediaInfo:\n${mediaInfoText}`);
+    sections.push(mediaInfoText);
   }
 
   const screenshots = (input.screenshots ?? []).map((url) => url.trim()).filter(Boolean);

@@ -29,11 +29,46 @@ describe("worker command wrappers", () => {
 
     expect(availability.available).toBe(true);
     expect(availability.command).toBe("/usr/local/bin/mediainfo");
+    expect(availability.location).toBe("/usr/local/bin/mediainfo");
     expect(availability.version).toBe("tool version 1.0");
     expect(calls[0]).toMatchObject({
       command: "/usr/local/bin/mediainfo",
       args: ["--Version"]
     });
+  });
+
+  it("resolves PATH command locations and checks mkvmerge", async () => {
+    const calls: CommandInvocation[] = [];
+    const executor: CommandExecutor = async (invocation) => {
+      calls.push(invocation);
+      if (invocation.command === "which") return result(invocation, { stdout: "/usr/bin/mkvmerge\n" });
+      return result(invocation, { stdout: "mkvmerge v82.0\n" });
+    };
+
+    const availability = await checkToolAvailability("mkvmerge", executor);
+
+    expect(availability).toMatchObject({
+      tool: "mkvmerge",
+      command: "mkvmerge",
+      available: true,
+      version: "mkvmerge v82.0",
+      location: "/usr/bin/mkvmerge"
+    });
+    expect(calls).toEqual([
+      expect.objectContaining({ command: "mkvmerge", args: ["--version"] }),
+      expect.objectContaining({ command: "which", args: ["mkvmerge"] })
+    ]);
+  });
+
+  it("uses the MediaInfoLib line when mediainfo prints a heading before the version", async () => {
+    const executor: CommandExecutor = async (invocation) => {
+      if (invocation.command === "which") return result(invocation, { stdout: "/usr/bin/mediainfo\n" });
+      return result(invocation, { stdout: "MediaInfo Command line,\nMediaInfoLib - v23.06\n" });
+    };
+
+    const availability = await checkToolAvailability("mediainfo", executor);
+
+    expect(availability.version).toBe("MediaInfoLib - v23.06");
   });
 
   it("reports unavailable tools without throwing", async () => {

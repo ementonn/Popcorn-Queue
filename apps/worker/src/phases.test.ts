@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -185,9 +185,10 @@ describe("worker phase scaffold", () => {
         mediaPath,
         inspectionPlan: buildUploadPlan({ candidate }).media,
         tools: {
-          ffmpeg: { name: "ffmpeg", command: "ffmpeg", available: true },
-          mediainfo: { name: "mediainfo", command: "mediainfo", available: true },
-          oxipng: { name: "oxipng", command: "oxipng", available: true }
+          ffmpeg: { tool: "ffmpeg", command: "ffmpeg", available: true, version: "ffmpeg test", location: "/usr/bin/ffmpeg", error: null },
+          mediainfo: { tool: "mediainfo", command: "mediainfo", available: true, version: "mediainfo test", location: "/usr/bin/mediainfo", error: null },
+          mkvmerge: { tool: "mkvmerge", command: "mkvmerge", available: true, version: "mkvmerge test", location: "/usr/bin/mkvmerge", error: null },
+          oxipng: { tool: "oxipng", command: "oxipng", available: true, version: "oxipng test", location: "/usr/bin/oxipng", error: null }
         },
         mediaInfo: {
           invocation: textInvocation,
@@ -251,10 +252,15 @@ describe("worker phase scaffold", () => {
     );
 
     expect(output.uploadDraft.mediaInfo).toContain("General");
-    expect(output.uploadDraft.description).toContain("MediaInfo");
     expect(output.uploadDraft.description).toContain("General");
+    expect(output.uploadDraft.description).not.toContain("MediaInfo:");
+    expect(output.uploadDraft.description.startsWith("General\nFormat                                   : Matroska")).toBe(true);
     expect(output.uploadDraft.description).not.toContain("\"track\"");
     expect(output.uploadDraft.description).toContain("[img]https://img.example/1.png[/img]");
+    expect(output.uploadDraft.description).not.toContain("[size=4][b]");
+    expect(output.uploadDraft.description).not.toContain("Source:");
+    expect(output.uploadDraft.description).not.toContain("PTP:");
+    expect(output.uploadDraft.description).not.toContain("Duplicate check:");
   });
 
   it("plans screenshots without invoking ffmpeg when external tools are disabled", async () => {
@@ -392,6 +398,169 @@ describe("worker phase scaffold", () => {
       result: { groupId: "123", torrentId: "456" }
     });
     expect(outputs.done?.completed).toBe(true);
+  });
+
+  it("creates the PTP upload torrent from final media with the PTP announce URL", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-ptp-torrent-"));
+    const sourceTorrent = path.join(tempDir, "torrent", "source.torrent");
+    const mediaPath = path.join(tempDir, "media", "upload", "Movie.2024.1080p.WEB-DL.x265-GROUP.mkv");
+    await mkdir(path.dirname(sourceTorrent), { recursive: true });
+    await mkdir(path.dirname(mediaPath), { recursive: true });
+    await writeFile(sourceTorrent, "source torrent from another tracker");
+    await writeFile(mediaPath, Buffer.from("final upload media bytes"));
+    const torrentCreate = createDefaultPhaseHandlers().find((handler): handler is PhaseHandler<"torrent-create"> => handler.phase === "torrent-create");
+    if (!torrentCreate) throw new Error("Missing torrent-create handler");
+
+    const output = await torrentCreate.run(
+      createPhaseContext(
+        "job-ptp-torrent",
+        {
+          candidate,
+          sourceTorrentPath: sourceTorrent,
+          workingDirectory: tempDir
+        },
+        {
+          outputStore: new MemoryPhaseOutputStore({
+            "prepare-media": {
+              status: "completed",
+              message: "Upload media prepared.",
+              producedAt: "2026-05-08T00:00:00.000Z",
+              inputPath: mediaPath,
+              outputPath: mediaPath,
+              mode: "hardlink",
+              remuxed: false
+            }
+          }),
+          ptpAnnounceUrl: "https://please.passthepopcorn.me/passkey/announce"
+        }
+      )
+    );
+
+    expect(output.status).toBe("completed");
+    expect(output.uploadTorrentPath).toBe(path.join(tempDir, "torrent", "upload.torrent"));
+    const torrent = await readFile(output.uploadTorrentPath!);
+    const torrentText = torrent.toString("binary");
+    expect(torrentText).toContain("https://please.passthepopcorn.me/passkey/announce");
+    expect(torrentText).toContain("Movie.2024.1080p.WEB-DL.x265-GROUP.mkv");
+    expect(torrentText).toContain("private");
+    expect(torrentText).not.toContain("source torrent from another tracker");
+  });
+
+  it("hands the PTP upload torrent to qBittorrent with skip hash after upload succeeds", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-qb-handoff-"));
+    const torrentPath = path.join(tempDir, "torrent", "upload.torrent");
+    const mediaPath = path.join(tempDir, "media", "upload", "Movie.mkv");
+    await mkdir(path.dirname(torrentPath), { recursive: true });
+    await mkdir(path.dirname(mediaPath), { recursive: true });
+    await writeFile(torrentPath, "torrent");
+    await writeFile(mediaPath, "mkv");
+    const addCalls: Array<{ torrentPath: string; downloadPath: string; category?: string; tags?: string[]; skipHashCheck?: boolean }> = [];
+    const context = createPhaseContext(
+      "job-qb-handoff",
+      {
+        candidate,
+        workingDirectory: tempDir,
+        reviewDraft
+      },
+      {
+        outputStore: new MemoryPhaseOutputStore({
+          "prepare-media": {
+            status: "completed",
+            message: "Upload media prepared.",
+            producedAt: "2026-05-08T00:00:00.000Z",
+            inputPath: mediaPath,
+            outputPath: mediaPath,
+            mode: "hardlink",
+            remuxed: false
+          }
+        }),
+        torrentClientOptions: { category: "ptp", tags: ["ptp_upload"] },
+        torrentClient: {
+          name: "mock-qb",
+          async addTorrent(options) {
+            addCalls.push(options);
+            return { infoHash: "ABC123" };
+          },
+          async getStatus() {
+            throw new Error("getStatus should not run during upload handoff.");
+          },
+          async isComplete() {
+            return true;
+          },
+          async listFiles() {
+            return [];
+          }
+        },
+        ptpSubmitter: {
+          async submit() {
+            return {
+              groupId: "123",
+              torrentId: "456",
+              ptpUrl: "https://passthepopcorn.me/torrents.php?id=123&torrentid=456"
+            };
+          }
+        }
+      }
+    );
+
+    const outputs = await new PhaseRunner().runUploadTail(context);
+
+    expect(outputs.upload?.status).toBe("completed");
+    expect(outputs["post-hook"]).toMatchObject({
+      status: "completed",
+      hooksRun: ["qbittorrent-seed-handoff"]
+    });
+    expect(addCalls).toEqual([
+      {
+        torrentPath,
+        downloadPath: path.join(tempDir, "media", "upload"),
+        category: "ptp",
+        tags: ["ptp_upload"],
+        skipHashCheck: true
+      }
+    ]);
+  });
+
+  it("regenerates an existing upload torrent with the PTP announce before submitting", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-upload-regenerate-"));
+    const torrentPath = path.join(tempDir, "torrent", "upload.torrent");
+    const mediaPath = path.join(tempDir, "media", "upload", "Existing.Movie.2024.1080p.WEB-DL.x265-GROUP.mkv");
+    await mkdir(path.dirname(torrentPath), { recursive: true });
+    await mkdir(path.dirname(mediaPath), { recursive: true });
+    await writeFile(torrentPath, "source tracker torrent");
+    await writeFile(mediaPath, "final media");
+    const submitted: Array<{ torrentPath: string }> = [];
+    const context = createPhaseContext(
+      "job-upload-regenerate",
+      {
+        candidate,
+        workingDirectory: tempDir,
+        mediaPath,
+        reviewDraft
+      },
+      {
+        ptpAnnounceUrl: "https://please.passthepopcorn.me/passkey/announce",
+        ptpSubmitter: {
+          async submit(input) {
+            submitted.push({ torrentPath: input.torrentPath });
+            return {
+              groupId: "123",
+              torrentId: "456",
+              ptpUrl: "https://passthepopcorn.me/torrents.php?id=123&torrentid=456"
+            };
+          }
+        }
+      }
+    );
+
+    const outputs = await new PhaseRunner().runUploadTail(context);
+
+    expect(outputs.upload?.status).toBe("completed");
+    expect(submitted).toEqual([{ torrentPath }]);
+    const torrent = (await readFile(torrentPath)).toString("binary");
+    expect(torrent).toContain("https://please.passthepopcorn.me/passkey/announce");
+    expect(torrent).toContain("Existing.Movie.2024.1080p.WEB-DL.x265-GROUP.mkv");
+    expect(torrent).not.toContain("source tracker torrent");
   });
 
   it("runs preparation to review without running upload", async () => {

@@ -22,6 +22,8 @@ describe("review draft contract", () => {
 
     expect(description).toContain("[size=4][b]Movie.2025.1080p.WEB-DL.x265-GROUP[/b][/size]");
     expect(description).toContain("General");
+    expect(description).not.toContain("MediaInfo:");
+    expect(description).toContain("\n\nGeneral\nComplete name                            : Movie.mkv\n\n");
     expect(description).toContain("[img]https://img.example/1.png[/img]");
   });
 
@@ -77,7 +79,7 @@ describe("review draft contract", () => {
       description: "  Desc  ",
       groupId: "",
       remasterYear: 2024,
-      subtitles: "English, Chinese, English",
+      subtitles: "English, Chinese, Brazilian Portuguese, Welsh, English - Forced, English",
       trumpable: ["No English subtitles", "", "Hardcoded subs"],
       scene: "true",
       personalRip: 1,
@@ -89,7 +91,7 @@ describe("review draft contract", () => {
       description: "Desc",
       groupId: null,
       remasterYear: "2024",
-      subtitles: ["3", "14"],
+      subtitles: ["3", "14", "49", "55", "50"],
       trumpable: ["14", "4"],
       scene: true,
       personalRip: true,

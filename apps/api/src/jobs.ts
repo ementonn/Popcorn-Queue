@@ -324,7 +324,7 @@ export class JobRepository {
       },
       candidate,
       uploadReadiness: "ready",
-      humanStep: state === "done" ? "Upload workflow complete" : "Review upload package",
+      humanStep: state === "done" ? "Complete" : "Review upload package",
       artifacts: {
         mediaFiles: input.manifest.uploadFiles,
         ...(input.manifest.torrentFile ? { uploadTorrent: input.manifest.torrentFile } : {})
@@ -387,6 +387,26 @@ export class JobRepository {
     job.state = "paused";
     this.setPhaseState(job, job.phase, "pending", "Paused.");
     return this.record(job, "info", "Job paused.", { phase: job.phase });
+  }
+
+  resume(id: string): Job | null {
+    const job = this.jobs.get(id);
+    if (!job) return null;
+    if (job.state !== "paused") return this.record(job, "warn", "Resume is only available for paused jobs.", { phase: job.phase });
+    if (job.phase === "review") {
+      job.state = "review";
+      job.humanStep = "Review upload package";
+      this.setPhaseState(job, "review", job.uploadReadiness === "ready" ? "pending" : "warning", "Review upload package.");
+    } else if (job.phase === "upload") {
+      job.state = "uploading";
+      job.humanStep = "Uploading to tracker";
+      this.setPhaseState(job, "upload", "running", "Uploading.");
+    } else {
+      job.state = "preparing";
+      job.humanStep = "Preparing upload package";
+      this.setPhaseState(job, job.phase, "pending", "Resume queued.");
+    }
+    return this.record(job, "info", "Job resumed.", { phase: job.phase });
   }
 
   retry(id: string): Job | null {
@@ -466,7 +486,7 @@ export class JobRepository {
     if (!job) return null;
     job.state = "done";
     job.phase = "done";
-    job.humanStep = "Upload workflow complete";
+    job.humanStep = "Complete";
     job.artifacts = {
       ...job.artifacts,
       ptpUrl: result.ptpUrl,
@@ -475,8 +495,11 @@ export class JobRepository {
     };
     if (phases) job.phases = phases;
     this.setPhaseState(job, "upload", "done", "PTP upload submitted.");
-    this.setPhaseState(job, "post-hook", "skipped", "No post-upload hooks are configured.");
-    this.setPhaseState(job, "done", "done", "Upload workflow complete.");
+    const postHook = job.phases.find((run) => run.phase === "post-hook");
+    if (!postHook || postHook.state === "pending" || postHook.state === "running") {
+      this.setPhaseState(job, "post-hook", "skipped", "No post-upload hooks are configured.");
+    }
+    this.setPhaseState(job, "done", "done", "Complete.");
     return this.record(job, "info", "PTP upload complete.", result);
   }
 
@@ -537,14 +560,14 @@ export class JobRepository {
     return this.record(job, "info", "Reseed complete.", { infoHash });
   }
 
-  advance(id: string): Job | null {
+  skip(id: string): Job | null {
     const job = this.jobs.get(id);
     if (!job) return null;
     if (hasOpenGate(job, "blocker")) {
       this.setPhaseState(job, job.phase, "warning", "Blocked by review gate.");
       job.state = "review";
       job.humanStep = "Review upload package";
-      return this.record(job, "warn", "Advance blocked by open review gate.", { phase: job.phase });
+      return this.record(job, "warn", "Skip blocked by open review gate.", { phase: job.phase });
     }
 
     this.setPhaseState(job, job.phase, "done", "Finished.");
@@ -557,8 +580,8 @@ export class JobRepository {
     if (!next) {
       job.phase = "done";
       job.state = "done";
-      job.humanStep = "Upload workflow complete";
-      this.setPhaseState(job, "done", "done", "Upload workflow complete.");
+      job.humanStep = "Complete";
+      this.setPhaseState(job, "done", "done", "Complete.");
       return this.record(job, "info", "Job completed.");
     }
 
@@ -566,7 +589,7 @@ export class JobRepository {
     job.state = next === "upload" ? "uploading" : "preparing";
     job.humanStep = next === "upload" ? "Uploading to tracker" : "Preparing upload package";
     this.setPhaseState(job, next, "running", "Running.");
-    return this.record(job, "info", "Advanced to next phase.", { phase: next });
+    return this.record(job, "info", "Skipped to next phase.", { phase: next });
   }
 
   resolveGate(id: string, gateId: string): Job | null {

@@ -1,11 +1,22 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, stat, statfs, writeFile } from "node:fs/promises";
 import path from "node:path";
 import fastify from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 import { buildJobWorkspacePaths, type BrowserCheckResult, type JobManifest, type ReviewDraftPatch, type TorrentCandidate, type UploadPhase } from "@popcorn-queue/core";
 import { BrowserCheckService, ImgBbUploader, PtpClient, PtpFormSubmitter, QBittorrentClient } from "@popcorn-queue/integrations";
-import { PhaseRunner, createPhaseContext, type CreatePhaseContextOptions, type PhaseLogLevel, type PhaseOutputMap, type PtpSubmitter } from "@popcorn-queue/worker";
+import {
+  PhaseRunner,
+  checkWorkerTools,
+  createPhaseContext,
+  type CommandExecutor,
+  type CreatePhaseContextOptions,
+  type PhaseLogLevel,
+  type PhaseOutputMap,
+  type PtpSubmitter,
+  type TorrentDownloadClient,
+  type WorkerTool
+} from "@popcorn-queue/worker";
 import { makeBrowserAuthHook } from "./auth.js";
 import type { ApiConfig } from "./config.js";
 import { appendJobEvent, readLogTail } from "./job-logs.js";
@@ -23,9 +34,14 @@ interface ImportJobBody {
   manifest?: JobManifest;
 }
 
+type DiagnosticCheckStatus = "not_checked" | "ok" | "configured" | "missing" | "failed" | "disabled";
+type DiagnosticCheckTarget = "qbittorrent" | "ptp" | "image-host" | "tools";
+
 export interface BuildServerOptions {
   autoPrepare?: boolean;
   ptpSubmitter?: PtpSubmitter;
+  torrentClient?: TorrentDownloadClient;
+  commandExecutor?: CommandExecutor;
 }
 
 async function pathExists(filePath: string): Promise<boolean> {
@@ -35,6 +51,133 @@ async function pathExists(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function sqliteDatabasePath(): string | null {
+  const databaseUrl = process.env.DATABASE_URL ?? "file:./popcorn-queue.db";
+  if (!databaseUrl.startsWith("file:")) return null;
+  const filePath = databaseUrl.slice("file:".length);
+  if (!filePath || filePath.startsWith(":")) return null;
+  return path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath);
+}
+
+async function fileSize(filePath: string | null): Promise<number | null> {
+  if (!filePath) return null;
+  try {
+    return (await stat(filePath)).size;
+  } catch {
+    return null;
+  }
+}
+
+async function freeBytes(filePath: string): Promise<number | null> {
+  try {
+    const info = await statfs(filePath);
+    return info.bavail * info.bsize;
+  } catch {
+    return null;
+  }
+}
+
+async function cacheEntryCount(cache: unknown): Promise<number | null> {
+  const maybeCount = (cache as { count?: () => Promise<number> }).count;
+  if (!maybeCount) return null;
+  try {
+    return await maybeCount.call(cache);
+  } catch {
+    return null;
+  }
+}
+
+function integrationSummary(config: ApiConfig, target: DiagnosticCheckTarget): { configured: boolean; status: DiagnosticCheckStatus; detail: string } {
+  if (target === "qbittorrent") {
+    const configured = Boolean(config.integrations.qbittorrentUrl);
+    return {
+      configured,
+      status: "not_checked",
+      detail: configured ? "qBittorrent is configured." : "qBittorrent URL is not configured."
+    };
+  }
+  if (target === "ptp") {
+    const configured = Boolean(config.ptp.apiUser && config.ptp.apiKey);
+    return {
+      configured,
+      status: "not_checked",
+      detail: configured ? "PTP API credentials are configured." : "PTP API user/key are not configured."
+    };
+  }
+  if (target === "image-host") {
+    const configured = (config.integrations.imageHost === "imgbb" && Boolean(config.integrations.imgbbApiKey)) || Boolean(config.integrations.ptpImgApiKey);
+    return {
+      configured,
+      status: "not_checked",
+      detail: configured ? `${config.integrations.imageHost || "image host"} is configured.` : "No image host API key is configured."
+    };
+  }
+  return {
+    configured: config.integrations.runExternalTools,
+    status: "not_checked",
+    detail: config.integrations.runExternalTools ? "External media tools are enabled." : "External tools are disabled."
+  };
+}
+
+function toolCommandMap(config: ApiConfig): Partial<Record<WorkerTool, string>> {
+  return {
+    ffmpeg: config.integrations.ffmpegBin,
+    mediainfo: config.integrations.mediainfoBin,
+    mkvmerge: config.integrations.mkvmergeBin,
+    oxipng: config.integrations.oxipngBin
+  };
+}
+
+function toolCheckStatus(tools: Awaited<ReturnType<typeof checkWorkerTools>>): DiagnosticCheckStatus {
+  return Object.values(tools).every((tool) => tool.available) ? "ok" : "failed";
+}
+
+async function collectToolDiagnostics(config: ApiConfig, commandExecutor?: CommandExecutor) {
+  return checkWorkerTools(commandExecutor, toolCommandMap(config));
+}
+
+function queueDiagnostics(jobs: Job[]) {
+  const counts = {
+    total: jobs.length,
+    preparing: 0,
+    review: 0,
+    failed: 0,
+    done: 0,
+    paused: 0,
+    uploading: 0,
+    seeding: 0,
+    needsReseed: 0
+  };
+  const staleCutoff = Date.now() - 30 * 60 * 1000;
+  const stuck: Array<{ id: string; state: string; phase: string; updatedAt: string; title: string }> = [];
+  const recentFailures: Array<{ id: string; message: string; title: string }> = [];
+
+  for (const job of jobs) {
+    if (job.state === "preparing") counts.preparing += 1;
+    else if (job.state === "review") counts.review += 1;
+    else if (job.state === "failed") counts.failed += 1;
+    else if (job.state === "done") counts.done += 1;
+    else if (job.state === "paused") counts.paused += 1;
+    else if (job.state === "uploading") counts.uploading += 1;
+    else if (job.state === "seeding") counts.seeding += 1;
+    else if (job.state === "needs_reseed") counts.needsReseed += 1;
+
+    const updatedAt = Date.parse(job.updatedAt);
+    if ((job.state === "preparing" || job.state === "uploading") && Number.isFinite(updatedAt) && updatedAt < staleCutoff) {
+      stuck.push({ id: job.id, state: job.state, phase: job.phase, updatedAt: job.updatedAt, title: job.artifacts.releaseName ?? job.candidate?.title ?? job.source.title ?? job.id });
+    }
+    if (job.state === "failed") {
+      recentFailures.push({ id: job.id, message: job.events.at(0)?.message ?? job.humanStep, title: job.artifacts.releaseName ?? job.candidate?.title ?? job.source.title ?? job.id });
+    }
+  }
+
+  return {
+    ...counts,
+    stuck: stuck.slice(0, 10),
+    recentFailures: recentFailures.slice(0, 10)
+  };
 }
 
 async function missingRestoredFiles(jobPath: string, manifest: JobManifest): Promise<string[]> {
@@ -119,13 +262,13 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
   const browserChecks = new BrowserCheckService(ptpClient, cache, {
     requestDelayMs: config.ptp.requestDelayMs
   });
-  const torrentClient = config.integrations.qbittorrentUrl
+  const torrentClient = options.torrentClient ?? (config.integrations.qbittorrentUrl
     ? new QBittorrentClient({
         baseUrl: config.integrations.qbittorrentUrl,
         username: config.integrations.qbittorrentUsername,
         password: config.integrations.qbittorrentPassword
       })
-    : null;
+    : null);
   const imageUploader =
     config.integrations.imageHost === "imgbb" && config.integrations.imgbbApiKey
       ? new ImgBbUploader(config.integrations.imgbbApiKey)
@@ -136,12 +279,9 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
     dataRoot: config.paths.dataRoot,
     jobs: jobRepository,
     runExternalTools: config.integrations.runExternalTools,
-    toolCommands: {
-      ffmpeg: config.integrations.ffmpegBin,
-      mediainfo: config.integrations.mediainfoBin,
-      oxipng: config.integrations.oxipngBin
-    },
+    toolCommands: toolCommandMap(config),
     ...(imageUploader ? { imageUploader } : {}),
+    ...(config.ptp.announceUrl ? { ptpAnnounceUrl: config.ptp.announceUrl } : {}),
     ...(torrentClient ? { torrentClient } : {}),
     torrentClientOptions: {
       ...(config.integrations.qbittorrentCategory ? { category: config.integrations.qbittorrentCategory } : {}),
@@ -172,6 +312,7 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
   app.addHook("onReady", resumeInterruptedPreparation);
 
   app.register(cors, {
+    methods: ["GET", "HEAD", "POST", "PATCH", "OPTIONS"],
     origin(origin, callback) {
       if (!origin || config.allowedOrigins.length === 0 || config.allowedOrigins.includes(origin)) {
         callback(null, true);
@@ -204,6 +345,7 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
       tools: {
         ffmpeg: config.integrations.ffmpegBin,
         mediainfo: config.integrations.mediainfoBin,
+        mkvmerge: config.integrations.mkvmergeBin,
         oxipng: config.integrations.oxipngBin
       }
     }
@@ -227,7 +369,7 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
         id: "phase-runner",
         name: "Restartable upload phases",
         status: "implemented",
-        detail: "Jobs can be started, paused, retried, advanced, and blocked by review gates."
+        detail: "Jobs can be started, paused, retried, skipped through debug routing, and blocked by review gates."
       },
       {
         id: "ptp-rules",
@@ -264,7 +406,7 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
         name: "Worker media tools",
         status: config.integrations.runExternalTools ? "configured" : "safe-default",
         detail: config.integrations.runExternalTools
-          ? `Worker may run ${config.integrations.ffmpegBin}, ${config.integrations.mediainfoBin}, and ${config.integrations.oxipngBin} during manual execution.`
+          ? `Worker may run ${config.integrations.ffmpegBin}, ${config.integrations.mediainfoBin}, ${config.integrations.mkvmergeBin}, and ${config.integrations.oxipngBin} during manual execution.`
           : "External tools are disabled by default; tests and dry runs keep command execution mocked or skipped."
       }
     ]
@@ -290,9 +432,76 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
   });
 
   app.get("/api/logs/global", async () => ({
-    api: await readLogTail(config.paths.apiLogFile, 200),
-    worker: await readLogTail(config.paths.workerLogFile, 200)
+    api: await readLogTail(config.paths.apiLogFile, 200)
   }));
+
+  app.get("/api/diagnostics", async () => {
+    const jobs = await jobRepository.list();
+    const databasePath = sqliteDatabasePath();
+    const tools = await collectToolDiagnostics(config, options.commandExecutor);
+    return {
+      system: {
+        api: "online",
+        persistence: "sqlite",
+        publicWebUrl: config.publicWebUrl,
+        publicApiUrl: config.publicApiUrl,
+        browserBridgeConfigured: Boolean(config.browserToken),
+        ptpApiConfigured: Boolean(config.ptp.apiUser && config.ptp.apiKey),
+        externalToolsEnabled: config.integrations.runExternalTools
+      },
+      integrations: {
+        qbittorrent: integrationSummary(config, "qbittorrent"),
+        ptp: integrationSummary(config, "ptp"),
+        imageHost: integrationSummary(config, "image-host"),
+        tools: integrationSummary(config, "tools")
+      },
+      queue: queueDiagnostics(jobs),
+      tools,
+      storage: {
+        dataRoot: config.paths.dataRoot,
+        databasePath,
+        jobCount: jobs.length,
+        cacheEntries: await cacheEntryCount(cache),
+        databaseBytes: await fileSize(databasePath),
+        dataRootFreeBytes: await freeBytes(config.paths.dataRoot)
+      },
+      logs: {
+        api: await readLogTail(config.paths.apiLogFile, 200)
+      }
+    };
+  });
+
+  app.post<{ Params: { target: DiagnosticCheckTarget } }>("/api/diagnostics/check/:target", async (request, reply) => {
+    const target = request.params.target;
+    if (!["qbittorrent", "ptp", "image-host", "tools"].includes(target)) return reply.code(404).send({ error: "diagnostic_target_not_found" });
+    const checkedAt = new Date().toISOString();
+    const summary = integrationSummary(config, target);
+    if (target === "tools" && !config.integrations.runExternalTools) {
+      return { target, configured: false, status: "disabled" as const, detail: "External tools are disabled.", checkedAt };
+    }
+    if (!summary.configured) return { target, ...summary, status: "missing" as const, checkedAt };
+    if (target === "qbittorrent") {
+      try {
+        if (torrentClient?.ping) await torrentClient.ping();
+        return { target, configured: true, status: torrentClient?.ping ? "ok" : "configured", detail: torrentClient?.ping ? "qBittorrent responded." : "qBittorrent is configured.", checkedAt };
+      } catch (error) {
+        return { target, configured: true, status: "failed" as const, detail: error instanceof Error ? error.message : "qBittorrent check failed.", checkedAt };
+      }
+    }
+    if (target === "tools") {
+      const tools = await collectToolDiagnostics(config, options.commandExecutor);
+      const status = toolCheckStatus(tools);
+      return {
+        target,
+        configured: true,
+        status,
+        detail: status === "ok" ? "External media tools are available." : "One or more external media tools are unavailable.",
+        tools,
+        checkedAt
+      };
+    }
+    return { target, configured: true, status: "configured" as const, detail: summary.detail, checkedAt };
+  });
 
   app.post<{ Body: CreateManualJobBody }>("/api/jobs", async (request, reply) => {
     const body = request.body;
@@ -351,6 +560,8 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
     const fallbackPaths = buildJobWorkspacePaths(config.paths.dataRoot, id);
     const jobRoot = started.workspace?.jobRoot ?? fallbackPaths.jobRoot;
     const logPath = jobLogPath(config, started);
+    const mediaArtifact = started.artifacts.mediaFiles?.[0];
+    const mediaPath = mediaArtifact ? (path.isAbsolute(mediaArtifact) ? mediaArtifact : path.join(jobRoot, mediaArtifact)) : undefined;
     await mkdir(path.dirname(logPath), { recursive: true });
     const contextOptions: CreatePhaseContextOptions = {
       log: async (level: PhaseLogLevel, message: string, payload?: unknown) => {
@@ -363,6 +574,16 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
       }
     };
     if (ptpSubmitter) contextOptions.ptpSubmitter = ptpSubmitter;
+    if (config.ptp.announceUrl) contextOptions.ptpAnnounceUrl = config.ptp.announceUrl;
+    if (torrentClient) {
+      contextOptions.torrentClient = torrentClient;
+      contextOptions.torrentClientOptions = {
+        ...(config.integrations.qbittorrentCategory ? { category: config.integrations.qbittorrentCategory } : {}),
+        ...(config.integrations.qbittorrentTags.length ? { tags: config.integrations.qbittorrentTags } : {}),
+        waitTimeoutMs: config.integrations.qbittorrentDownloadWaitMs,
+        waitIntervalMs: config.integrations.qbittorrentDownloadPollMs
+      };
+    }
     const context = createPhaseContext(
       id,
       {
@@ -371,6 +592,7 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
         ...(started.torrent ? { torrent: started.torrent } : {}),
         ...(started.torrent?.filePath ? { sourceTorrentPath: started.torrent.filePath } : {}),
         ...(started.reviewDraft ? { reviewDraft: started.reviewDraft } : {}),
+        ...(mediaPath ? { mediaPath } : {}),
         workingDirectory: jobRoot
       },
       contextOptions
@@ -389,8 +611,14 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
     return jobRepository.retryFailed(id);
   }
 
-  async function advanceJob(id: string) {
-    return jobRepository.advance(id);
+  async function resumeJob(id: string) {
+    const job = await jobRepository.resume(id);
+    if (job?.state === "preparing") enqueuePreparation(id);
+    return job;
+  }
+
+  async function skipJob(id: string) {
+    return jobRepository.skip(id);
   }
 
   app.post<{ Params: { id: string } }>("/api/jobs/:id/start-upload", async (request, reply) => {
@@ -413,6 +641,12 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
 
   app.post<{ Params: { id: string } }>("/api/jobs/:id/pause", async (request, reply) => {
     const job = await jobRepository.pause(request.params.id);
+    if (!job) return reply.code(404).send({ error: "job_not_found" });
+    return { job };
+  });
+
+  app.post<{ Params: { id: string } }>("/api/jobs/:id/resume", async (request, reply) => {
+    const job = await resumeJob(request.params.id);
     if (!job) return reply.code(404).send({ error: "job_not_found" });
     return { job };
   });
@@ -444,7 +678,8 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
       const addOptions = {
         torrentPath,
         downloadPath,
-        tags: config.integrations.qbittorrentTags
+        tags: config.integrations.qbittorrentTags,
+        skipHashCheck: true
       };
       if (config.integrations.qbittorrentCategory) Object.assign(addOptions, { category: config.integrations.qbittorrentCategory });
       const result = await torrentClient.addTorrent(addOptions);
@@ -456,26 +691,8 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
     }
   });
 
-  app.post<{ Params: { id: string } }>("/api/jobs/:id/debug/advance", async (request, reply) => {
-    const job = await advanceJob(request.params.id);
-    if (!job) return reply.code(404).send({ error: "job_not_found" });
-    return { job };
-  });
-
   app.post<{ Params: { id: string } }>("/api/jobs/:id/debug/skip", async (request, reply) => {
-    const job = await advanceJob(request.params.id);
-    if (!job) return reply.code(404).send({ error: "job_not_found" });
-    return { job };
-  });
-
-  app.post<{ Params: { id: string } }>("/api/jobs/:id/debug/force-state", async (request, reply) => {
-    const job = await jobRepository.get(request.params.id);
-    if (!job) return reply.code(404).send({ error: "job_not_found" });
-    return { job };
-  });
-
-  app.post<{ Params: { id: string } }>("/api/jobs/:id/advance", async (request, reply) => {
-    const job = await advanceJob(request.params.id);
+    const job = await skipJob(request.params.id);
     if (!job) return reply.code(404).send({ error: "job_not_found" });
     return { job };
   });

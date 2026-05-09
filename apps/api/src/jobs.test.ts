@@ -43,6 +43,16 @@ describe("JobRepository pre-upload state machine", () => {
     expect(job.phase).toBe("upload");
   });
 
+  it("uses compact complete copy when upload finishes", () => {
+    const repo = new JobRepository();
+    let job = repo.markPreparedForReview(repo.create({ candidate }).id, { uploadReadiness: "ready", artifacts: {} })!;
+    job = repo.markUploadResult(job.id, { ptpUrl: "https://passthepopcorn.me/torrents.php?id=1", groupId: "1", torrentId: "2" })!;
+
+    expect(job.state).toBe("done");
+    expect(job.humanStep).toBe("Complete");
+    expect(job.phases.find((phase) => phase.phase === "done")).toMatchObject({ state: "done", message: "Complete." });
+  });
+
   it("blocks Start Upload when readiness is blocked", () => {
     const repo = new JobRepository();
     let job = repo.create({
@@ -60,21 +70,21 @@ describe("JobRepository pre-upload state machine", () => {
     expect(blocked.events.at(0)?.message).toBe("Cannot start upload until blockers and required evidence are resolved.");
   });
 
-  it("blocks every advance into upload until readiness is ready and blocker gates are resolved", () => {
+  it("blocks every skip into upload until readiness is ready and blocker gates are resolved", () => {
     const repo = new JobRepository();
     let job = repo.create({ candidate });
 
     while (job.phase !== "review") {
-      job = repo.advance(job.id)!;
+      job = repo.skip(job.id)!;
     }
 
-    job = repo.advance(job.id)!;
+    job = repo.skip(job.id)!;
     expect(job.phase).toBe("review");
     expect(job.state).toBe("review");
     expect(job.events.at(0)?.message).toBe("Cannot start upload until blockers and required evidence are resolved.");
 
     job = repo.markPreparedForReview(job.id, { uploadReadiness: "ready", artifacts: {} })!;
-    job = repo.advance(job.id)!;
+    job = repo.skip(job.id)!;
 
     expect(job.phase).toBe("upload");
     expect(job.state).toBe("uploading");
@@ -119,6 +129,28 @@ describe("JobRepository pre-upload state machine", () => {
     failed = repo.retryFailed(failed.id)!;
     expect(failed.state).toBe("preparing");
     expect(failed.phases[0]).toMatchObject({ state: "pending", retryCount: 1, message: "Retry queued." });
+  });
+
+  it("resumes paused jobs to their active phase state", () => {
+    const repo = new JobRepository();
+    let preparing = repo.create({ candidate });
+
+    preparing = repo.pause(preparing.id)!;
+    expect(preparing.state).toBe("paused");
+
+    preparing = repo.resume(preparing.id)!;
+    expect(preparing.state).toBe("preparing");
+    expect(preparing.phase).toBe("intake");
+    expect(preparing.humanStep).toBe("Preparing upload package");
+    expect(preparing.events.at(0)?.message).toBe("Job resumed.");
+
+    let review = repo.markPreparedForReview(repo.create({ candidate }).id, { uploadReadiness: "ready", artifacts: {} })!;
+    review = repo.pause(review.id)!;
+    review = repo.resume(review.id)!;
+
+    expect(review.state).toBe("review");
+    expect(review.phase).toBe("review");
+    expect(review.humanStep).toBe("Review upload package");
   });
 
   it("stores latest download status without adding noisy job events", () => {

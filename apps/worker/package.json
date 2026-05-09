@@ -17,6 +17,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@popcorn-queue/core": "0.1.0"
+    "@popcorn-queue/core": "0.1.0",
+    "transliteration": "^2.6.1"
   }
 }

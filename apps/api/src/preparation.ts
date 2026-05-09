@@ -45,6 +45,7 @@ export interface PreparationServiceOptions {
   runExternalTools: boolean;
   toolCommands: Partial<Record<WorkerTool, string>>;
   imageUploader?: ImageHostUploader;
+  ptpAnnounceUrl?: string;
   torrentClient?: TorrentDownloadClient;
   torrentClientOptions?: {
     category?: string;
@@ -243,6 +244,7 @@ export class PreparationService {
     };
     if (!this.options.runExternalTools) contextOptions.commandExecutor = disabledCommandExecutor;
     if (this.options.imageUploader) contextOptions.imageUploader = this.options.imageUploader;
+    if (this.options.ptpAnnounceUrl) contextOptions.ptpAnnounceUrl = this.options.ptpAnnounceUrl;
     if (this.options.torrentClient) contextOptions.torrentClient = this.options.torrentClient;
     if (this.options.torrentClientOptions) contextOptions.torrentClientOptions = this.options.torrentClientOptions;
     const context = createPhaseContext(job.id, this.workerJobInput(job, paths.jobRoot, paths.sourceDownloadDir, paths.screenshotsRawDir), contextOptions);
