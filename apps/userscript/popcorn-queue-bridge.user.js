@@ -2,7 +2,7 @@
 // @name         Popcorn Queue Bridge
 // @namespace    https://popcorn-queue.local/
 // @description  Check PTP slots through Popcorn Queue and send source torrents into the upload service.
-// @version      0.1.2
+// @version      0.1.3
 // @author       emt
 // @match        https://tjupt.org/torrents.php*
 // @match        https://pterclub.net/torrents.php*
@@ -18,6 +18,7 @@
 // @grant        GM_registerMenuCommand
 // @connect      localhost
 // @connect      127.0.0.1
+// @connect      *
 // @connect      example.com
 // @connect      tjupt.org
 // @connect      pterclub.net
