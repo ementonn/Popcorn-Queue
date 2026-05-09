@@ -1,4 +1,4 @@
-import { Activity, FilePlus2, Pause, Play, RefreshCcw, Search, SlidersHorizontal } from "lucide-react";
+import { Activity, FilePlus2, LoaderCircle, Pause, Play, RefreshCcw, Search, SlidersHorizontal } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   loadDashboard,
@@ -19,9 +19,14 @@ import { ReviewPanel } from "./components/ReviewPanel.js";
 import type { ApiJob, DiagnosticCheckResult, DiagnosticCheckTarget, DiagnosticsInfo, GlobalLogResponse, HealthInfo, JobLogResponse, ReviewDraft } from "./types.js";
 
 type ActiveView = "jobs" | "new-job" | "diagnostics";
+type PendingJobAction = { jobId: string; label: string; kind: "upload" | "pause" | "resume" | "retry" };
 
 function updateJob(jobs: ApiJob[], updated: ApiJob): ApiJob[] {
   return jobs.map((job) => (job.id === updated.id ? updated : job));
+}
+
+function jobDisplayTitle(job: ApiJob): string {
+  return job.artifacts?.releaseName ?? job.uploadPlan?.releaseName?.generated ?? job.candidate?.title ?? job.source.title ?? job.id;
 }
 
 export function App() {
@@ -35,6 +40,7 @@ export function App() {
   const [activeView, setActiveView] = useState<ActiveView>("jobs");
   const [status, setStatus] = useState<{ tone: "success" | "error" | "info"; text: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [pendingJobAction, setPendingJobAction] = useState<PendingJobAction | null>(null);
   const localDraftsRef = useRef(new Map<string, ReviewDraft>());
   const draftFlushersRef = useRef(new Map<string, () => Promise<void>>());
 
@@ -48,6 +54,7 @@ export function App() {
     [jobs, selectedJobId]
   );
   const selectedJobComplete = selectedJob?.state === "done";
+  const selectedPendingAction = pendingJobAction?.jobId === selectedJob?.id ? pendingJobAction : null;
 
   const visibleJobs = useMemo(() => {
     const needle = searchTerm.trim().toLowerCase();
@@ -107,9 +114,16 @@ export function App() {
     async (
       action: (jobId: string) => Promise<{ job: ApiJob }>,
       label: string,
-      options: { flushDraft?: boolean } = {}
+      options: { flushDraft?: boolean; pendingLabel?: string; kind?: PendingJobAction["kind"] } = {}
     ) => {
-      if (!selectedJob) return;
+      if (!selectedJob || pendingJobAction) return;
+      const pending: PendingJobAction = {
+        jobId: selectedJob.id,
+        label: options.pendingLabel ?? `${label}...`,
+        kind: options.kind ?? "pause"
+      };
+      setPendingJobAction(pending);
+      if (pending.kind === "upload") setStatus({ tone: "info", text: `Uploading to PTP: ${jobDisplayTitle(selectedJob)}` });
       try {
         if (options.flushDraft) {
           await draftFlushersRef.current.get(selectedJob.id)?.();
@@ -121,12 +135,21 @@ export function App() {
         setGlobalLogs(await loadGlobalLogs());
       } catch (error) {
         setStatus({ tone: "error", text: error instanceof Error ? error.message : `${label} failed` });
+      } finally {
+        setPendingJobAction((current) => (current?.jobId === pending.jobId && current.kind === pending.kind ? null : current));
       }
     },
-    [selectedJob, withLocalDraft]
+    [pendingJobAction, selectedJob, withLocalDraft]
   );
 
   const runJobIdAction = useCallback(async (jobId: string, action: (jobId: string) => Promise<{ job: ApiJob }>, label: string) => {
+    if (pendingJobAction) return;
+    const pending: PendingJobAction = {
+      jobId,
+      label: `${label}...`,
+      kind: label === "Retry" ? "retry" : label === "Resume" ? "resume" : "pause"
+    };
+    setPendingJobAction(pending);
     try {
       const result = await action(jobId);
       setJobs((current) => updateJob(current, withLocalDraft(result.job)));
@@ -136,8 +159,10 @@ export function App() {
       setGlobalLogs(await loadGlobalLogs());
     } catch (error) {
       setStatus({ tone: "error", text: error instanceof Error ? error.message : `${label} failed` });
+    } finally {
+      setPendingJobAction((current) => (current?.jobId === pending.jobId && current.kind === pending.kind ? null : current));
     }
-  }, [withLocalDraft]);
+  }, [pendingJobAction, withLocalDraft]);
 
   const handleSaveReviewDraft = useCallback(async (jobId: string, patch: Parameters<typeof saveReviewDraft>[1]) => {
     const result = await saveReviewDraft(jobId, patch);
@@ -277,12 +302,12 @@ export function App() {
                   <button
                     type="button"
                     onClick={() => runJobAction(selectedJob?.state === "paused" ? resumeJob : pauseJob, selectedJob?.state === "paused" ? "Resume" : "Pause")}
-                    disabled={!selectedJob}
+                    disabled={!selectedJob || Boolean(selectedPendingAction)}
                   >
                     {selectedJob?.state === "paused" ? <Play size={15} /> : <Pause size={15} />}
                     {selectedJob?.state === "paused" ? "Resume" : "Pause"}
                   </button>
-                  <button type="button" onClick={() => runJobAction(retryFailed, "Retry failed steps")} disabled={!selectedJob}>
+                  <button type="button" onClick={() => runJobAction(retryFailed, "Retry failed steps", { kind: "retry" })} disabled={!selectedJob || Boolean(selectedPendingAction)}>
                     <RefreshCcw size={15} />
                     Retry failed steps
                   </button>
@@ -298,6 +323,7 @@ export function App() {
           <QueueTable
             jobs={visibleJobs}
             selectedJobId={selectedJob?.id ?? null}
+            pendingAction={pendingJobAction}
             onSelect={setSelectedJobId}
             onPause={(jobId) => runJobIdAction(jobId, pauseJob, "Pause")}
             onResume={(jobId) => runJobIdAction(jobId, resumeJob, "Resume")}
@@ -323,17 +349,31 @@ export function App() {
           actions={
             selectedJob && selectedJob.state !== "done" ? (
               <>
-                {selectedJob.uploadReadiness === "ready" ? (
-                  <button type="button" className="primary" onClick={() => runJobAction(startUpload, "Upload", { flushDraft: true })}>
-                    <Play size={15} />
-                    Upload
+                {selectedPendingAction?.kind === "upload" || (selectedJob.state === "review" && selectedJob.uploadReadiness === "ready") ? (
+                  <button
+                    type="button"
+                    className="primary"
+                    onClick={() => runJobAction(startUpload, "Upload", { flushDraft: true, pendingLabel: "Uploading...", kind: "upload" })}
+                    disabled={Boolean(selectedPendingAction)}
+                    aria-busy={selectedPendingAction?.kind === "upload" ? "true" : undefined}
+                  >
+                    {selectedPendingAction?.kind === "upload" ? <LoaderCircle className="spin-icon" size={15} /> : <Play size={15} />}
+                    {selectedPendingAction?.kind === "upload" ? "Uploading..." : "Upload"}
                   </button>
                 ) : null}
-                <button type="button" onClick={() => runJobAction(selectedJob.state === "paused" ? resumeJob : pauseJob, selectedJob.state === "paused" ? "Resume" : "Pause")}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    runJobAction(selectedJob.state === "paused" ? resumeJob : pauseJob, selectedJob.state === "paused" ? "Resume" : "Pause", {
+                      kind: selectedJob.state === "paused" ? "resume" : "pause"
+                    })
+                  }
+                  disabled={Boolean(selectedPendingAction)}
+                >
                   {selectedJob.state === "paused" ? <Play size={15} /> : <Pause size={15} />}
                   {selectedJob.state === "paused" ? "Resume" : "Pause"}
                 </button>
-                <button type="button" onClick={() => runJobAction(retryFailed, "Retry failed steps")}>
+                <button type="button" onClick={() => runJobAction(retryFailed, "Retry failed steps", { kind: "retry" })} disabled={Boolean(selectedPendingAction)}>
                   <RefreshCcw size={15} />
                   Retry
                 </button>

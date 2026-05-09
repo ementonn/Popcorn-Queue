@@ -248,13 +248,206 @@ test.describe("Popcorn Queue UI", () => {
       name: "Skaz pro to, kak tsar Pyotr arapa zhenil AKA How Czar Peter the Great Married Off His Moor [1976]"
     });
     await expect(movieLink).toHaveAttribute("href", "https://passthepopcorn.me/torrents.php?id=205678");
-    await page.getByRole("button", { name: "Confirm" }).click();
+    await page.locator(".ptp-result").filter({ has: movieLink }).getByRole("button", { name: "Confirm", exact: true }).click();
     await expect(page.getByText("PTP Target")).toBeVisible();
     await expect(page.getByText("Confirmed")).toBeVisible();
 
     await page.getByRole("button", { name: "Create Job" }).click();
     await expect(page.getByLabel("Upload queue")).toContainText("Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p");
     expect(requests.some((request) => request.url.includes("/api/intake/jobs") && request.method === "POST")).toBe(true);
+  });
+
+  test("warns when a manual media path is a directory", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only intake assertion.");
+
+    await page.route("**/api/intake/media-path/validate", async (route) => {
+      await route.fulfill({
+        json: {
+          ok: true,
+          mediaPath: "/home/emt/data/Directory.Movie.2024.1080p.WEB-DL.x265-GROUP",
+          basename: "Directory.Movie.2024.1080p.WEB-DL.x265-GROUP",
+          kind: "directory",
+          size: null,
+          error: null,
+          warning: "media_path_is_directory"
+        }
+      });
+    });
+
+    await page.goto("/");
+    await page.getByRole("link", { name: /New Job/i }).click();
+    await page.getByLabel("Server media path").fill("/home/emt/data/Directory.Movie.2024.1080p.WEB-DL.x265-GROUP");
+    await page.getByRole("button", { name: "Validate path" }).click();
+
+    await expect(page.getByLabel("Media", { exact: true }).getByText("Warning: selected path is a folder, not a file.")).toBeVisible();
+    await expect(page.getByLabel("Release name")).toHaveValue("Directory.Movie.2024.1080p.WEB-DL.x265-GROUP");
+  });
+
+  test("creates a manual job with a manually resolved PTP movie target", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only intake assertion.");
+    const requests: Array<{ url: string; method: string; body: string | null }> = [];
+
+    await page.route("**/api/intake/media-path/validate", async (route) => {
+      await route.fulfill({
+        json: {
+          ok: true,
+          mediaPath: "/home/emt/data/Manual.Target.1976.1080p.WEB-DL.x265-GROUP.mkv",
+          basename: "Manual.Target.1976.1080p.WEB-DL.x265-GROUP.mkv",
+          kind: "file",
+          size: 1234,
+          error: null,
+          warning: null
+        }
+      });
+    });
+    await page.route("**/api/intake/ptp-search", async (route) => {
+      requests.push({ url: route.request().url(), method: route.request().method(), body: route.request().postData() });
+      await route.fulfill({ json: { query: "", parsedYear: null, results: [] } });
+    });
+    await page.route("**/api/intake/ptp-target/resolve", async (route) => {
+      requests.push({ url: route.request().url(), method: route.request().method(), body: route.request().postData() });
+      await route.fulfill({
+        json: {
+          target: {
+            groupId: "205678",
+            displayTitle: "Manual Target Movie [1976]",
+            year: "1976",
+            imdbId: "tt0075169",
+            ptpUrl: "https://passthepopcorn.me/torrents.php?id=205678"
+          }
+        }
+      });
+    });
+    await page.route("**/api/intake/jobs", async (route) => {
+      requests.push({ url: route.request().url(), method: route.request().method(), body: route.request().postData() });
+      await route.fulfill({
+        status: 201,
+        json: {
+          job: {
+            ...apiJobs[0],
+            id: "job-manual-target",
+            candidate: { ...apiJobs[0].candidate!, site: "unknown", title: "Manual.Target.1976.1080p.WEB-DL.x265-GROUP" },
+            source: {
+              site: "unknown",
+              title: "Manual.Target.1976.1080p.WEB-DL.x265-GROUP",
+              mediaPath: "/home/emt/data/Manual.Target.1976.1080p.WEB-DL.x265-GROUP.mkv",
+              ptpTarget: {
+                groupId: "205678",
+                displayTitle: "Manual Target Movie [1976]",
+                year: "1976",
+                imdbId: "tt0075169",
+                ptpUrl: "https://passthepopcorn.me/torrents.php?id=205678"
+              }
+            }
+          }
+        }
+      });
+    });
+
+    await page.goto("/");
+    await page.getByRole("link", { name: /New Job/i }).click();
+    await page.getByLabel("Server media path").fill("/home/emt/data/Manual.Target.1976.1080p.WEB-DL.x265-GROUP.mkv");
+    await page.setInputFiles('input[type="file"][name="torrent"]', {
+      name: "source.torrent",
+      mimeType: "application/x-bittorrent",
+      buffer: Buffer.from("d4:infod6:lengthi1eee")
+    });
+    await page.getByLabel("Release name").fill("Manual.Target.1976.1080p.WEB-DL.x265-GROUP");
+    await page.getByRole("button", { name: "Search PTP Movie" }).click();
+    await expect(page.getByLabel("PTP Target").getByText("No PTP movies found")).toBeVisible();
+    await expect(page.getByLabel("Manual PTP target")).not.toContainText("Group ID");
+    await expect(page.getByRole("button", { name: "Confirm Manual Target" })).toHaveCount(0);
+    await expect(page.getByLabel("Target display title")).toHaveCount(0);
+    await expect(page.getByLabel("Target year")).toHaveCount(0);
+    await page.getByLabel("PTP URL or Movie ID").fill("https://passthepopcorn.me/torrents.php?id=205678&torrentid=1515743");
+    await page.getByLabel("Manual PTP target").getByRole("button", { name: "Confirm", exact: true }).click();
+
+    await expect(page.getByRole("link", { name: "Manual Target Movie [1976]" })).toHaveAttribute("href", "https://passthepopcorn.me/torrents.php?id=205678");
+    await expect(page.getByLabel("PTP Target").getByText("No PTP movies found")).toHaveCount(0);
+    await expect(page.getByText("Missing: Validate media path")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Create Job" })).toBeEnabled();
+    await page.getByRole("button", { name: "Create Job" }).click();
+
+    const createRequest = requests.find((request) => request.url.includes("/api/intake/jobs"));
+    expect(createRequest?.body).toContain('"groupId":"205678"');
+    expect(createRequest?.body).toContain('"displayTitle":"Manual Target Movie [1976]"');
+    expect(createRequest?.body).toContain('"imdbId":"tt0075169"');
+    expect(requests.find((request) => request.url.includes("/api/intake/ptp-target/resolve"))?.body).toContain(
+      '"ptpUrl":"https://passthepopcorn.me/torrents.php?id=205678&torrentid=1515743"'
+    );
+    expect(requests.some((request) => request.url.includes("/api/intake/ptp-search"))).toBe(true);
+  });
+
+  test("creates a manual job from a validated server media path without a source torrent", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only intake assertion.");
+    const requests: Array<{ url: string; method: string; body: string | null }> = [];
+
+    await page.route("**/api/intake/media-path/validate", async (route) => {
+      await route.fulfill({
+        json: {
+          ok: true,
+          mediaPath: "/home/emt/data/Media.Only.2024.1080p.WEB-DL.x265-GROUP.mkv",
+          basename: "Media.Only.2024.1080p.WEB-DL.x265-GROUP.mkv",
+          kind: "file",
+          size: 1234,
+          error: null,
+          warning: null
+        }
+      });
+    });
+    await page.route("**/api/intake/ptp-target/resolve", async (route) => {
+      await route.fulfill({
+        json: {
+          target: {
+            groupId: "205678",
+            displayTitle: "Media Only [2024]",
+            year: "2024",
+            imdbId: "tt1234567",
+            ptpUrl: "https://passthepopcorn.me/torrents.php?id=205678"
+          }
+        }
+      });
+    });
+    await page.route("**/api/intake/jobs", async (route) => {
+      requests.push({ url: route.request().url(), method: route.request().method(), body: route.request().postData() });
+      await route.fulfill({
+        status: 201,
+        json: {
+          job: {
+            ...apiJobs[0],
+            id: "job-media-only",
+            candidate: { ...apiJobs[0].candidate!, site: "unknown", title: "Media.Only.2024.1080p.WEB-DL.x265-GROUP" },
+            source: {
+              site: "unknown",
+              title: "Media.Only.2024.1080p.WEB-DL.x265-GROUP",
+              mediaPath: "/home/emt/data/Media.Only.2024.1080p.WEB-DL.x265-GROUP.mkv",
+              ptpTarget: {
+                groupId: "205678",
+                displayTitle: "Media Only [2024]",
+                year: "2024",
+                imdbId: "tt1234567",
+                ptpUrl: "https://passthepopcorn.me/torrents.php?id=205678"
+              }
+            }
+          }
+        }
+      });
+    });
+
+    await page.goto("/");
+    await page.getByRole("link", { name: /New Job/i }).click();
+    await page.getByLabel("Server media path").fill("/home/emt/data/Media.Only.2024.1080p.WEB-DL.x265-GROUP.mkv");
+    await page.getByRole("button", { name: "Validate path" }).click();
+    await page.getByLabel("Release name").fill("Media.Only.2024.1080p.WEB-DL.x265-GROUP");
+    await page.getByLabel("PTP URL or Movie ID").fill("https://passthepopcorn.me/torrents.php?id=205678");
+    await page.getByLabel("Manual PTP target").getByRole("button", { name: "Confirm", exact: true }).click();
+
+    await expect(page.getByRole("button", { name: "Create Job" })).toBeEnabled();
+    await page.getByRole("button", { name: "Create Job" }).click();
+
+    const createRequest = requests.find((request) => request.url.includes("/api/intake/jobs"));
+    expect(createRequest?.body).toContain('name="mediaPath"');
+    expect(createRequest?.body).not.toContain('name="torrent"');
   });
 
   test("uses the QUI-style light utility shell", async ({ page }, testInfo) => {
@@ -548,6 +741,29 @@ test.describe("Popcorn Queue UI", () => {
     await page.getByTestId("job-drawer").getByRole("button", { name: "Upload", exact: true }).click();
 
     await expect.poll(() => uploadSawSavedDraft, { timeout: 2500 }).toBe(true);
+  });
+
+  test("shows uploading feedback while PTP upload is pending", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only upload feedback assertion.");
+    let releaseUpload!: () => void;
+    const uploadPending = new Promise<void>((resolve) => {
+      releaseUpload = resolve;
+    });
+    await page.route("**/api/jobs/job-athena/start-upload", async (route) => {
+      await uploadPending;
+      await route.fulfill({ json: { job: { ...apiJobs[0], state: "uploading", phase: "upload", humanStep: "Uploading to PTP" } } });
+    });
+
+    await page.goto("/");
+    await page.getByRole("link", { name: "ATHENA.2022.1080p.WEB.x265-SMURF" }).click();
+    await page.getByTestId("job-drawer").getByRole("button", { name: "Upload", exact: true }).click();
+
+    await expect(page.getByTestId("job-drawer").getByRole("button", { name: "Uploading..." })).toBeDisabled();
+    await expect(page.getByRole("row", { name: /ATHENA\.2022/ }).getByRole("button", { name: "Uploading..." })).toBeDisabled();
+    await expect(page.getByText("Uploading to PTP: ATHENA.2022.1080p.WEB.x265-SMURF")).toBeVisible();
+
+    releaseUpload();
+    await expect(page.getByText("Upload: job-athena")).toBeVisible();
   });
 
   test("shows resume instead of pause for paused jobs", async ({ page }, testInfo) => {

@@ -26,6 +26,7 @@ describe("manual intake helpers", () => {
 
   it("derives release titles from media file paths", () => {
     expect(mediaTitleFromPath("/home/emt/data/Movie.2024.1080p.WEB-DL.mkv")).toBe("Movie.2024.1080p.WEB-DL");
+    expect(mediaTitleFromPath("/home/emt/data/Directory.Movie.2024.1080p.WEB-DL.x265-GROUP")).toBe("Directory.Movie.2024.1080p.WEB-DL.x265-GROUP");
     expect(VIDEO_FILE_EXTENSIONS.has(".mkv")).toBe(true);
     expect(VIDEO_FILE_EXTENSIONS.has(".txt")).toBe(false);
     expect(formatPtpMovieTitle({ GroupId: "1", Title: "Only Title", Year: "2025", Torrents: [] })).toBe("Only Title [2025]");

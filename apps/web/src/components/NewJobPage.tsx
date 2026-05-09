@@ -1,6 +1,6 @@
 import { FileUp, Link2, Search, UploadCloud } from "lucide-react";
 import { useState } from "react";
-import { createManualIntakeJob, searchPtpMovie, validateMediaPath } from "../api.js";
+import { createManualIntakeJob, resolvePtpTarget, searchPtpMovie, validateMediaPath } from "../api.js";
 import type { ApiJob, ManualIntakePtpTarget, MediaPathValidationResult, PtpMovieSearchCandidate } from "../types.js";
 
 interface NewJobPageProps {
@@ -12,8 +12,23 @@ function releaseNameFromBasename(value: string): string {
   return value.replace(/\.[^.]+$/, "");
 }
 
+function releaseNameFromValidation(validation: MediaPathValidationResult): string {
+  return validation.kind === "file" ? releaseNameFromBasename(validation.basename) : validation.basename;
+}
+
 function errorText(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
+}
+
+function mediaValidationText(validation: MediaPathValidationResult): string {
+  if (validation.warning === "media_path_is_directory") return "Warning: selected path is a folder, not a file.";
+  if (validation.ok) return validation.basename;
+  return validation.error ?? "Invalid media path";
+}
+
+function mediaValidationTone(validation: MediaPathValidationResult): "ok" | "warning" | "error" {
+  if (validation.warning) return "warning";
+  return validation.ok ? "ok" : "error";
 }
 
 export function NewJobPage({ onCreated, onStatus }: NewJobPageProps) {
@@ -24,19 +39,38 @@ export function NewJobPage({ onCreated, onStatus }: NewJobPageProps) {
   const [torrentUrl, setTorrentUrl] = useState("");
   const [releaseName, setReleaseName] = useState("");
   const [searchResults, setSearchResults] = useState<PtpMovieSearchCandidate[]>([]);
+  const [searchNotice, setSearchNotice] = useState<{ tone: "error"; text: string } | null>(null);
   const [selectedTarget, setSelectedTarget] = useState<ManualIntakePtpTarget | null>(null);
+  const [manualPtpUrl, setManualPtpUrl] = useState("");
+  const [manualImdbUrl, setManualImdbUrl] = useState("");
+  const [manualTargetError, setManualTargetError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const hasTorrent = torrentMode === "file" ? Boolean(torrentFile) : torrentUrl.trim().length > 0;
-  const canCreate = Boolean(validation?.ok && releaseName.trim() && hasTorrent && selectedTarget && !busy);
+  const hasValidMediaPath = Boolean(validation?.ok);
+  const hasInputSource = hasValidMediaPath || hasTorrent;
+  const missingCreateRequirements = [
+    hasInputSource ? null : "Validate media path or add source torrent",
+    releaseName.trim() ? null : "Enter release name",
+    selectedTarget ? null : "Confirm PTP target"
+  ].filter((item): item is string => Boolean(item));
+  const createStatusText = busy
+    ? "Working..."
+    : missingCreateRequirements.length
+      ? `Missing: ${missingCreateRequirements.join(", ")}`
+      : null;
+  const canCreate = !busy && missingCreateRequirements.length === 0;
 
   async function handleValidate() {
     setBusy(true);
     try {
       const result = await validateMediaPath(mediaPath);
       setValidation(result);
-      if (result.ok && !releaseName.trim()) setReleaseName(releaseNameFromBasename(result.basename));
-      onStatus({ tone: result.ok ? "success" : "error", text: result.ok ? "Media path validated" : result.error ?? "Invalid media path" });
+      if (result.ok && !releaseName.trim()) setReleaseName(releaseNameFromValidation(result));
+      onStatus({
+        tone: result.ok ? (result.warning ? "info" : "success") : "error",
+        text: result.warning ? mediaValidationText(result) : result.ok ? "Media path validated" : result.error ?? "Invalid media path"
+      });
     } catch (error) {
       onStatus({ tone: "error", text: errorText(error, "Media path validation failed") });
     } finally {
@@ -50,20 +84,22 @@ export function NewJobPage({ onCreated, onStatus }: NewJobPageProps) {
       const result = await searchPtpMovie({ title: releaseName, mediaPath });
       setSearchResults(result.results);
       setSelectedTarget(null);
-      onStatus({ tone: result.results.length ? "success" : "info", text: result.results.length ? "PTP results loaded" : "No PTP movies found" });
+      setSearchNotice(result.results.length ? null : { tone: "error", text: "No PTP movies found" });
+      if (result.results.length) onStatus({ tone: "success", text: "PTP results loaded" });
     } catch (error) {
-      onStatus({ tone: "error", text: errorText(error, "PTP search failed") });
+      const message = errorText(error, "PTP search failed");
+      setSearchNotice({ tone: "error", text: message });
     } finally {
       setBusy(false);
     }
   }
 
   async function handleCreate() {
-    if (!selectedTarget) return;
+    if (!canCreate || !selectedTarget) return;
     setBusy(true);
     try {
       const input: Parameters<typeof createManualIntakeJob>[0] = {
-        mediaPath,
+        ...(hasValidMediaPath ? { mediaPath: mediaPath.trim() } : {}),
         releaseName,
         ptpTarget: selectedTarget,
         ...(torrentFile ? { torrentFile } : {}),
@@ -73,6 +109,34 @@ export function NewJobPage({ onCreated, onStatus }: NewJobPageProps) {
       onCreated(result.job);
     } catch (error) {
       onStatus({ tone: "error", text: errorText(error, "Create job failed") });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleManualTargetConfirm() {
+    const ptpUrl = manualPtpUrl.trim();
+    const imdbUrl = manualImdbUrl.trim();
+    if (!ptpUrl && !imdbUrl) {
+      setManualTargetError("Enter a PTP URL, Movie ID, or IMDb URL.");
+      onStatus({ tone: "error", text: "Manual PTP target needs a PTP URL, Movie ID, or IMDb URL" });
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const result = await resolvePtpTarget({
+        ...(ptpUrl ? { ptpUrl } : {}),
+        ...(imdbUrl ? { imdbUrl } : {})
+      });
+      setSelectedTarget(result.target);
+      setManualTargetError(null);
+      setSearchNotice(null);
+      onStatus({ tone: "success", text: "PTP target confirmed" });
+    } catch (error) {
+      const message = errorText(error, "PTP target lookup failed");
+      setManualTargetError(message);
+      onStatus({ tone: "error", text: message });
     } finally {
       setBusy(false);
     }
@@ -107,8 +171,8 @@ export function NewJobPage({ onCreated, onStatus }: NewJobPageProps) {
               Validate path
             </button>
             {validation ? (
-              <span className={`inline-status ${validation.ok ? "ok" : "error"}`}>
-                {validation.ok ? validation.basename : validation.error}
+              <span className={`inline-status ${mediaValidationTone(validation)}`}>
+                {mediaValidationText(validation)}
               </span>
             ) : null}
           </div>
@@ -160,6 +224,7 @@ export function NewJobPage({ onCreated, onStatus }: NewJobPageProps) {
             <Search size={15} />
             Search PTP Movie
           </button>
+          {searchNotice ? <span className={`inline-status ${searchNotice.tone}`}>{searchNotice.text}</span> : null}
           {searchResults.length ? (
             <div className="ptp-result-list">
               {searchResults.map((result) => (
@@ -174,6 +239,44 @@ export function NewJobPage({ onCreated, onStatus }: NewJobPageProps) {
               ))}
             </div>
           ) : null}
+          <div className="manual-target-panel" aria-label="Manual PTP target">
+            <h3>Manual target</h3>
+            <div className="manual-target-grid">
+              <label className="field manual-target-wide">
+                <span>PTP URL or Movie ID</span>
+                <input
+                  value={manualPtpUrl}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setManualPtpUrl(value);
+                    if (value.trim()) setManualImdbUrl("");
+                    setManualTargetError(null);
+                  }}
+                  placeholder="https://passthepopcorn.me/torrents.php?id=205678"
+                />
+              </label>
+              <label className="field manual-target-wide">
+                <span>IMDb URL</span>
+                <input
+                  value={manualImdbUrl}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setManualImdbUrl(value);
+                    if (value.trim()) setManualPtpUrl("");
+                    setManualTargetError(null);
+                  }}
+                  placeholder="https://www.imdb.com/title/tt0075169/"
+                />
+              </label>
+            </div>
+            <div className="inline-actions">
+              <button type="button" onClick={handleManualTargetConfirm} disabled={busy || (!manualPtpUrl.trim() && !manualImdbUrl.trim())}>
+                <Link2 size={15} />
+                Confirm
+              </button>
+              {manualTargetError ? <span className="inline-status error">{manualTargetError}</span> : null}
+            </div>
+          </div>
           {selectedTarget ? (
             <div className="selected-target-summary">
               <span>Selected movie</span>
@@ -190,6 +293,9 @@ export function NewJobPage({ onCreated, onStatus }: NewJobPageProps) {
           <UploadCloud size={15} />
           Create Job
         </button>
+        <div className="create-status-row" aria-live="polite">
+          {createStatusText ? <span className="inline-status warning">{createStatusText}</span> : null}
+        </div>
       </div>
     </section>
   );

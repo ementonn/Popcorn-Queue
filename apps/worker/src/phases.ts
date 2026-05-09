@@ -1,4 +1,4 @@
-import { copyFile, mkdir, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   UPLOAD_PHASES,
@@ -380,6 +380,26 @@ function isArchivePath(filePath: string | null): boolean {
 
 function isMediaPath(filePath: string): boolean {
   return /\.(?:mkv|mp4|m4v|mov|avi|ts|m2ts|iso)$/i.test(filePath);
+}
+
+async function collectMediaFiles(directory: string): Promise<Array<{ filePath: string; size: number }>> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = await Promise.all(entries.map(async (entry) => {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) return collectMediaFiles(entryPath);
+    if (!entry.isFile() || !isMediaPath(entry.name)) return [];
+    const info = await stat(entryPath);
+    return [{ filePath: entryPath, size: info.size }];
+  }));
+  return files.flat();
+}
+
+async function resolveMediaFilePath(inputPath: string): Promise<string | null> {
+  const info = await stat(inputPath);
+  if (!info.isDirectory()) return inputPath;
+
+  const files = await collectMediaFiles(inputPath);
+  return files.sort((a, b) => b.size - a.size)[0]?.filePath ?? null;
 }
 
 function defaultDownloadDirectory(context: PhaseContext): string | null {
@@ -770,10 +790,20 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
             remuxed: false
           };
         }
-        if (isArchivePath(inputPath)) {
+        const sourcePath = await resolveMediaFilePath(inputPath);
+        if (!sourcePath) {
+          return {
+            ...base("blocked", "No media file was found in the selected directory."),
+            inputPath,
+            outputPath: null,
+            mode: "skipped",
+            remuxed: false
+          };
+        }
+        if (isArchivePath(sourcePath)) {
           return {
             ...base("skipped", "Archive extraction is planned but no extractor is configured."),
-            inputPath,
+            inputPath: sourcePath,
             outputPath: null,
             mode: "skipped",
             remuxed: false
@@ -791,7 +821,7 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
           };
         }
         const prepared = await prepareUploadMedia({
-          sourcePath: inputPath,
+          sourcePath,
           uploadDirectory: directories.uploadDirectory,
           intermediateDirectory: directories.intermediateDirectory,
           runExternalTools: context.runExternalTools,

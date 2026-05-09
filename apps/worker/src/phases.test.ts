@@ -784,6 +784,35 @@ describe("worker phase scaffold", () => {
     expect(outputs.screenshots?.mediaPath).toBe(outputs["prepare-media"]?.outputPath);
   });
 
+  it("prepares the largest media file when manual media path is a directory", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-directory-media-"));
+    const sourceDir = path.join(tempDir, "download", "Directory.Movie.2024.1080p.WEB-DL.x265-GROUP");
+    await mkdir(path.join(sourceDir, "Extras"), { recursive: true });
+    await writeFile(path.join(sourceDir, "sample.mkv"), Buffer.alloc(10));
+    await writeFile(path.join(sourceDir, "Extras", "trailer.mp4"), Buffer.alloc(20));
+    await writeFile(path.join(sourceDir, "Directory.Movie.2024.1080p.WEB-DL.x265-GROUP.mkv"), Buffer.alloc(128));
+
+    const context = createPhaseContext(
+      "job-directory-media",
+      {
+        candidate,
+        mediaPath: sourceDir,
+        workingDirectory: tempDir,
+        outputDirectory: path.join(tempDir, "screens")
+      },
+      {
+        runExternalTools: false,
+        commandExecutor: fakeExecutor([])
+      }
+    );
+
+    const outputs = await new PhaseRunner().runPreparationToReview(context);
+
+    expect(outputs["prepare-media"]?.inputPath).toBe(path.join(sourceDir, "Directory.Movie.2024.1080p.WEB-DL.x265-GROUP.mkv"));
+    expect(outputs["prepare-media"]?.outputPath).toMatch(/media[/\\]upload[/\\]Directory\.Movie\.2024\.1080p\.WEB-DL\.x265-GROUP\.mkv$/);
+    expect(outputs["inspect-media"]?.mediaPath).toBe(outputs["prepare-media"]?.outputPath);
+  });
+
   it("runs screenshot extraction with noninteractive overwrite flags", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-screenshot-flags-"));
     const source = path.join(tempDir, "source", "Movie.mkv");

@@ -13,9 +13,10 @@ export interface MediaPathValidationResult {
   ok: boolean;
   mediaPath: string;
   basename: string;
-  kind: "file" | "directory" | "missing" | "outside-root" | "relative" | "unsupported" | "unreadable";
+  kind: "file" | "directory" | "missing" | "relative" | "unsupported" | "unreadable";
   size: number | null;
   error: string | null;
+  warning: string | null;
 }
 
 export interface PtpMovieSearchCandidate extends ManualIntakePtpTarget {

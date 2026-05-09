@@ -100,15 +100,22 @@ export function searchPtpMovie(input: { title?: string; mediaPath?: string }): P
   });
 }
 
+export function resolvePtpTarget(input: { ptpUrl?: string; imdbUrl?: string }): Promise<{ target: ManualIntakePtpTarget }> {
+  return fetchJson<{ target: ManualIntakePtpTarget }>("/api/intake/ptp-target/resolve", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
 export function createManualIntakeJob(input: {
-  mediaPath: string;
+  mediaPath?: string;
   releaseName: string;
   ptpTarget: ManualIntakePtpTarget;
   torrentFile?: File | null;
   torrentUrl?: string;
 }): Promise<{ job: ApiJob }> {
   const form = new FormData();
-  form.set("mediaPath", input.mediaPath);
+  if (input.mediaPath?.trim()) form.set("mediaPath", input.mediaPath.trim());
   form.set("releaseName", input.releaseName);
   form.set("ptpTarget", JSON.stringify(input.ptpTarget));
   if (input.torrentFile) form.set("torrent", input.torrentFile);

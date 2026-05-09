@@ -4,6 +4,7 @@ import type { ApiJob, ReviewGate } from "../types.js";
 interface QueueTableProps {
   jobs: ApiJob[];
   selectedJobId: string | null;
+  pendingAction?: { jobId: string; label: string } | null;
   onSelect(jobId: string): void;
   onPause(jobId: string): void;
   onResume(jobId: string): void;
@@ -55,7 +56,7 @@ function actionLabel(action: QueueAction): string {
   return "Upload";
 }
 
-export function QueueTable({ jobs, selectedJobId, onSelect, onPause, onResume, onRetry }: QueueTableProps) {
+export function QueueTable({ jobs, selectedJobId, pendingAction, onSelect, onPause, onResume, onRetry }: QueueTableProps) {
   return (
     <section className="queue" aria-label="Upload queue">
       <div className="table-wrap">
@@ -77,6 +78,7 @@ export function QueueTable({ jobs, selectedJobId, onSelect, onPause, onResume, o
               const selected = job.id === selectedJobId;
               const progress = downloadProgress(job.downloadStatus);
               const action = queueAction(job);
+              const pending = pendingAction?.jobId === job.id ? pendingAction : null;
               return (
                 <tr key={job.id} className={selected ? "selected" : undefined} onClick={() => onSelect(job.id)}>
                   <td data-label="Status">
@@ -107,15 +109,18 @@ export function QueueTable({ jobs, selectedJobId, onSelect, onPause, onResume, o
                       <button
                         type="button"
                         className="action"
+                        disabled={Boolean(pending)}
+                        aria-busy={pending ? "true" : undefined}
                         onClick={(event) => {
                           event.stopPropagation();
+                          if (pending) return;
                           if (action === "retry") onRetry(job.id);
                           else if (action === "pause") onPause(job.id);
                           else if (action === "resume") onResume(job.id);
                           else onSelect(job.id);
                         }}
                       >
-                        {actionLabel(action)}
+                        {pending?.label ?? actionLabel(action)}
                       </button>
                     ) : null}
                   </td>

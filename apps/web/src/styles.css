@@ -76,6 +76,16 @@ button.action {
   min-width: 104px;
 }
 
+.spin-icon {
+  animation: spin-icon 0.9s linear infinite;
+}
+
+@keyframes spin-icon {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .shell {
   min-height: 100dvh;
   display: grid;
@@ -375,6 +385,36 @@ nav a:not(.active):hover {
   color: var(--red);
 }
 
+.inline-status.warning {
+  border-color: #ead087;
+  background: #fff8df;
+  color: #8a5a00;
+}
+
+.manual-target-panel {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.manual-target-panel h3 {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.manual-target-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.manual-target-wide {
+  grid-column: 1 / -1;
+}
+
 .segmented {
   display: inline-flex;
   width: max-content;
@@ -440,8 +480,13 @@ nav a:not(.active):hover {
 }
 
 .intake-actions {
-  display: flex;
-  justify-content: flex-end;
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+}
+
+.create-status-row {
+  min-height: 30px;
 }
 
 .table-wrap {
@@ -1238,6 +1283,10 @@ pre {
   }
 
   .tool-row {
+    grid-template-columns: 1fr;
+  }
+
+  .manual-target-grid {
     grid-template-columns: 1fr;
   }
 }

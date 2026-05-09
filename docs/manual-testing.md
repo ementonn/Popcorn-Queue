@@ -79,13 +79,14 @@ the userscript token does not match `POPCORN_QUEUE_BROWSER_TOKEN`.
 
 ## Manual New Job Intake
 
-1. Set `POPCORN_QUEUE_MEDIA_ROOTS=/home/emt/data` in `.env`.
-2. Start the API and web app.
-3. Open `New Job`.
-4. Enter a movie file path under `/home/emt/data`.
-5. Upload a `.torrent` file or paste a torrent URL.
-6. Search PTP, open the result link if needed, confirm the correct movie group,
-   and create the job.
+1. Start the API and web app.
+2. Open `New Job`.
+3. Enter an absolute movie file path on the server, or a directory that contains
+   the movie file.
+4. Upload a `.torrent` file or paste a torrent URL.
+5. Search PTP and confirm the correct movie, or enter a PTP URL / Movie ID or
+   IMDb URL in the PTP Target section.
+6. Create the job.
 7. Confirm the job appears in `Jobs` and reaches review without waiting for qB
    download.
 

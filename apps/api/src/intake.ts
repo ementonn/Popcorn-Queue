@@ -3,6 +3,7 @@ import path from "node:path";
 import type { FastifyRequest } from "fastify";
 import {
   buildJobWorkspacePaths,
+  normalizeImdbId,
   mediaTitleFromPath,
   parseTorrentTitle,
   ptpTargetFromMovie,
@@ -26,10 +27,15 @@ export interface IntakeTorrentInput {
 }
 
 export interface ManualIntakeInput {
-  mediaPath: string;
+  mediaPath?: string;
   releaseName: string;
   ptpTarget: ManualIntakePtpTarget;
-  torrent: IntakeTorrentInput;
+  torrent?: IntakeTorrentInput;
+}
+
+export interface ManualPtpTargetResolveInput {
+  ptpUrl?: string;
+  imdbUrl?: string;
 }
 
 interface ManualIntakeJobRepository {
@@ -67,32 +73,26 @@ export class IntakeError extends Error {
   }
 }
 
-export function isPathInsideRoot(filePath: string, roots: string[]): boolean {
-  const resolved = path.resolve(filePath);
-  return roots.some((root) => {
-    const relative = path.relative(path.resolve(root), resolved);
-    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-  });
-}
-
-export async function validateMediaPath(mediaPath: string, roots: string[]): Promise<MediaPathValidationResult> {
+export async function validateMediaPath(mediaPath: string): Promise<MediaPathValidationResult> {
   const basename = mediaPath ? path.basename(mediaPath) : "";
-  if (!mediaPath) return { ok: false, mediaPath, basename, kind: "missing", size: null, error: "media_path_required" };
-  if (!path.isAbsolute(mediaPath)) return { ok: false, mediaPath, basename, kind: "relative", size: null, error: "absolute_media_path_required" };
-  if (!roots.length || !isPathInsideRoot(mediaPath, roots)) {
-    return { ok: false, mediaPath, basename, kind: "outside-root", size: null, error: "media_path_outside_allowed_roots" };
+  if (!mediaPath) return { ok: false, mediaPath, basename, kind: "missing", size: null, error: "media_path_required", warning: null };
+  if (!path.isAbsolute(mediaPath)) {
+    return { ok: false, mediaPath, basename, kind: "relative", size: null, error: "absolute_media_path_required", warning: null };
   }
 
   try {
     await access(mediaPath);
     const info = await stat(mediaPath);
-    if (!info.isFile()) return { ok: false, mediaPath, basename, kind: "unsupported", size: null, error: "media_path_must_be_file" };
-    if (!VIDEO_FILE_EXTENSIONS.has(path.extname(mediaPath).toLowerCase())) {
-      return { ok: false, mediaPath, basename, kind: "unsupported", size: info.size, error: "unsupported_media_extension" };
+    if (info.isDirectory()) {
+      return { ok: true, mediaPath, basename, kind: "directory", size: null, error: null, warning: "media_path_is_directory" };
     }
-    return { ok: true, mediaPath, basename, kind: "file", size: info.size, error: null };
+    if (!info.isFile()) return { ok: false, mediaPath, basename, kind: "unsupported", size: null, error: "media_path_must_be_file", warning: null };
+    if (!VIDEO_FILE_EXTENSIONS.has(path.extname(mediaPath).toLowerCase())) {
+      return { ok: false, mediaPath, basename, kind: "unsupported", size: info.size, error: "unsupported_media_extension", warning: null };
+    }
+    return { ok: true, mediaPath, basename, kind: "file", size: info.size, error: null, warning: null };
   } catch {
-    return { ok: false, mediaPath, basename, kind: "unreadable", size: null, error: "media_path_unreadable" };
+    return { ok: false, mediaPath, basename, kind: "unreadable", size: null, error: "media_path_unreadable", warning: null };
   }
 }
 
@@ -115,6 +115,39 @@ export async function searchPtpMovies(input: { title?: string; mediaPath?: strin
       return target ? [target] : [];
     })
   };
+}
+
+function extractPtpMovieId(value: string): string | null {
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) return trimmed;
+
+  try {
+    const url = new URL(trimmed);
+    return url.searchParams.get("id")?.match(/^\d+$/)?.[0] ?? null;
+  } catch {
+    return trimmed.match(/[?&]id=(\d+)/i)?.[1] ?? null;
+  }
+}
+
+export async function resolveManualPtpTarget(input: ManualPtpTargetResolveInput, ptpClient: PtpClient): Promise<ManualIntakePtpTarget> {
+  const ptpUrl = input.ptpUrl?.trim() ?? "";
+  const imdbUrl = input.imdbUrl?.trim() ?? "";
+  if (Boolean(ptpUrl) === Boolean(imdbUrl)) throw new IntakeError("choose_one_ptp_or_imdb_url");
+
+  const response = ptpUrl
+    ? await ptpClient.getGroup(extractPtpMovieId(ptpUrl) ?? invalidManualTarget("invalid_ptp_movie_url_or_id"))
+    : await ptpClient.searchByImdb(normalizeImdbId(imdbUrl) ?? invalidManualTarget("invalid_imdb_url"));
+
+  const target = response.movies.flatMap((movie) => {
+    const candidate = ptpTargetFromMovie(movie);
+    return candidate ? [candidate] : [];
+  })[0];
+  if (!target) throw new IntakeError("ptp_target_not_found", 404);
+  return target;
+}
+
+function invalidManualTarget(message: string): never {
+  throw new IntakeError(message);
 }
 
 export function looksLikeTorrent(bytes: Buffer): boolean {
@@ -222,16 +255,16 @@ async function readJsonManualIntakeRequest(request: FastifyRequest, fetchImpl: t
 
 function normalizeManualIntakeInput(input: { mediaPath?: string; releaseName?: string; ptpTarget: unknown; torrent: IntakeTorrentInput | null }): ManualIntakeInput {
   const mediaPath = (input.mediaPath ?? "").trim();
-  if (!mediaPath) throw new IntakeError("media_path_required");
-  const releaseName = (input.releaseName?.trim() || mediaTitleFromPath(mediaPath)).trim();
+  if (!mediaPath && !input.torrent) throw new IntakeError("media_or_torrent_source_required");
+  const fallbackTitle = mediaPath ? mediaTitleFromPath(mediaPath) : input.torrent ? mediaTitleFromPath(input.torrent.filename) : "";
+  const releaseName = (input.releaseName?.trim() || fallbackTitle).trim();
   if (!releaseName) throw new IntakeError("release_name_required");
-  if (!input.torrent) throw new IntakeError("torrent_source_required");
 
   return {
-    mediaPath,
     releaseName,
     ptpTarget: parsePtpTarget(input.ptpTarget),
-    torrent: input.torrent
+    ...(mediaPath ? { mediaPath } : {}),
+    ...(input.torrent ? { torrent: input.torrent } : {})
   };
 }
 
@@ -267,25 +300,27 @@ function manualCheckResult(candidate: TorrentCandidate, target: ManualIntakePtpT
 export async function createManualIntakeJob(input: {
   dataRoot: string;
   jobRepository: ManualIntakeJobRepository;
-  mediaPath: string;
+  mediaPath?: string;
   releaseName: string;
   ptpTarget: ManualIntakePtpTarget;
-  torrent: IntakeTorrentInput;
+  torrent?: IntakeTorrentInput;
 }): Promise<Job> {
   const candidate: TorrentCandidate = {
     site: "unknown",
     title: input.releaseName,
     imdbId: input.ptpTarget.imdbId
   };
-  const torrent = {
-    filename: input.torrent.filename,
-    bytes: input.torrent.bytes.byteLength,
-    ...(input.torrent.contentType ? { contentType: input.torrent.contentType } : {})
-  };
+  const torrent = input.torrent
+    ? {
+        filename: input.torrent.filename,
+        bytes: input.torrent.bytes.byteLength,
+        ...(input.torrent.contentType ? { contentType: input.torrent.contentType } : {})
+      }
+    : null;
   const job = await input.jobRepository.createFromBrowser({
     candidate,
     checkResult: manualCheckResult(candidate, input.ptpTarget),
-    torrent,
+    ...(torrent ? { torrent } : {}),
     sourceSite: "unknown",
     title: input.releaseName
   });
@@ -296,12 +331,12 @@ export async function createManualIntakeJob(input: {
     mkdir(paths.sourceDownloadDir, { recursive: true }),
     mkdir(paths.logs.dir, { recursive: true })
   ]);
-  await writeFile(paths.sourceTorrent, input.torrent.bytes);
+  if (input.torrent) await writeFile(paths.sourceTorrent, input.torrent.bytes);
   const source = {
     site: "unknown",
     title: input.releaseName,
-    mediaPath: input.mediaPath,
-    ...(input.torrent.sourceUrl ? { torrentUrl: input.torrent.sourceUrl } : {}),
+    ...(input.mediaPath ? { mediaPath: input.mediaPath } : {}),
+    ...(input.torrent?.sourceUrl ? { torrentUrl: input.torrent.sourceUrl } : {}),
     ptpTarget: input.ptpTarget
   };
   await writeFile(
@@ -316,13 +351,13 @@ export async function createManualIntakeJob(input: {
   };
   const attached = await input.jobRepository.attachWorkspace(job.id, {
     workspace,
-    torrentFilePath: paths.sourceTorrent,
+    ...(input.torrent ? { torrentFilePath: paths.sourceTorrent } : {}),
     source
   });
   return attached ?? {
     ...job,
     source,
-    torrent: { ...torrent, filePath: paths.sourceTorrent },
+    ...(torrent ? { torrent: { ...torrent, filePath: paths.sourceTorrent } } : {}),
     workspace
   };
 }

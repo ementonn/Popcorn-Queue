@@ -7,9 +7,10 @@ export interface MediaPathValidationResult {
   ok: boolean;
   mediaPath: string;
   basename: string;
-  kind: "file" | "directory" | "missing" | "outside-root" | "relative" | "unsupported" | "unreadable";
+  kind: "file" | "directory" | "missing" | "relative" | "unsupported" | "unreadable";
   size: number | null;
   error: string | null;
+  warning: string | null;
 }
 
 export interface ManualIntakePtpTarget {
@@ -34,7 +35,9 @@ export interface PtpMovieSearchResponse {
 export const VIDEO_FILE_EXTENSIONS = new Set([".mkv", ".mp4", ".m2ts", ".ts", ".mov", ".avi"]);
 
 export function mediaTitleFromPath(mediaPath: string): string {
-  return path.basename(mediaPath).replace(/\.[^.]+$/, "");
+  const basename = path.basename(mediaPath);
+  const extension = path.extname(basename).toLowerCase();
+  return VIDEO_FILE_EXTENSIONS.has(extension) ? basename.slice(0, -extension.length) : basename;
 }
 
 export function buildPtpGroupUrl(groupId: string): string {

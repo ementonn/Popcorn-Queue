@@ -81,7 +81,6 @@ describe("API configuration", () => {
       QBITTORRENT_DOWNLOAD_POLL_MS: "56",
       POPCORN_QUEUE_RUN_EXTERNAL_TOOLS: "true",
       POPCORN_QUEUE_DATA_ROOT: "/tmp/data-root",
-      POPCORN_QUEUE_MEDIA_ROOTS: "data/media,/home/emt/data",
       FFMPEG_BIN: "/usr/bin/ffmpeg",
       MEDIAINFO_BIN: "/usr/bin/mediainfo",
       MKVMERGE_BIN: "/usr/bin/mkvmerge",
@@ -140,23 +139,11 @@ describe("API configuration", () => {
         toConsole: false
       },
       paths: {
-        dataRoot: "/tmp/data-root",
-        mediaRoots: [expect.stringMatching(/popcorn-queue[/\\]data[/\\]media$/), "/home/emt/data"]
+        dataRoot: "/tmp/data-root"
       }
     });
     expect(config.logging.file).toMatch(/logs[/\\]api-test\.log$/);
     expect(config.paths.apiLogFile).toMatch(/logs[/\\]api-test\.log$/);
     expect(config.paths.workerLogFile).toMatch(/logs[/\\]worker-test\.log$/);
-  });
-
-  it("parses configured media roots as absolute project paths", () => {
-    const config = loadConfig({
-      POPCORN_QUEUE_MEDIA_ROOTS: "data/media,/home/emt/data",
-      POPCORN_QUEUE_DATA_ROOT: "data",
-      POPCORN_QUEUE_LOG_TO_CONSOLE: "false"
-    });
-
-    expect(config.paths.mediaRoots[0]).toMatch(/popcorn-queue[/\\]data[/\\]media$/);
-    expect(config.paths.mediaRoots[1]).toBe("/home/emt/data");
   });
 });

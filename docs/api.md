@@ -58,10 +58,12 @@ Deletes one backend PTP cache key derived from `{ title, imdbId }`.
 
 ### POST /api/intake/media-path/validate
 
-Validates an absolute server-side media file path under one of the
-`POPCORN_QUEUE_MEDIA_ROOTS` entries. The route returns whether the path is
-readable, an allowed video file, its basename, and its size when available. It
-does not create or mutate jobs.
+Validates an absolute server-side media path from any readable location. The
+route returns whether the path is readable, its basename, and its size when
+available. Video files return `kind: "file"`. Directories are allowed and return
+`kind: "directory"` with `warning: "media_path_is_directory"` so the UI can warn
+that the selected path is a folder instead of a file. It does not create or
+mutate jobs.
 
 ### POST /api/intake/ptp-search
 

@@ -19,7 +19,7 @@ import {
 } from "@popcorn-queue/worker";
 import { makeBrowserAuthHook } from "./auth.js";
 import type { ApiConfig } from "./config.js";
-import { createManualIntakeJob, IntakeError, readManualIntakeRequest, searchPtpMovies, validateMediaPath } from "./intake.js";
+import { createManualIntakeJob, IntakeError, readManualIntakeRequest, resolveManualPtpTarget, searchPtpMovies, validateMediaPath } from "./intake.js";
 import { appendJobEvent, readLogTail } from "./job-logs.js";
 import { createApiLogger } from "./logger.js";
 import { PrismaPersistence } from "./persistence.js";
@@ -712,25 +712,37 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
   });
 
   app.post<{ Body: { mediaPath?: string } }>("/api/intake/media-path/validate", async (request) => {
-    return validateMediaPath(request.body?.mediaPath ?? "", config.paths.mediaRoots);
+    return validateMediaPath(request.body?.mediaPath ?? "");
   });
 
   app.post<{ Body: { title?: string; mediaPath?: string } }>("/api/intake/ptp-search", async (request) => {
     return searchPtpMovies(request.body ?? {}, ptpClient);
   });
 
+  app.post<{ Body: { ptpUrl?: string; imdbUrl?: string } }>("/api/intake/ptp-target/resolve", async (request, reply) => {
+    try {
+      const target = await resolveManualPtpTarget(request.body ?? {}, ptpClient);
+      return { target };
+    } catch (error) {
+      if (error instanceof IntakeError) return reply.code(error.statusCode).send({ error: error.message });
+      throw error;
+    }
+  });
+
   app.post("/api/intake/jobs", async (request, reply) => {
     try {
       const input = await readManualIntakeRequest(request, options.fetchImpl ?? fetch);
-      const media = await validateMediaPath(input.mediaPath, config.paths.mediaRoots);
-      if (!media.ok) return reply.code(400).send({ error: media.error ?? "invalid_media_path", media });
+      if (input.mediaPath) {
+        const media = await validateMediaPath(input.mediaPath);
+        if (!media.ok) return reply.code(400).send({ error: media.error ?? "invalid_media_path", media });
+      }
       const job = await createManualIntakeJob({
         dataRoot: config.paths.dataRoot,
         jobRepository,
-        mediaPath: input.mediaPath,
         releaseName: input.releaseName,
         ptpTarget: input.ptpTarget,
-        torrent: input.torrent
+        ...(input.mediaPath ? { mediaPath: input.mediaPath } : {}),
+        ...(input.torrent ? { torrent: input.torrent } : {})
       });
       enqueuePreparation(job.id);
       return reply.code(201).send({ job });
