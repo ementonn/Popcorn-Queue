@@ -54,9 +54,9 @@ Optional manual integrations:
 - `QBITTORRENT_DOWNLOAD_POLL_MS`
 - `TMDB_API_KEY`
 
-Worker binaries are disabled by default with
-`POPCORN_QUEUE_RUN_EXTERNAL_TOOLS=false`. Set it to `true` only when you want
-manual runs to execute `ffmpeg`, `mediainfo`, and `oxipng`.
+Worker binaries are enabled by default with
+`POPCORN_QUEUE_RUN_EXTERNAL_TOOLS=true`. Set it to `false` only when you want
+manual runs to skip `ffmpeg`, `mediainfo`, `mkvmerge`, and `oxipng`.
 
 When qBittorrent is configured, `download-or-locate` adds the uploaded source
 torrent to qB using `data/jobs/<jobId>/download` as the save path, waits up to

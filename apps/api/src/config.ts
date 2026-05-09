@@ -204,7 +204,7 @@ export function loadConfig(env = process.env): ApiConfig {
       qbittorrentContentLayout: env.QBITTORRENT_CONTENT_LAYOUT ?? "",
       qbittorrentDownloadWaitMs: readNumber(env.QBITTORRENT_DOWNLOAD_WAIT_MS ?? env.POPCORN_QUEUE_DOWNLOAD_WAIT_MS, 6 * 60 * 60 * 1000),
       qbittorrentDownloadPollMs: readNumber(env.QBITTORRENT_DOWNLOAD_POLL_MS ?? env.POPCORN_QUEUE_DOWNLOAD_POLL_MS, 15_000),
-      runExternalTools: readBoolean(env.POPCORN_QUEUE_RUN_EXTERNAL_TOOLS),
+      runExternalTools: readBoolean(env.POPCORN_QUEUE_RUN_EXTERNAL_TOOLS, true),
       ffmpegBin: env.FFMPEG_BIN ?? "ffmpeg",
       mediainfoBin: env.MEDIAINFO_BIN ?? "mediainfo",
       mkvmergeBin: env.MKVMERGE_BIN ?? "mkvmerge",

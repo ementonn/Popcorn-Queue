@@ -21,7 +21,8 @@ function exampleEnv(): string {
     "POPCORN_QUEUE_IMAGE_HOST=imgbb",
     "QBITTORRENT_URL=",
     "QBITTORRENT_USERNAME=",
-    "QBITTORRENT_PASSWORD="
+    "QBITTORRENT_PASSWORD=",
+    "POPCORN_QUEUE_RUN_EXTERNAL_TOOLS=true"
   ].join("\n");
 }
 
@@ -67,6 +68,7 @@ describe("configure CLI helpers", () => {
     expect(text).toContain("QBITTORRENT_PASSWORD=qb-pass");
     expect(text).toContain("PTP_COOKIE_FILE=./data/ptp-cookies.txt");
     expect(text).toContain("POPCORN_QUEUE_IMAGE_HOST=imgbb");
+    expect(text).toContain("POPCORN_QUEUE_RUN_EXTERNAL_TOOLS=true");
     expect(prompted.map((field) => field.key)).toEqual([
       "PTP_API_USER",
       "PTP_API_KEY",

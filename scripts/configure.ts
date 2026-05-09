@@ -42,7 +42,8 @@ const autoFields: ConfigureField[] = [
   { key: "POPCORN_QUEUE_WEB_AUTH", label: "Require web login", fallback: "true" },
   { key: "PTP_COOKIE_FILE", label: "PTP cookie file", fallback: "./data/ptp-cookies.txt" },
   { key: "POPCORN_QUEUE_IMAGE_HOST", label: "Image host", fallback: "imgbb" },
-  { key: "QBITTORRENT_TAGS", label: "qBittorrent tags", fallback: "ptp,upload" }
+  { key: "QBITTORRENT_TAGS", label: "qBittorrent tags", fallback: "ptp,upload" },
+  { key: "POPCORN_QUEUE_RUN_EXTERNAL_TOOLS", label: "Run external tools", fallback: "true" }
 ];
 
 const promptFields: ConfigureField[] = [

@@ -51,6 +51,10 @@ describe("API configuration", () => {
     }
   });
 
+  it("enables external tools by default", () => {
+    expect(loadConfig({}).integrations.runExternalTools).toBe(true);
+  });
+
   it("maps runnable service settings from environment variables", () => {
     const config = loadConfig({
       POPCORN_QUEUE_HOST: "0.0.0.0",

@@ -467,10 +467,10 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
       {
         id: "external-tools",
         name: "Worker media tools",
-        status: config.integrations.runExternalTools ? "configured" : "safe-default",
+        status: config.integrations.runExternalTools ? "configured" : "disabled",
         detail: config.integrations.runExternalTools
           ? `Worker may run ${config.integrations.ffmpegBin}, ${config.integrations.mediainfoBin}, ${config.integrations.mkvmergeBin}, and ${config.integrations.oxipngBin} during manual execution.`
-          : "External tools are disabled by default; tests and dry runs keep command execution mocked or skipped."
+          : "External tools are disabled; media preparation will skip or mock command execution."
       }
     ]
   }));
