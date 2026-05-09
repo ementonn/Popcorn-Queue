@@ -20,6 +20,7 @@ function exampleEnv(): string {
     "PTP_COOKIE_FILE=./data/ptp-cookies.txt",
     "POPCORN_QUEUE_IMAGE_HOST=imgbb",
     "QBITTORRENT_URL=",
+    "QBITTORRENT_USERNAME=",
     "QBITTORRENT_PASSWORD="
   ].join("\n");
 }
@@ -38,6 +39,7 @@ describe("configure CLI helpers", () => {
       PTP_PASSWORD: "pass with # hash",
       PTP_ANNOUNCE_URL: "https://please.passthepopcorn.me/passkey/announce",
       QBITTORRENT_URL: "http://127.0.0.1:8080",
+      QBITTORRENT_USERNAME: "qb-user",
       QBITTORRENT_PASSWORD: "qb-pass"
     };
 
@@ -61,6 +63,7 @@ describe("configure CLI helpers", () => {
     expect(text).toContain("PTP_USERNAME=ptp-user");
     expect(text).toContain('PTP_PASSWORD="pass with # hash"');
     expect(text).toContain("QBITTORRENT_URL=http://127.0.0.1:8080");
+    expect(text).toContain("QBITTORRENT_USERNAME=qb-user");
     expect(text).toContain("QBITTORRENT_PASSWORD=qb-pass");
     expect(text).toContain("PTP_COOKIE_FILE=./data/ptp-cookies.txt");
     expect(text).toContain("POPCORN_QUEUE_IMAGE_HOST=imgbb");
@@ -71,6 +74,7 @@ describe("configure CLI helpers", () => {
       "PTP_PASSWORD",
       "PTP_ANNOUNCE_URL",
       "QBITTORRENT_URL",
+      "QBITTORRENT_USERNAME",
       "QBITTORRENT_PASSWORD"
     ]);
     expect(prompted.every((field) => field.secret === false)).toBe(true);
@@ -81,14 +85,28 @@ describe("configure CLI helpers", () => {
     const envPath = path.join(directory, ".env");
     const exampleEnvPath = path.join(directory, ".env.example");
     await writeFile(exampleEnvPath, exampleEnv());
-    await writeFile(envPath, "CUSTOM_VALUE=keep\nPTP_USERNAME=old-user\nPOPCORN_QUEUE_BROWSER_TOKEN=old-token\n");
+    await writeFile(
+      envPath,
+      [
+        "CUSTOM_VALUE=keep",
+        "PTP_USERNAME=old-user",
+        "QBITTORRENT_URL=http://old-qb.local:8080",
+        "QBITTORRENT_USERNAME=old-qb-user",
+        "POPCORN_QUEUE_BROWSER_TOKEN=old-token",
+        ""
+      ].join("\n")
+    );
+    const prompted: ConfigurePromptField[] = [];
 
     const result = await configureEnvFile({
       envPath,
       exampleEnvPath,
       generateToken: () => "new-token",
       now: () => new Date("2026-05-09T07:00:00.000Z"),
-      prompt: async () => ""
+      prompt: async (field) => {
+        prompted.push(field);
+        return "";
+      }
     });
 
     const text = await readFile(envPath, "utf8");
@@ -96,6 +114,10 @@ describe("configure CLI helpers", () => {
     expect(await readFile(result.backupPath!, "utf8")).toContain("PTP_USERNAME=old-user");
     expect(text).toContain("CUSTOM_VALUE=keep");
     expect(text).toContain("PTP_USERNAME=old-user");
+    expect(text).toContain("QBITTORRENT_URL=http://old-qb.local:8080");
+    expect(text).toContain("QBITTORRENT_USERNAME=old-qb-user");
     expect(text).toContain("POPCORN_QUEUE_BROWSER_TOKEN=old-token");
+    expect(prompted.find((field) => field.key === "QBITTORRENT_URL")?.defaultValue).toBe("http://old-qb.local:8080");
+    expect(prompted.find((field) => field.key === "QBITTORRENT_USERNAME")?.defaultValue).toBe("old-qb-user");
   });
 });

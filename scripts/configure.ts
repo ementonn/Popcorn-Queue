@@ -52,6 +52,7 @@ const promptFields: ConfigureField[] = [
   { key: "PTP_PASSWORD", label: "PTP password" },
   { key: "PTP_ANNOUNCE_URL", label: "PTP announce URL" },
   { key: "QBITTORRENT_URL", label: "qBittorrent URL" },
+  { key: "QBITTORRENT_USERNAME", label: "qBittorrent username" },
   { key: "QBITTORRENT_PASSWORD", label: "qBittorrent password" }
 ];
 
