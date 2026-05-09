@@ -4,6 +4,15 @@ const longMediaInfo = Array.from({ length: 24 }, (_, index) => (index === 0 ? "G
 
 test.describe("Popcorn Queue UI", () => {
   test.beforeEach(async ({ page }) => {
+    await page.route("**/api/auth/session", async (route) => {
+      await route.fulfill({ json: { authRequired: false, authenticated: true, username: null } });
+    });
+    await page.route("**/api/auth/login", async (route) => {
+      await route.fulfill({ json: { authRequired: true, authenticated: true, username: "ptp-user" } });
+    });
+    await page.route("**/api/auth/logout", async (route) => {
+      await route.fulfill({ json: { authRequired: true, authenticated: false, username: null } });
+    });
     await page.route("**/api/jobs", async (route) => {
       if (route.request().method() !== "GET") {
         await route.fulfill({ status: 201, json: { job: apiJobs[0] } });
@@ -63,8 +72,8 @@ test.describe("Popcorn Queue UI", () => {
             recentFailures: []
           },
           storage: {
-            dataRoot: "/home/emt/ptp/popcorn-queue/data",
-            databasePath: "/home/emt/ptp/popcorn-queue/popcorn-queue.db",
+            dataRoot: "/var/lib/popcorn-queue/data",
+            databasePath: "/var/lib/popcorn-queue/popcorn-queue.db",
             jobCount: 2,
             cacheEntries: 12,
             databaseBytes: 4096,
@@ -126,6 +135,7 @@ test.describe("Popcorn Queue UI", () => {
     await page.goto("/");
 
     await expect(page.locator(".brand").getByText("Popcorn Queue")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Logout" })).toHaveCount(0);
     await expect(page.getByRole("link", { name: /Jobs/i })).toBeVisible();
     await expect(page.getByPlaceholder("Search jobs, IMDb, source")).toBeVisible();
     await expect(page.getByRole("button", { name: "Start Upload" })).toHaveCount(0);
@@ -157,6 +167,43 @@ test.describe("Popcorn Queue UI", () => {
     await expect(page.getByLabel("Upload queue").getByRole("button", { name: "Details" })).toHaveCount(0);
   });
 
+  test("requires local PTP credentials before showing the queue", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only auth assertion.");
+    let authenticated = false;
+    const loginRequests: Array<Record<string, unknown>> = [];
+    await page.route("**/api/auth/session", async (route) => {
+      await route.fulfill({ json: { authRequired: true, authenticated, username: authenticated ? "ptp-user" : null } });
+    });
+    await page.route("**/api/auth/login", async (route) => {
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      loginRequests.push(body);
+      authenticated = body.username === "ptp-user" && body.password === "ptp-pass";
+      await route.fulfill({
+        status: authenticated ? 200 : 401,
+        json: authenticated ? { authRequired: true, authenticated: true, username: "ptp-user" } : { error: "invalid_credentials" }
+      });
+    });
+
+    await page.goto("/");
+
+    await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+    await expect(page.getByLabel("PTP username")).toBeVisible();
+    await expect(page.getByLabel("PTP password")).toBeVisible();
+    await expect(page.getByLabel("Upload queue")).toHaveCount(0);
+
+    await page.getByLabel("PTP username").fill("ptp-user");
+    await page.getByLabel("PTP password").fill("wrong");
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page.getByText(/invalid_credentials/i)).toBeVisible();
+
+    await page.getByLabel("PTP password").fill("ptp-pass");
+    await page.getByRole("button", { name: "Sign in" }).click();
+
+    await expect(page.getByLabel("Upload queue")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Logout" })).toBeVisible();
+    expect(loginRequests.at(-1)).toMatchObject({ username: "ptp-user", password: "ptp-pass" });
+  });
+
   test("creates a manual job from server media path, uploaded torrent, and confirmed PTP target", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only intake assertion.");
     const requests: Array<{ url: string; method: string; body: string | null }> = [];
@@ -166,7 +213,7 @@ test.describe("Popcorn Queue UI", () => {
       await route.fulfill({
         json: {
           ok: true,
-          mediaPath: "/home/emt/data/Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p.mkv",
+          mediaPath: "/media/movies/Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p.mkv",
           basename: "Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p.mkv",
           kind: "file",
           size: 1234,
@@ -206,7 +253,7 @@ test.describe("Popcorn Queue UI", () => {
             source: {
               site: "unknown",
               title: "Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p",
-              mediaPath: "/home/emt/data/Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p.mkv",
+              mediaPath: "/media/movies/Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p.mkv",
               ptpTarget: {
                 groupId: "205678",
                 displayTitle: "Skaz pro to, kak tsar Pyotr arapa zhenil AKA How Czar Peter the Great Married Off His Moor [1976]",
@@ -232,7 +279,7 @@ test.describe("Popcorn Queue UI", () => {
     await page.getByRole("link", { name: /New Job/i }).click();
     await expect(page.getByRole("heading", { name: "New Job" })).toBeVisible();
 
-    await page.getByLabel("Server media path").fill("/home/emt/data/Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p.mkv");
+    await page.getByLabel("Server media path").fill("/media/movies/Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p.mkv");
     await page.getByRole("button", { name: "Validate path" }).click();
     await expect(page.getByText("Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p.mkv")).toBeVisible();
 
@@ -264,7 +311,7 @@ test.describe("Popcorn Queue UI", () => {
       await route.fulfill({
         json: {
           ok: true,
-          mediaPath: "/home/emt/data/Directory.Movie.2024.1080p.WEB-DL.x265-GROUP",
+          mediaPath: "/media/movies/Directory.Movie.2024.1080p.WEB-DL.x265-GROUP",
           basename: "Directory.Movie.2024.1080p.WEB-DL.x265-GROUP",
           kind: "directory",
           size: null,
@@ -276,7 +323,7 @@ test.describe("Popcorn Queue UI", () => {
 
     await page.goto("/");
     await page.getByRole("link", { name: /New Job/i }).click();
-    await page.getByLabel("Server media path").fill("/home/emt/data/Directory.Movie.2024.1080p.WEB-DL.x265-GROUP");
+    await page.getByLabel("Server media path").fill("/media/movies/Directory.Movie.2024.1080p.WEB-DL.x265-GROUP");
     await page.getByRole("button", { name: "Validate path" }).click();
 
     await expect(page.getByLabel("Media", { exact: true }).getByText("Warning: selected path is a folder, not a file.")).toBeVisible();
@@ -291,7 +338,7 @@ test.describe("Popcorn Queue UI", () => {
       await route.fulfill({
         json: {
           ok: true,
-          mediaPath: "/home/emt/data/Manual.Target.1976.1080p.WEB-DL.x265-GROUP.mkv",
+          mediaPath: "/media/movies/Manual.Target.1976.1080p.WEB-DL.x265-GROUP.mkv",
           basename: "Manual.Target.1976.1080p.WEB-DL.x265-GROUP.mkv",
           kind: "file",
           size: 1234,
@@ -330,7 +377,7 @@ test.describe("Popcorn Queue UI", () => {
             source: {
               site: "unknown",
               title: "Manual.Target.1976.1080p.WEB-DL.x265-GROUP",
-              mediaPath: "/home/emt/data/Manual.Target.1976.1080p.WEB-DL.x265-GROUP.mkv",
+              mediaPath: "/media/movies/Manual.Target.1976.1080p.WEB-DL.x265-GROUP.mkv",
               ptpTarget: {
                 groupId: "205678",
                 displayTitle: "Manual Target Movie [1976]",
@@ -346,7 +393,7 @@ test.describe("Popcorn Queue UI", () => {
 
     await page.goto("/");
     await page.getByRole("link", { name: /New Job/i }).click();
-    await page.getByLabel("Server media path").fill("/home/emt/data/Manual.Target.1976.1080p.WEB-DL.x265-GROUP.mkv");
+    await page.getByLabel("Server media path").fill("/media/movies/Manual.Target.1976.1080p.WEB-DL.x265-GROUP.mkv");
     await page.setInputFiles('input[type="file"][name="torrent"]', {
       name: "source.torrent",
       mimeType: "application/x-bittorrent",
@@ -386,7 +433,7 @@ test.describe("Popcorn Queue UI", () => {
       await route.fulfill({
         json: {
           ok: true,
-          mediaPath: "/home/emt/data/Media.Only.2024.1080p.WEB-DL.x265-GROUP.mkv",
+          mediaPath: "/media/movies/Media.Only.2024.1080p.WEB-DL.x265-GROUP.mkv",
           basename: "Media.Only.2024.1080p.WEB-DL.x265-GROUP.mkv",
           kind: "file",
           size: 1234,
@@ -420,7 +467,7 @@ test.describe("Popcorn Queue UI", () => {
             source: {
               site: "unknown",
               title: "Media.Only.2024.1080p.WEB-DL.x265-GROUP",
-              mediaPath: "/home/emt/data/Media.Only.2024.1080p.WEB-DL.x265-GROUP.mkv",
+              mediaPath: "/media/movies/Media.Only.2024.1080p.WEB-DL.x265-GROUP.mkv",
               ptpTarget: {
                 groupId: "205678",
                 displayTitle: "Media Only [2024]",
@@ -436,7 +483,7 @@ test.describe("Popcorn Queue UI", () => {
 
     await page.goto("/");
     await page.getByRole("link", { name: /New Job/i }).click();
-    await page.getByLabel("Server media path").fill("/home/emt/data/Media.Only.2024.1080p.WEB-DL.x265-GROUP.mkv");
+    await page.getByLabel("Server media path").fill("/media/movies/Media.Only.2024.1080p.WEB-DL.x265-GROUP.mkv");
     await page.getByRole("button", { name: "Validate path" }).click();
     await page.getByLabel("Release name").fill("Media.Only.2024.1080p.WEB-DL.x265-GROUP");
     await page.getByLabel("PTP URL or Movie ID").fill("https://passthepopcorn.me/torrents.php?id=205678");
@@ -641,7 +688,7 @@ test.describe("Popcorn Queue UI", () => {
   test("uses friendly torrent readiness labels and links the PTP result", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only review assertion.");
     const ptpUrl = "https://passthepopcorn.me/torrents.php?id=322761&torrentid=1515743";
-    const sourceTorrentPath = "/home/emt/ptp/popcorn-queue/data/jobs/job-white/torrent/source.torrent";
+    const sourceTorrentPath = "/var/lib/popcorn-queue/data/jobs/job-white/torrent/source.torrent";
     await page.route("**/api/jobs", async (route) => {
       if (route.request().method() !== "GET") {
         await route.fallback();

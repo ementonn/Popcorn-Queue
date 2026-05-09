@@ -1,6 +1,12 @@
 export type JobState = "created" | "preparing" | "review" | "uploading" | "paused" | "failed" | "done" | "needs_reseed" | "seeding";
 export type UploadReadiness = "blocked" | "missing_evidence" | "ready";
 
+export interface AuthSessionInfo {
+  authRequired: boolean;
+  authenticated: boolean;
+  username: string | null;
+}
+
 export interface ManualIntakePtpTarget {
   groupId: string;
   displayTitle: string;

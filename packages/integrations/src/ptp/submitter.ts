@@ -20,6 +20,12 @@ export interface PtpFormSubmitterConfig {
   baseUrl?: string;
   userAgent?: string;
   fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
+  tfaCodeProvider?: () => Promise<string>;
+}
+
+export interface PtpAuthResult {
+  csrfToken: string;
+  source: "cookie" | "login";
 }
 
 export class PtpSubmitError extends Error {
@@ -110,7 +116,7 @@ export class PtpFormSubmitter implements PtpSubmitter {
   }
 
   async submit(input: PtpSubmitInput): Promise<PtpUploadResult> {
-    const csrfToken = await this.getCsrfToken();
+    const { csrfToken } = await this.authenticate();
     const body = await this.buildUploadForm(input, csrfToken);
     const url = this.uploadUrl(input.draft.groupId);
     const response = await this.fetchImpl(url.toString(), {
@@ -135,54 +141,73 @@ export class PtpFormSubmitter implements PtpSubmitter {
     return result;
   }
 
-  private async getCsrfToken(): Promise<string> {
+  async authenticate(): Promise<PtpAuthResult> {
     const uploadResponse = await this.fetchImpl(this.uploadUrl(null).toString(), {
       method: "GET",
       headers: await this.requestHeaders("text/html,application/xhtml+xml")
     });
     const html = await uploadResponse.text();
     const token = csrfFromHtml(html);
-    if (token) return token;
+    if (token) return { csrfToken: token, source: "cookie" };
     return this.login();
   }
 
-  private async login(): Promise<string> {
+  private async login(): Promise<PtpAuthResult> {
     const body = new URLSearchParams({
       username: this.config.username,
       password: this.config.password,
       passkey: passkeyFromAnnounceUrl(this.config.announceUrl),
       keeplogged: "1"
     });
-    const response = await this.fetchImpl(new URL("/ajax.php?action=login", this.baseUrl).toString(), {
+    let response = await this.fetchImpl(new URL("/ajax.php?action=login", this.baseUrl).toString(), {
       method: "POST",
-      headers: {
-        "User-Agent": this.userAgent,
-        Accept: "application/json",
-        "Content-Type": "application/x-www-form-urlencoded"
-      },
+      headers: this.loginHeaders(),
       body
     });
-    const text = await response.text();
-    if (text.includes("Intermission") || text.includes("We are in maintenance")) {
-      throw new PtpSubmitError("PTP is currently in maintenance mode.", response.status, true);
-    }
-
-    let data: LoginResponse;
-    try {
-      data = JSON.parse(text) as LoginResponse;
-    } catch (error) {
-      throw new PtpSubmitError(`PTP login returned non-JSON response: ${(error as Error).message}`, response.status, false);
-    }
+    let data = await this.parseLoginResponse(response);
 
     if (data.Result === "TfaRequired") {
-      throw new PtpSubmitError("PTP two-factor authentication is required. Provide a valid cookie file before using automatic upload.", response.status, false);
+      if (!this.config.tfaCodeProvider) {
+        throw new PtpSubmitError("PTP two-factor authentication is required. Run `npm run ptp:login` to create a reusable cookie file before using automatic upload.", response.status, false);
+      }
+      const tfaCode = (await this.config.tfaCodeProvider()).trim();
+      if (!tfaCode) throw new PtpSubmitError("PTP two-factor authentication code was empty.", response.status, false);
+      body.set("TfaCode", tfaCode);
+      body.set("TfaType", "normal");
+      response = await this.fetchImpl(new URL("/ajax.php?action=login", this.baseUrl).toString(), {
+        method: "POST",
+        headers: this.loginHeaders(),
+        body
+      });
+      data = await this.parseLoginResponse(response);
     }
     if (data.Result !== "Ok" || !data.AntiCsrfToken) {
       throw new PtpSubmitError("PTP login failed; check username, password, passkey, or cookie configuration.", response.status, false);
     }
 
     await this.persistCookies(response.headers);
-    return data.AntiCsrfToken;
+    return { csrfToken: data.AntiCsrfToken, source: "login" };
+  }
+
+  private loginHeaders(): Record<string, string> {
+    return {
+      "User-Agent": this.userAgent,
+      Accept: "application/json",
+      "Content-Type": "application/x-www-form-urlencoded"
+    };
+  }
+
+  private async parseLoginResponse(response: Response): Promise<LoginResponse> {
+    const text = await response.text();
+    if (text.includes("Intermission") || text.includes("We are in maintenance")) {
+      throw new PtpSubmitError("PTP is currently in maintenance mode.", response.status, true);
+    }
+
+    try {
+      return JSON.parse(text) as LoginResponse;
+    } catch (error) {
+      throw new PtpSubmitError(`PTP login returned non-JSON response: ${(error as Error).message}`, response.status, false);
+    }
   }
 
   private async buildUploadForm(input: PtpSubmitInput, csrfToken: string): Promise<FormData> {

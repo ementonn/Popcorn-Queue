@@ -37,32 +37,32 @@ The project is designed so automated tests run against mocks. Real PTP, image ho
 - `packages/integrations` contains PTP, image host, and qBittorrent integration clients.
 - `docs` contains architecture, API, browser bridge, migration, and manual testing notes.
 
-## Quick Start
+## Quick Start and Configuration
 
 ```bash
 npm install
-cp .env.example .env
-npm test
-npm run typecheck
-npm run test:e2e -- --project=chromium-desktop
+npm run configure
+npm run ptp:login
 npm run dev:api
+#start from a new shell
 npm run dev:web
 ```
+
+`npm run configure` writes `.env`, generates a default browser token when one is not already set, enables local web login by default, and backs up an existing `.env` before saving. `npm run ptp:login` validates PTP upload login, prompts for 2FA when PTP requires it, and saves a reusable cookie file.
 
 The default development ports are:
 
 - API: `http://127.0.0.1:3500`
 - Web UI: `http://127.0.0.1:5173`
 
-For remote development, set `POPCORN_QUEUE_HOST=0.0.0.0` and update `POPCORN_QUEUE_API_URL`, `POPCORN_QUEUE_WEB_URL`, `VITE_API_BASE_URL`, and `POPCORN_QUEUE_ALLOWED_ORIGINS` for your host.
-
-## Configuration
-
-Start from `.env.example`. Keep your real `.env` local; it is ignored by Git.
+For remote development, set `POPCORN_QUEUE_HOST=0.0.0.0` and set `POPCORN_QUEUE_PUBLIC_HOST` to the hostname or IP you use in the browser. The API public URL, Web public URL, frontend API target, and CORS origins are derived from that host plus `POPCORN_QUEUE_PORT` and `POPCORN_QUEUE_WEB_PORT`.
 
 Important settings:
 
 - `POPCORN_QUEUE_BROWSER_TOKEN`: shared token for browser bridge requests
+- `POPCORN_QUEUE_PUBLIC_HOST`: hostname or IP used to open the Web UI in a browser
+- `POPCORN_QUEUE_PORT` and `POPCORN_QUEUE_WEB_PORT`: API and Web UI ports
+- `POPCORN_QUEUE_WEB_AUTH`: requires the web UI to log in with `PTP_USERNAME` and `PTP_PASSWORD`
 - `PTP_API_USER` and `PTP_API_KEY`: PTP API duplicate-check credentials
 - `PTP_USERNAME`, `PTP_PASSWORD`, and `PTP_COOKIE_FILE`: manual PTP upload login support
 - `PTP_ANNOUNCE_URL`: announce URL used when creating upload torrents
@@ -70,7 +70,7 @@ Important settings:
 - `QBITTORRENT_URL`, `QBITTORRENT_USERNAME`, `QBITTORRENT_PASSWORD`: qBittorrent integration
 - `POPCORN_QUEUE_RUN_EXTERNAL_TOOLS`: enables ffmpeg, MediaInfo, mkvmerge, and oxipng execution
 
-Automated tests do not require any of these real values.
+Keep your real `.env` local; it is ignored by Git.
 
 ## Browser Bridge
 
@@ -99,7 +99,7 @@ npm run logs:job -- <jobId>
 
 Runtime logs are written under `logs/` and job logs under `data/jobs/<jobId>/logs/`. These paths are ignored by Git.
 
-## Tests
+## Development Checks
 
 ```bash
 npm test

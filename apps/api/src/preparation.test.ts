@@ -409,11 +409,12 @@ describe("PreparationService", () => {
       }
     });
     const uploadedImages: string[] = [];
+    const mediainfoFixture = path.resolve("apps/worker/fixtures/mediainfo-fixture.cjs");
     const service = new PreparationService({
       dataRoot,
       jobs,
       runExternalTools: true,
-      toolCommands: { ffmpeg: "ffmpeg", mediainfo: "/home/emt/ptp/opt/mediainfo-23.06/bin/mediainfo", oxipng: "oxipng" },
+      toolCommands: { ffmpeg: "ffmpeg", mediainfo: mediainfoFixture, oxipng: "oxipng" },
       ptpAnnounceUrl: "https://please.passthepopcorn.me/passkey/announce",
       imageUploader: {
         name: "imgbb",

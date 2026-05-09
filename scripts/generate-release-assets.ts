@@ -195,8 +195,8 @@ const diagnostics = {
     recentFailures: []
   },
   storage: {
-    dataRoot: "/home/emt/ptp/popcorn-queue/data",
-    databasePath: "/home/emt/ptp/popcorn-queue/popcorn-queue.db",
+    dataRoot: "/var/lib/popcorn-queue/data",
+    databasePath: "/var/lib/popcorn-queue/popcorn-queue.db",
     jobCount: 3,
     cacheEntries: 128,
     databaseBytes: 1_048_576,

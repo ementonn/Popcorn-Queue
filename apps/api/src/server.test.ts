@@ -53,6 +53,11 @@ function testConfig(): ApiConfig {
     host: "127.0.0.1",
     port: 0,
     browserToken: "test-browser-token",
+    webAuth: {
+      enabled: false,
+      sessionCookieName: "popcorn_session",
+      sessionMaxAgeSeconds: 604800
+    },
     allowedOrigins: [],
     publicWebUrl: "http://localhost:5173",
     publicApiUrl: "http://localhost:3500",
@@ -263,6 +268,74 @@ describe("API cache contract", () => {
         status: "disabled",
         detail: "External tools are disabled."
       });
+    });
+  });
+
+  it("protects web API routes with local PTP username and password sessions", async () => {
+    const config = testConfig();
+    config.webAuth.enabled = true;
+    config.ptp.username = "ptp-user";
+    config.ptp.password = "ptp-pass";
+
+    await withConfiguredServer(config, { autoPrepare: false }, async (app) => {
+      const anonymous = await app.inject({ method: "GET", url: "/api/jobs" });
+      expect(anonymous.statusCode).toBe(401);
+      expect(anonymous.json()).toMatchObject({ error: "web_auth_required" });
+
+      const wrong = await app.inject({
+        method: "POST",
+        url: "/api/auth/login",
+        payload: { username: "ptp-user", password: "wrong" }
+      });
+      expect(wrong.statusCode).toBe(401);
+
+      const login = await app.inject({
+        method: "POST",
+        url: "/api/auth/login",
+        payload: { username: "ptp-user", password: "ptp-pass" }
+      });
+      expect(login.statusCode).toBe(200);
+      expect(login.json()).toMatchObject({ authenticated: true, username: "ptp-user" });
+      const cookie = login.cookies.find((item) => item.name === "popcorn_session");
+      expect(cookie?.value).toBeTruthy();
+      expect(cookie?.httpOnly).toBe(true);
+
+      const session = await app.inject({
+        method: "GET",
+        url: "/api/auth/session",
+        cookies: { popcorn_session: cookie!.value }
+      });
+      expect(session.statusCode).toBe(200);
+      expect(session.json()).toMatchObject({ authRequired: true, authenticated: true, username: "ptp-user" });
+
+      const jobs = await app.inject({
+        method: "GET",
+        url: "/api/jobs",
+        cookies: { popcorn_session: cookie!.value }
+      });
+      expect(jobs.statusCode).toBe(200);
+
+      const browserCheck = await app.inject({
+        method: "POST",
+        url: "/api/browser/cache/invalidate",
+        headers: authHeaders,
+        payload: { title: "Movie.2024.1080p.WEB-DL.x265-GROUP", imdbId: "tt1234567" }
+      });
+      expect(browserCheck.statusCode).toBe(200);
+
+      const logout = await app.inject({
+        method: "POST",
+        url: "/api/auth/logout",
+        cookies: { popcorn_session: cookie!.value }
+      });
+      expect(logout.statusCode).toBe(200);
+
+      const afterLogout = await app.inject({
+        method: "GET",
+        url: "/api/jobs",
+        cookies: { popcorn_session: cookie!.value }
+      });
+      expect(afterLogout.statusCode).toBe(401);
     });
   });
 

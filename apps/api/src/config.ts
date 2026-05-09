@@ -4,6 +4,11 @@ import { isAbsolute, resolve } from "node:path";
 export interface ApiConfig {
   host: string;
   port: number;
+  webAuth: {
+    enabled: boolean;
+    sessionCookieName: string;
+    sessionMaxAgeSeconds: number;
+  };
   browserToken: string;
   allowedOrigins: string[];
   publicWebUrl: string;
@@ -59,6 +64,9 @@ interface LoadEnvOptions {
 }
 
 const DEFAULT_PTP_BASE_URL = "https://passthepopcorn.me/torrents.php";
+const DEFAULT_PUBLIC_SCHEME = "http";
+const DEFAULT_PUBLIC_HOST = "localhost";
+const DEFAULT_WEB_PORT = 5173;
 
 function splitCsv(value: string | undefined): string[] {
   return (value ?? "")
@@ -75,6 +83,14 @@ function readNumber(value: string | undefined, fallback: number): number {
 function readBoolean(value: string | undefined, fallback = false): boolean {
   if (value === undefined || value === "") return fallback;
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+}
+
+function publicUrl(scheme: string, host: string, port: number): string {
+  return `${scheme}://${host}:${port}`;
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 function projectRoot(): string {
@@ -145,15 +161,25 @@ export function loadLocalEnv(env: EnvMap = process.env, options: LoadEnvOptions 
 export function loadConfig(env = process.env): ApiConfig {
   if (env === process.env) loadLocalEnv(env, { override: true });
   const port = readNumber(env.POPCORN_QUEUE_PORT, 3500);
+  const webPort = readNumber(env.POPCORN_QUEUE_WEB_PORT, DEFAULT_WEB_PORT);
+  const publicScheme = env.POPCORN_QUEUE_PUBLIC_SCHEME ?? DEFAULT_PUBLIC_SCHEME;
+  const publicHost = env.POPCORN_QUEUE_PUBLIC_HOST ?? DEFAULT_PUBLIC_HOST;
+  const publicWebUrl = publicUrl(publicScheme, publicHost, webPort);
+  const publicApiUrl = publicUrl(publicScheme, publicHost, port);
   const apiLogFile = resolveProjectPath(env.POPCORN_QUEUE_LOG_FILE, "logs/api.log");
 
   return {
     host: env.POPCORN_QUEUE_HOST ?? "0.0.0.0",
     port,
+    webAuth: {
+      enabled: readBoolean(env.POPCORN_QUEUE_WEB_AUTH, Boolean(env.PTP_USERNAME && env.PTP_PASSWORD)),
+      sessionCookieName: env.POPCORN_QUEUE_WEB_AUTH_COOKIE ?? "popcorn_session",
+      sessionMaxAgeSeconds: readNumber(env.POPCORN_QUEUE_WEB_AUTH_MAX_AGE_SECONDS, 7 * 24 * 60 * 60)
+    },
     browserToken: env.POPCORN_QUEUE_BROWSER_TOKEN ?? "",
-    allowedOrigins: splitCsv(env.POPCORN_QUEUE_ALLOWED_ORIGINS),
-    publicWebUrl: env.POPCORN_QUEUE_WEB_URL ?? "http://localhost:5173",
-    publicApiUrl: env.POPCORN_QUEUE_API_URL ?? `http://localhost:${port}`,
+    allowedOrigins: unique([publicWebUrl, publicUrl("http", "localhost", webPort), publicUrl("http", "127.0.0.1", webPort)]),
+    publicWebUrl,
+    publicApiUrl,
     ptp: {
       apiUser: env.PTP_API_USER ?? "",
       apiKey: env.PTP_API_KEY ?? "",

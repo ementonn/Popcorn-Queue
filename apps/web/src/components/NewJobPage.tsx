@@ -162,7 +162,7 @@ export function NewJobPage({ onCreated, onStatus }: NewJobPageProps) {
                 setMediaPath(event.target.value);
                 setValidation(null);
               }}
-              placeholder="/home/emt/data/Movie.2024.1080p.WEB-DL.mkv"
+              placeholder="/media/movies/Movie.2024.1080p.WEB-DL.mkv"
             />
           </label>
           <div className="inline-actions">

@@ -5,8 +5,11 @@ test-results/
 playwright-report/
 *.tsbuildinfo
 .env
+.env.backup
+.env.backup.*
 *.db
 *.db-*
 logs/*
 !logs/.gitkeep
+docs/superpowers/
 .DS_Store

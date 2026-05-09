@@ -3,7 +3,8 @@
 ## Service Setup
 
 The root `.env` is loaded by the API and by Vite. For remote development, bind
-both services to `0.0.0.0` and use the reachable host/IP in the public URLs.
+both services to `0.0.0.0` and set `POPCORN_QUEUE_PUBLIC_HOST` to the hostname
+or IP you use in the browser.
 
 ```bash
 npm install
@@ -21,9 +22,9 @@ Start from `.env.example` and fill local secrets in `.env`. Do not commit `.env`
 Required for the browser bridge:
 
 - `POPCORN_QUEUE_BROWSER_TOKEN`
-- `POPCORN_QUEUE_WEB_URL`
-- `POPCORN_QUEUE_API_URL`
-- `VITE_API_BASE_URL` or `VITE_POPCORN_QUEUE_API_URL`
+- `POPCORN_QUEUE_PUBLIC_HOST`
+- `POPCORN_QUEUE_PORT`
+- `POPCORN_QUEUE_WEB_PORT`
 
 Required for real PTP duplicate checks:
 
@@ -35,8 +36,12 @@ Required for real PTP upload submit:
 - `PTP_USERNAME`
 - `PTP_PASSWORD`
 - `PTP_ANNOUNCE_URL`
-- `PTP_COOKIE_FILE` if you want to reuse a browser-authenticated session or avoid
-  interactive 2FA. Automated tests never use these values.
+- `PTP_COOKIE_FILE`
+
+Run `npm run configure` to write `.env` interactively. Then run `npm run
+ptp:login` once to validate PTP login and save the reusable cookie. If PTP asks
+for two-factor authentication, the command prompts for the current 2FA code.
+Automated tests never use these real values.
 
 Optional manual integrations:
 
@@ -62,7 +67,8 @@ instead of moving to upload review.
 ## Browser Bridge
 
 Install `apps/userscript/popcorn-queue-bridge.user.js` in Tampermonkey, then set
-the API URL, Web URL, and browser token from `.env`.
+the API URL, Web URL, and browser token from `.env`. The URLs are derived from
+`POPCORN_QUEUE_PUBLIC_HOST`, `POPCORN_QUEUE_PORT`, and `POPCORN_QUEUE_WEB_PORT`.
 
 Expected flow:
 

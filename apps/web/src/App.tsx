@@ -1,9 +1,12 @@
-import { Activity, FilePlus2, LoaderCircle, Pause, Play, RefreshCcw, Search, SlidersHorizontal } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Activity, FilePlus2, LoaderCircle, LockKeyhole, LogOut, Pause, Play, RefreshCcw, Search, SlidersHorizontal } from "lucide-react";
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   loadDashboard,
+  loadAuthSession,
   loadGlobalLogs,
   loadJobLogs,
+  login,
+  logout,
   pauseJob,
   resumeJob,
   retryFailed,
@@ -16,7 +19,17 @@ import { JobDrawer } from "./components/JobDrawer.js";
 import { NewJobPage } from "./components/NewJobPage.js";
 import { QueueTable } from "./components/QueueTable.js";
 import { ReviewPanel } from "./components/ReviewPanel.js";
-import type { ApiJob, DiagnosticCheckResult, DiagnosticCheckTarget, DiagnosticsInfo, GlobalLogResponse, HealthInfo, JobLogResponse, ReviewDraft } from "./types.js";
+import type {
+  ApiJob,
+  AuthSessionInfo,
+  DiagnosticCheckResult,
+  DiagnosticCheckTarget,
+  DiagnosticsInfo,
+  GlobalLogResponse,
+  HealthInfo,
+  JobLogResponse,
+  ReviewDraft
+} from "./types.js";
 
 type ActiveView = "jobs" | "new-job" | "diagnostics";
 type PendingJobAction = { jobId: string; label: string; kind: "upload" | "pause" | "resume" | "retry" };
@@ -29,7 +42,78 @@ function jobDisplayTitle(job: ApiJob): string {
   return job.artifacts?.releaseName ?? job.uploadPlan?.releaseName?.generated ?? job.candidate?.title ?? job.source.title ?? job.id;
 }
 
+function LoginView({
+  loading,
+  onLogin
+}: {
+  loading: boolean;
+  onLogin: (username: string, password: string) => Promise<void>;
+}) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const disabled = loading || submitting || !username.trim() || !password;
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (disabled) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await onLogin(username.trim(), password);
+    } catch (loginError) {
+      setError(loginError instanceof Error ? loginError.message : "Sign in failed");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <main className="login-shell">
+      <form className="login-panel" onSubmit={handleSubmit}>
+        <div className="login-brand">
+          <img className="brand-mark" src="/icon.svg" alt="" aria-hidden="true" />
+          <span>Popcorn Queue</span>
+        </div>
+        <h1>Sign in</h1>
+        <label className="field">
+          PTP username
+          <input
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+            autoComplete="username"
+            disabled={loading || submitting}
+            autoFocus
+          />
+        </label>
+        <label className="field">
+          PTP password
+          <input
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            type="password"
+            autoComplete="current-password"
+            disabled={loading || submitting}
+          />
+        </label>
+        {error ? (
+          <div className="inline-status error login-error" role="alert">
+            {error}
+          </div>
+        ) : null}
+        <button type="submit" className="primary" disabled={disabled}>
+          {submitting || loading ? <LoaderCircle className="spin-icon" size={15} /> : <LockKeyhole size={15} />}
+          {loading ? "Checking..." : submitting ? "Signing in..." : "Sign in"}
+        </button>
+      </form>
+    </main>
+  );
+}
+
 export function App() {
+  const [authSession, setAuthSession] = useState<AuthSessionInfo | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [jobs, setJobs] = useState<ApiJob[]>([]);
   const [health, setHealth] = useState<HealthInfo | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
@@ -78,6 +162,27 @@ export function App() {
   }, [withLocalDraft]);
 
   useEffect(() => {
+    let cancelled = false;
+    loadAuthSession()
+      .then((session) => {
+        if (!cancelled) setAuthSession(session);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setAuthSession({ authRequired: false, authenticated: true, username: null });
+          setStatus({ tone: "error", text: error instanceof Error ? error.message : "Unable to check web session" });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAuthLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (authLoading || (authSession?.authRequired && !authSession.authenticated)) return;
     refresh().catch((error: unknown) => {
       setStatus({ tone: "error", text: error instanceof Error ? error.message : "Unable to load dashboard" });
     });
@@ -85,7 +190,7 @@ export function App() {
       refresh().catch(() => undefined);
     }, 3000);
     return () => window.clearInterval(timer);
-  }, [refresh]);
+  }, [authLoading, authSession?.authRequired, authSession?.authenticated, refresh]);
 
   useEffect(() => {
     if (!selectedJob?.id) {
@@ -195,6 +300,37 @@ export function App() {
     setStatus({ tone: "success", text: `Created job: ${next.id}` });
   }, [withLocalDraft]);
 
+  const handleLogin = useCallback(
+    async (username: string, password: string) => {
+      const session = await login(username, password);
+      setAuthSession(session);
+      setStatus(null);
+      await refresh();
+    },
+    [refresh]
+  );
+
+  const handleLogout = useCallback(async () => {
+    try {
+      const session = await logout();
+      setAuthSession(session);
+      setJobs([]);
+      setHealth(null);
+      setSelectedJobId(null);
+      setJobLogs({ lines: [] });
+      setGlobalLogs({ api: [] });
+      setDiagnostics(null);
+      setDiagnosticChecks({});
+      setStatus(null);
+    } catch (error) {
+      setStatus({ tone: "error", text: error instanceof Error ? error.message : "Logout failed" });
+    }
+  }, []);
+
+  if (authLoading || (authSession?.authRequired && !authSession.authenticated)) {
+    return <LoginView loading={authLoading} onLogin={handleLogin} />;
+  }
+
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -250,6 +386,14 @@ export function App() {
             <strong>{health?.external?.torrentClientConfigured ? "Ready" : "Manual"}</strong>
           </div>
         </div>
+        {authSession?.authRequired && authSession.authenticated ? (
+          <div className="sidebar-footer">
+            <button type="button" className="sidebar-button" onClick={handleLogout}>
+              <LogOut size={15} />
+              Logout
+            </button>
+          </div>
+        ) : null}
       </aside>
 
       <main className="workspace">
@@ -287,6 +431,12 @@ export function App() {
               New Job
             </a>
           </nav>
+          {authSession?.authRequired && authSession.authenticated ? (
+            <button type="button" className="mobile-logout" onClick={handleLogout}>
+              <LogOut size={15} />
+              Logout
+            </button>
+          ) : null}
           {activeView === "jobs" ? (
             <>
               <label className="search">

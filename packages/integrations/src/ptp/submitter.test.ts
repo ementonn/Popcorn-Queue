@@ -201,6 +201,62 @@ describe("PtpFormSubmitter", () => {
     expect(await readFile(cookieFile, "utf8")).toBe("session=abc");
   });
 
+  it("reuses an existing cookie session when PTP returns a CSRF token", async () => {
+    const calls: FetchCall[] = [];
+    const cookieFile = path.join(await mkdtemp(path.join(os.tmpdir(), "ptp-submit-cookie-")), "cookies.txt");
+    await writeFile(cookieFile, "session=existing");
+    const submitter = new PtpFormSubmitter({
+      username: "ptp-user",
+      password: "ptp-pass",
+      announceUrl: "https://please.passthepopcorn.me/passkey/announce",
+      cookieFile,
+      fetchImpl: async (url, init = {}) => {
+        calls.push({ url: String(url), init });
+        return response('<body data-AntiCsrfToken="COOKIE-CSRF"></body>');
+      }
+    });
+
+    await expect(submitter.authenticate()).resolves.toEqual({
+      csrfToken: "COOKIE-CSRF",
+      source: "cookie"
+    });
+
+    expect(calls).toHaveLength(1);
+    expect((calls[0]?.init.headers as Record<string, string>).Cookie).toBe("session=existing");
+  });
+
+  it("completes PTP two-factor login with a provided auth code", async () => {
+    const calls: FetchCall[] = [];
+    const cookieFile = path.join(await mkdtemp(path.join(os.tmpdir(), "ptp-submit-cookie-")), "cookies.txt");
+    const submitter = new PtpFormSubmitter({
+      username: "ptp-user",
+      password: "ptp-pass",
+      announceUrl: "https://please.passthepopcorn.me/passkey/announce",
+      cookieFile,
+      tfaCodeProvider: async () => "123456",
+      fetchImpl: async (url, init = {}) => {
+        calls.push({ url: String(url), init });
+        if (calls.length === 1) return response("<html>login</html>");
+        if (calls.length === 2) return response(JSON.stringify({ Result: "TfaRequired" }), {}, "https://passthepopcorn.me/ajax.php?action=login");
+        if (calls.length === 3) {
+          return response(JSON.stringify({ Result: "Ok", AntiCsrfToken: "TFA-CSRF" }), {
+            headers: { "set-cookie": "session=final; Path=/; HttpOnly" }
+          }, "https://passthepopcorn.me/ajax.php?action=login");
+        }
+        return response("", {}, "https://passthepopcorn.me/torrents.php?id=123&torrentid=456");
+      }
+    });
+
+    await submitter.submit({ draft, torrentPath: await torrentFixture() });
+
+    const tfaBody = calls[2]?.init.body as URLSearchParams;
+    expect(tfaBody.get("TfaCode")).toBe("123456");
+    expect(tfaBody.get("TfaType")).toBe("normal");
+    expect((calls[3]?.init.headers as Record<string, string>).Cookie).toBe("session=final");
+    expect((calls[3]?.init.body as FormData).get("AntiCsrfToken")).toBe("TFA-CSRF");
+    expect(await readFile(cookieFile, "utf8")).toBe("session=final");
+  });
+
   it("surfaces PTP upload-page errors without retrying against the real site", async () => {
     const calls: FetchCall[] = [];
     const submitter = createSubmitter(calls, [
@@ -222,6 +278,6 @@ describe("PtpFormSubmitter", () => {
       response(JSON.stringify({ Result: "TfaRequired" }), {}, "https://passthepopcorn.me/ajax.php?action=login")
     ]);
 
-    await expect(submitter.submit({ draft, torrentPath: await torrentFixture() })).rejects.toThrow("two-factor");
+    await expect(submitter.submit({ draft, torrentPath: await torrentFixture() })).rejects.toThrow("npm run ptp:login");
   });
 });

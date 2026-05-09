@@ -17,7 +17,7 @@ import {
   type TorrentDownloadClient,
   type WorkerTool
 } from "@popcorn-queue/worker";
-import { makeBrowserAuthHook } from "./auth.js";
+import { WebSessionAuth, makeBrowserAuthHook } from "./auth.js";
 import type { ApiConfig } from "./config.js";
 import { createManualIntakeJob, IntakeError, readManualIntakeRequest, resolveManualPtpTarget, searchPtpMovies, validateMediaPath } from "./intake.js";
 import { appendJobEvent, readLogTail } from "./job-logs.js";
@@ -277,6 +277,13 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
       : undefined;
   const ptpSubmitter = configuredPtpSubmitter(config, options.ptpSubmitter);
   const browserAuth = makeBrowserAuthHook(config.browserToken);
+  const webAuth = new WebSessionAuth({
+    enabled: config.webAuth.enabled,
+    username: config.ptp.username,
+    password: config.ptp.password,
+    sessionCookieName: config.webAuth.sessionCookieName,
+    sessionMaxAgeSeconds: config.webAuth.sessionMaxAgeSeconds
+  });
   const preparation = new PreparationService({
     dataRoot: config.paths.dataRoot,
     jobs: jobRepository,
@@ -314,6 +321,7 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
   app.addHook("onReady", resumeInterruptedPreparation);
 
   app.register(cors, {
+    credentials: true,
     methods: ["GET", "HEAD", "POST", "PATCH", "OPTIONS"],
     origin(origin, callback) {
       if (!origin || config.allowedOrigins.length === 0 || config.allowedOrigins.includes(origin)) {
@@ -328,6 +336,16 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
       fileSize: 32 * 1024 * 1024
     }
   });
+  app.addHook("preHandler", webAuth.hook());
+
+  app.get("/api/auth/session", async (request) => webAuth.info(request));
+
+  app.post<{ Body: { username?: string; password?: string } }>("/api/auth/login", async (request, reply) => {
+    const body = request.body ?? {};
+    return webAuth.login(String(body.username ?? ""), String(body.password ?? ""), reply);
+  });
+
+  app.post("/api/auth/logout", async (request, reply) => webAuth.logout(request, reply));
 
   app.get("/api/health", async () => ({
     ok: true,

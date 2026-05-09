@@ -1,5 +1,6 @@
 import type {
   ApiJob,
+  AuthSessionInfo,
   DiagnosticCheckResult,
   DiagnosticCheckTarget,
   DiagnosticsInfo,
@@ -19,12 +20,17 @@ export interface DashboardData {
   diagnostics: DiagnosticsInfo | null;
 }
 
-const apiBase = (
-  import.meta.env.VITE_API_BASE_URL ??
-  import.meta.env.VITE_POPCORN_QUEUE_API_URL ??
-  import.meta.env.VITE_API_URL ??
-  ""
-).replace(/\/$/, "");
+export function inferApiBaseFromLocation(location: URL, apiPort = import.meta.env.VITE_POPCORN_QUEUE_API_PORT ?? "3500"): string {
+  const port = apiPort.trim() || "3500";
+  return `${location.protocol}//${location.hostname}:${port}`;
+}
+
+function defaultApiBase(): string {
+  if (typeof window === "undefined") return "http://localhost:3500";
+  return inferApiBaseFromLocation(new URL(window.location.href));
+}
+
+const apiBase = defaultApiBase().replace(/\/$/, "");
 
 async function parseError(response: Response): Promise<string> {
   const text = await response.text();
@@ -41,7 +47,7 @@ async function parseError(response: Response): Promise<string> {
 
 export async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
-  const requestInit: RequestInit = { ...(init ?? {}) };
+  const requestInit: RequestInit = { credentials: "include", ...(init ?? {}) };
   if (isFormData) {
     if (init?.headers) requestInit.headers = init.headers;
   } else {
@@ -57,6 +63,21 @@ export async function fetchJson<T>(path: string, init?: RequestInit): Promise<T>
   }
 
   return (await response.json()) as T;
+}
+
+export function loadAuthSession(): Promise<AuthSessionInfo> {
+  return fetchJson<AuthSessionInfo>("/api/auth/session");
+}
+
+export function login(username: string, password: string): Promise<AuthSessionInfo> {
+  return fetchJson<AuthSessionInfo>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ username, password })
+  });
+}
+
+export function logout(): Promise<AuthSessionInfo> {
+  return fetchJson<AuthSessionInfo>("/api/auth/logout", { method: "POST", body: "{}" });
 }
 
 export async function loadDashboard(): Promise<DashboardData> {

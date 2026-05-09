@@ -17,8 +17,9 @@ describe("API configuration", () => {
         envFile,
         [
           "POPCORN_QUEUE_PORT=3510",
+          "POPCORN_QUEUE_PUBLIC_HOST=example.com",
+          "POPCORN_QUEUE_WEB_PORT=5173",
           "POPCORN_QUEUE_BROWSER_TOKEN=from-file",
-          "POPCORN_QUEUE_ALLOWED_ORIGINS=\"http://localhost:5173,http://example.com:5173\"",
           "PTP_BASE_URL=https://example.test/torrents.php",
           "POPCORN_QUEUE_RUN_EXTERNAL_TOOLS=true"
         ].join("\n")
@@ -54,10 +55,13 @@ describe("API configuration", () => {
     const config = loadConfig({
       POPCORN_QUEUE_HOST: "0.0.0.0",
       POPCORN_QUEUE_PORT: "3510",
+      POPCORN_QUEUE_PUBLIC_SCHEME: "https",
+      POPCORN_QUEUE_PUBLIC_HOST: "queue.example.test",
+      POPCORN_QUEUE_WEB_PORT: "5174",
+      POPCORN_QUEUE_WEB_AUTH: "true",
+      POPCORN_QUEUE_WEB_AUTH_COOKIE: "custom_session",
+      POPCORN_QUEUE_WEB_AUTH_MAX_AGE_SECONDS: "120",
       POPCORN_QUEUE_BROWSER_TOKEN: "test-token",
-      POPCORN_QUEUE_ALLOWED_ORIGINS: "http://localhost:5173,http://example.com:5173",
-      POPCORN_QUEUE_WEB_URL: "http://example.com:5173",
-      POPCORN_QUEUE_API_URL: "http://example.com:3510",
       PTP_API_USER: "ptp-user",
       PTP_API_KEY: "ptp-key",
       PTP_USERNAME: "ptp-username",
@@ -97,10 +101,15 @@ describe("API configuration", () => {
     expect(config).toMatchObject({
       host: "0.0.0.0",
       port: 3510,
+      webAuth: {
+        enabled: true,
+        sessionCookieName: "custom_session",
+        sessionMaxAgeSeconds: 120
+      },
       browserToken: "test-token",
-      allowedOrigins: ["http://localhost:5173", "http://example.com:5173"],
-      publicWebUrl: "http://example.com:5173",
-      publicApiUrl: "http://example.com:3510",
+      publicWebUrl: "https://queue.example.test:5174",
+      publicApiUrl: "https://queue.example.test:3510",
+      allowedOrigins: ["https://queue.example.test:5174", "http://localhost:5174", "http://127.0.0.1:5174"],
       ptp: {
         apiUser: "ptp-user",
         apiKey: "ptp-key",

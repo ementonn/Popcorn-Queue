@@ -2,6 +2,9 @@ import { expect, test } from "@playwright/test";
 
 test.describe("job review drawer", () => {
   test.beforeEach(async ({ page }) => {
+    await page.route("**/api/auth/session", async (route) => {
+      await route.fulfill({ json: { authRequired: false, authenticated: true, username: null } });
+    });
     await page.route("**/api/jobs", async (route) => {
       await route.fulfill({ json: { jobs: drawerJobs } });
     });
