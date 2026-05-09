@@ -50,6 +50,7 @@ export interface ApiConfig {
     dataRoot: string;
     apiLogFile: string;
     workerLogFile: string;
+    mediaRoots: string[];
   };
 }
 
@@ -65,6 +66,10 @@ function splitCsv(value: string | undefined): string[] {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function splitPaths(value: string | undefined): string[] {
+  return splitCsv(value).map((item) => resolveProjectPath(item, item));
 }
 
 function readNumber(value: string | undefined, fallback: number): number {
@@ -195,7 +200,8 @@ export function loadConfig(env = process.env): ApiConfig {
     paths: {
       dataRoot: resolveProjectPath(env.POPCORN_QUEUE_DATA_ROOT, "data"),
       apiLogFile,
-      workerLogFile: resolveProjectPath(env.POPCORN_QUEUE_WORKER_LOG_FILE, "logs/worker.log")
+      workerLogFile: resolveProjectPath(env.POPCORN_QUEUE_WORKER_LOG_FILE, "logs/worker.log"),
+      mediaRoots: splitPaths(env.POPCORN_QUEUE_MEDIA_ROOTS)
     }
   };
 }

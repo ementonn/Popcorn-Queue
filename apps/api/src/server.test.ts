@@ -97,13 +97,24 @@ function testConfig(): ApiConfig {
     paths: {
       dataRoot: "/tmp/popcorn-queue-test-data",
       apiLogFile: "/tmp/popcorn-queue-test-api.log",
-      workerLogFile: "/tmp/popcorn-queue-test-worker.log"
+      workerLogFile: "/tmp/popcorn-queue-test-worker.log",
+      mediaRoots: []
     }
   };
 }
 
 async function withServer<T>(run: (app: ReturnType<typeof buildServer>) => Promise<T>, options: Parameters<typeof buildServer>[1] = { autoPrepare: false }): Promise<T> {
   const app = buildServer(testConfig(), options);
+  try {
+    await app.ready();
+    return await run(app);
+  } finally {
+    await app.close();
+  }
+}
+
+async function withConfiguredServer<T>(config: ApiConfig, options: Parameters<typeof buildServer>[1], run: (app: ReturnType<typeof buildServer>) => Promise<T>): Promise<T> {
+  const app = buildServer(config, options);
   try {
     await app.ready();
     return await run(app);
@@ -686,5 +697,155 @@ describe("API jobs", () => {
         }
       }
     );
+  });
+
+  it("validates manual intake media paths inside configured roots", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "popcorn-media-root-"));
+    const movie = path.join(root, "Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p.mkv");
+    await writeFile(movie, "movie");
+    const config = testConfig();
+    config.paths.mediaRoots = [root];
+
+    await withConfiguredServer(config, { autoPrepare: false }, async (app) => {
+      const ok = await app.inject({
+        method: "POST",
+        url: "/api/intake/media-path/validate",
+        payload: { mediaPath: movie }
+      });
+      expect(ok.statusCode).toBe(200);
+      expect(ok.json()).toMatchObject({ ok: true, basename: path.basename(movie), kind: "file", error: null });
+
+      const outside = await app.inject({
+        method: "POST",
+        url: "/api/intake/media-path/validate",
+        payload: { mediaPath: "/etc/passwd" }
+      });
+      expect(outside.statusCode).toBe(200);
+      expect(outside.json()).toMatchObject({ ok: false, kind: "outside-root" });
+    });
+  });
+
+  it("searches PTP movies from a manual release name without creating a job", async () => {
+    const search = vi.spyOn(PtpClient.prototype, "searchByCandidate").mockResolvedValue({
+      totalResults: 1,
+      movies: [
+        {
+          GroupId: "205678",
+          Title: "Skaz pro to, kak tsar Pyotr arapa zhenil",
+          Name: "How Czar Peter the Great Married Off His Moor",
+          Year: "1976",
+          ImdbId: "tt0075169",
+          Torrents: []
+        }
+      ]
+    });
+
+    await withServer(async (app) => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/intake/ptp-search",
+        payload: { title: "Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p.WEB-DL.x265-GROUP" }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        query: "Skaz pro to kak tsar Pyotr arapa zhenil",
+        parsedYear: "1976",
+        results: [
+          {
+            groupId: "205678",
+            displayTitle: "Skaz pro to, kak tsar Pyotr arapa zhenil AKA How Czar Peter the Great Married Off His Moor [1976]",
+            ptpUrl: "https://passthepopcorn.me/torrents.php?id=205678"
+          }
+        ]
+      });
+      expect(search).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("creates manual intake jobs from server media and uploaded torrent", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "popcorn-intake-upload-"));
+    const mediaPath = path.join(root, "Manual.Movie.2024.1080p.WEB-DL.x265-GROUP.mkv");
+    await writeFile(mediaPath, "movie");
+    const config = testConfig();
+    config.paths.mediaRoots = [root];
+    const boundary = "popcorn-manual-intake-upload";
+
+    await withConfiguredServer(config, { autoPrepare: false }, async (app) => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/intake/jobs",
+        headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+        payload: multipartBody(
+          boundary,
+          {
+            mediaPath,
+            releaseName: "Manual.Movie.2024.1080p.WEB-DL.x265-GROUP",
+            ptpTarget: JSON.stringify({
+              groupId: "205678",
+              displayTitle: "Manual Movie [2024]",
+              year: "2024",
+              imdbId: "tt1234567",
+              ptpUrl: "https://passthepopcorn.me/torrents.php?id=205678"
+            })
+          },
+          {
+            name: "torrent",
+            filename: "Manual.Movie.source.torrent",
+            contentType: "application/x-bittorrent",
+            value: "d4:infod6:lengthi1eee"
+          }
+        )
+      });
+
+      expect(response.statusCode).toBe(201);
+      const job = response.json<{ job: Job }>().job;
+      expect(job.source).toMatchObject({
+        site: "unknown",
+        title: "Manual.Movie.2024.1080p.WEB-DL.x265-GROUP",
+        mediaPath,
+        ptpTarget: { groupId: "205678", ptpUrl: "https://passthepopcorn.me/torrents.php?id=205678" }
+      });
+      expect(job.reviewDraft).toMatchObject({ groupId: "205678", imdb: "tt1234567" });
+      expect(job.torrent).toMatchObject({ filename: "Manual.Movie.source.torrent" });
+      await expect(access(job.torrent!.filePath!)).resolves.toBeUndefined();
+    });
+  });
+
+  it("creates manual intake jobs from a torrent URL without real network", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "popcorn-intake-url-"));
+    const mediaPath = path.join(root, "Url.Movie.2024.1080p.WEB-DL.x265-GROUP.mkv");
+    await writeFile(mediaPath, "movie");
+    const config = testConfig();
+    config.paths.mediaRoots = [root];
+    const fetchImpl: typeof fetch = async () =>
+      new Response("d4:infod6:lengthi1eee", {
+        status: 200,
+        headers: { "content-type": "application/x-bittorrent", "content-disposition": 'attachment; filename="Url.Movie.source.torrent"' }
+      });
+
+    await withConfiguredServer(config, { autoPrepare: false, fetchImpl }, async (app) => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/intake/jobs",
+        payload: {
+          mediaPath,
+          releaseName: "Url.Movie.2024.1080p.WEB-DL.x265-GROUP",
+          torrentUrl: "https://tracker.example/download/1.torrent",
+          ptpTarget: {
+            groupId: "300",
+            displayTitle: "Url Movie [2024]",
+            year: "2024",
+            imdbId: "tt7654321",
+            ptpUrl: "https://passthepopcorn.me/torrents.php?id=300"
+          }
+        }
+      });
+
+      expect(response.statusCode).toBe(201);
+      const job = response.json<{ job: Job }>().job;
+      expect(job.source).toMatchObject({ mediaPath, torrentUrl: "https://tracker.example/download/1.torrent" });
+      expect(job.torrent).toMatchObject({ filename: "Url.Movie.source.torrent", contentType: "application/x-bittorrent" });
+    });
   });
 });

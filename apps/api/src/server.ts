@@ -19,6 +19,7 @@ import {
 } from "@popcorn-queue/worker";
 import { makeBrowserAuthHook } from "./auth.js";
 import type { ApiConfig } from "./config.js";
+import { createManualIntakeJob, IntakeError, readManualIntakeRequest, searchPtpMovies, validateMediaPath } from "./intake.js";
 import { appendJobEvent, readLogTail } from "./job-logs.js";
 import { createApiLogger } from "./logger.js";
 import { PrismaPersistence } from "./persistence.js";
@@ -42,6 +43,7 @@ export interface BuildServerOptions {
   ptpSubmitter?: PtpSubmitter;
   torrentClient?: TorrentDownloadClient;
   commandExecutor?: CommandExecutor;
+  fetchImpl?: typeof fetch;
 }
 
 async function pathExists(filePath: string): Promise<boolean> {
@@ -707,6 +709,35 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
     const job = await jobRepository.resolveGate(request.params.id, request.params.gateId);
     if (!job) return reply.code(404).send({ error: "job_not_found" });
     return { job };
+  });
+
+  app.post<{ Body: { mediaPath?: string } }>("/api/intake/media-path/validate", async (request) => {
+    return validateMediaPath(request.body?.mediaPath ?? "", config.paths.mediaRoots);
+  });
+
+  app.post<{ Body: { title?: string; mediaPath?: string } }>("/api/intake/ptp-search", async (request) => {
+    return searchPtpMovies(request.body ?? {}, ptpClient);
+  });
+
+  app.post("/api/intake/jobs", async (request, reply) => {
+    try {
+      const input = await readManualIntakeRequest(request, options.fetchImpl ?? fetch);
+      const media = await validateMediaPath(input.mediaPath, config.paths.mediaRoots);
+      if (!media.ok) return reply.code(400).send({ error: media.error ?? "invalid_media_path", media });
+      const job = await createManualIntakeJob({
+        dataRoot: config.paths.dataRoot,
+        jobRepository,
+        mediaPath: input.mediaPath,
+        releaseName: input.releaseName,
+        ptpTarget: input.ptpTarget,
+        torrent: input.torrent
+      });
+      enqueuePreparation(job.id);
+      return reply.code(201).send({ job });
+    } catch (error) {
+      if (error instanceof IntakeError) return reply.code(error.statusCode).send({ error: error.message });
+      throw error;
+    }
   });
 
   app.post<{ Body: { candidates: TorrentCandidate[]; bypassCache?: boolean } }>(

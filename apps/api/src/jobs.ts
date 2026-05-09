@@ -8,6 +8,7 @@ import {
   type BrowserCheckResult,
   type DownloadStatus,
   type JobManifest,
+  type ManualIntakePtpTarget,
   type PtpUploadResult,
   type ReviewDraft,
   type ReviewDraftPatch,
@@ -51,6 +52,9 @@ export interface Job {
     site?: string;
     url?: string;
     title?: string;
+    mediaPath?: string;
+    torrentUrl?: string;
+    ptpTarget?: ManualIntakePtpTarget;
   };
   candidate?: TorrentCandidate;
   checkResult?: BrowserCheckResult;
@@ -114,6 +118,7 @@ export interface ImportRestoredJobInput {
 export interface AttachWorkspaceInput {
   workspace: Job["workspace"];
   torrentFilePath?: string;
+  source?: Partial<Job["source"]>;
 }
 
 export interface PreparationResultInput {
@@ -439,6 +444,7 @@ export class JobRepository {
   attachWorkspace(id: string, input: AttachWorkspaceInput): Job | null {
     const job = this.jobs.get(id);
     if (!job) return null;
+    if (input.source) job.source = { ...job.source, ...input.source };
     if (input.workspace) job.workspace = input.workspace;
     if (input.torrentFilePath && job.torrent) job.torrent.filePath = input.torrentFilePath;
     return this.record(job, "info", "Job workspace prepared.", { jobRoot: input.workspace?.jobRoot });

@@ -54,6 +54,28 @@ Deletes one backend PTP cache key derived from `{ title, imdbId }`.
 
 ## Queue
 
+## Manual Intake
+
+### POST /api/intake/media-path/validate
+
+Validates an absolute server-side media file path under one of the
+`POPCORN_QUEUE_MEDIA_ROOTS` entries. The route returns whether the path is
+readable, an allowed video file, its basename, and its size when available. It
+does not create or mutate jobs.
+
+### POST /api/intake/ptp-search
+
+Searches PTP from a release name or media path basename and returns movie group
+candidates. Each result includes `groupId`, `displayTitle`, optional `imdbId`,
+and a clickable `ptpUrl`.
+
+### POST /api/intake/jobs
+
+Creates a manual upload job from a server media path, a confirmed PTP target,
+and either an uploaded `.torrent` file or a `torrentUrl`. The API saves the
+source torrent to the job workspace, stores the confirmed PTP target on the job,
+prefills the review draft group, and queues preparation.
+
 ### GET /api/jobs
 
 Returns the current SQLite-backed upload queue. Jobs include `uploadReadiness`,
