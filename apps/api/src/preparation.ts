@@ -53,6 +53,7 @@ export interface PreparationServiceOptions {
     waitTimeoutMs?: number;
     waitIntervalMs?: number;
   };
+  commandExecutor?: CommandExecutor;
 }
 
 export interface PreparationReviewStatus {
@@ -242,7 +243,8 @@ export class PreparationService {
         });
       }
     };
-    if (!this.options.runExternalTools) contextOptions.commandExecutor = disabledCommandExecutor;
+    if (this.options.commandExecutor) contextOptions.commandExecutor = this.options.commandExecutor;
+    else if (!this.options.runExternalTools) contextOptions.commandExecutor = disabledCommandExecutor;
     if (this.options.imageUploader) contextOptions.imageUploader = this.options.imageUploader;
     if (this.options.ptpAnnounceUrl) contextOptions.ptpAnnounceUrl = this.options.ptpAnnounceUrl;
     if (this.options.torrentClient) contextOptions.torrentClient = this.options.torrentClient;

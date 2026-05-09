@@ -3,8 +3,95 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildJobWorkspacePaths } from "@popcorn-queue/core";
+import type { CommandExecutor, CommandResult } from "@popcorn-queue/worker";
 import { JobRepository, type JobPhase, type PhaseState } from "./jobs.js";
 import { PreparationService, computePreparationReviewStatus } from "./preparation.js";
+
+function commandResult(
+  command: string,
+  args: string[],
+  fields: Partial<Pick<CommandResult, "exitCode" | "stdout" | "stderr">> = {}
+): CommandResult {
+  return {
+    command,
+    args,
+    exitCode: fields.exitCode ?? 0,
+    signal: null,
+    stdout: fields.stdout ?? "",
+    stderr: fields.stderr ?? "",
+    durationMs: 1
+  };
+}
+
+const fixtureMediaInfoText = `General
+Format                                   : Matroska
+Duration                                 : 2 s
+
+Video
+Format                                   : HEVC
+Width                                    : 1 920 pixels
+Height                                   : 1 080 pixels
+
+Audio
+Format                                   : E-AC-3
+Language                                 : English
+
+Text
+Format                                   : UTF-8
+Language                                 : English
+`;
+
+const fixtureMediaInfoJson = JSON.stringify({
+  media: {
+    track: [
+      {
+        "@type": "General",
+        Format: "Matroska",
+        Duration: "2.000"
+      },
+      {
+        "@type": "Video",
+        Format: "HEVC",
+        Width: "1920",
+        Height: "1080",
+        HDR_Format: "SMPTE ST 2086"
+      },
+      {
+        "@type": "Audio",
+        Format: "E-AC-3",
+        Language: "en"
+      },
+      {
+        "@type": "Text",
+        Format: "UTF-8",
+        Language: "en"
+      }
+    ]
+  }
+});
+
+function fixturePreparationCommandExecutor(): CommandExecutor {
+  return async (invocation) => {
+    const { command, args } = invocation;
+    if (command === "which") return commandResult(command, args, { stdout: `/usr/bin/${args[0] ?? "tool"}\n` });
+
+    if (args.includes("-version")) return commandResult(command, args, { stdout: "ffmpeg version 6.1-test\n" });
+    if (args.includes("--Version")) return commandResult(command, args, { stdout: "MediaInfo Command line,\nMediaInfoLib - v24.01-test\n" });
+    if (args.includes("--version")) return commandResult(command, args, { stdout: `${path.basename(command)} 1.0-test\n` });
+
+    const outputPath = args.at(-1);
+    if (command.includes("ffmpeg") && typeof outputPath === "string") {
+      await writeFile(outputPath, args.includes("-frames:v") ? "png" : "mkv");
+      return commandResult(command, args);
+    }
+    if (command.includes("mediainfo")) {
+      return commandResult(command, args, { stdout: args[0] === "--Output=JSON" ? fixtureMediaInfoJson : fixtureMediaInfoText });
+    }
+    if (command.includes("oxipng")) return commandResult(command, args);
+
+    return commandResult(command, args, { exitCode: 1, stderr: `Unexpected command: ${command} ${args.join(" ")}` });
+  };
+}
 
 describe("PreparationService", () => {
   it("runs a created job to review and writes job logs without uploading", async () => {
@@ -409,12 +496,12 @@ describe("PreparationService", () => {
       }
     });
     const uploadedImages: string[] = [];
-    const mediainfoFixture = path.resolve("apps/worker/fixtures/mediainfo-fixture.cjs");
     const service = new PreparationService({
       dataRoot,
       jobs,
       runExternalTools: true,
-      toolCommands: { ffmpeg: "ffmpeg", mediainfo: mediainfoFixture, oxipng: "oxipng" },
+      toolCommands: { ffmpeg: "ffmpeg", mediainfo: "mediainfo", oxipng: "oxipng" },
+      commandExecutor: fixturePreparationCommandExecutor(),
       ptpAnnounceUrl: "https://please.passthepopcorn.me/passkey/announce",
       imageUploader: {
         name: "imgbb",
