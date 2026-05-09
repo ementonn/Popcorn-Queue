@@ -1,4 +1,4 @@
-import { Activity, Pause, Play, RefreshCcw, Search, SlidersHorizontal } from "lucide-react";
+import { Activity, FilePlus2, Pause, Play, RefreshCcw, Search, SlidersHorizontal } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   loadDashboard,
@@ -13,11 +13,12 @@ import {
 } from "./api.js";
 import { DiagnosticsPanel } from "./components/DiagnosticsPanel.js";
 import { JobDrawer } from "./components/JobDrawer.js";
+import { NewJobPage } from "./components/NewJobPage.js";
 import { QueueTable } from "./components/QueueTable.js";
 import { ReviewPanel } from "./components/ReviewPanel.js";
 import type { ApiJob, DiagnosticCheckResult, DiagnosticCheckTarget, DiagnosticsInfo, GlobalLogResponse, HealthInfo, JobLogResponse, ReviewDraft } from "./types.js";
 
-type ActiveView = "jobs" | "diagnostics";
+type ActiveView = "jobs" | "new-job" | "diagnostics";
 
 function updateJob(jobs: ApiJob[], updated: ApiJob): ApiJob[] {
   return jobs.map((job) => (job.id === updated.id ? updated : job));
@@ -161,6 +162,14 @@ export function App() {
     }
   }, []);
 
+  const handleManualJobCreated = useCallback((job: ApiJob) => {
+    const next = withLocalDraft(job);
+    setJobs((current) => [next, ...current.filter((item) => item.id !== next.id)]);
+    setSelectedJobId(next.id);
+    setActiveView("jobs");
+    setStatus({ tone: "success", text: `Created job: ${next.id}` });
+  }, [withLocalDraft]);
+
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -190,6 +199,17 @@ export function App() {
           >
             <SlidersHorizontal size={16} />
             Diagnostics
+          </a>
+          <a
+            href="/new-job"
+            className={activeView === "new-job" ? "active" : undefined}
+            onClick={(event) => {
+              event.preventDefault();
+              setActiveView("new-job");
+            }}
+          >
+            <FilePlus2 size={16} />
+            New Job
           </a>
         </nav>
         <div className="sidebar-section">
@@ -230,6 +250,16 @@ export function App() {
               }}
             >
               Diagnostics
+            </a>
+            <a
+              href="/new-job"
+              className={activeView === "new-job" ? "active" : undefined}
+              onClick={(event) => {
+                event.preventDefault();
+                setActiveView("new-job");
+              }}
+            >
+              New Job
             </a>
           </nav>
           {activeView === "jobs" ? (
@@ -273,6 +303,8 @@ export function App() {
             onResume={(jobId) => runJobIdAction(jobId, resumeJob, "Resume")}
             onRetry={(jobId) => runJobIdAction(jobId, retryFailed, "Retry")}
           />
+        ) : activeView === "new-job" ? (
+          <NewJobPage onCreated={handleManualJobCreated} onStatus={setStatus} />
         ) : (
           <DiagnosticsPanel
             health={health}

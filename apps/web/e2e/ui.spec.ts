@@ -157,6 +157,106 @@ test.describe("Popcorn Queue UI", () => {
     await expect(page.getByLabel("Upload queue").getByRole("button", { name: "Details" })).toHaveCount(0);
   });
 
+  test("creates a manual job from server media path, uploaded torrent, and confirmed PTP target", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only intake assertion.");
+    const requests: Array<{ url: string; method: string; body: string | null }> = [];
+
+    await page.route("**/api/intake/media-path/validate", async (route) => {
+      requests.push({ url: route.request().url(), method: route.request().method(), body: route.request().postData() });
+      await route.fulfill({
+        json: {
+          ok: true,
+          mediaPath: "/home/emt/data/Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p.mkv",
+          basename: "Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p.mkv",
+          kind: "file",
+          size: 1234,
+          error: null
+        }
+      });
+    });
+    await page.route("**/api/intake/ptp-search", async (route) => {
+      requests.push({ url: route.request().url(), method: route.request().method(), body: route.request().postData() });
+      await route.fulfill({
+        json: {
+          query: "Skaz pro to kak tsar Pyotr arapa zhenil",
+          parsedYear: "1976",
+          results: [
+            {
+              groupId: "205678",
+              title: "Skaz pro to, kak tsar Pyotr arapa zhenil",
+              displayTitle: "Skaz pro to, kak tsar Pyotr arapa zhenil AKA How Czar Peter the Great Married Off His Moor [1976]",
+              year: "1976",
+              imdbId: "tt0075169",
+              ptpUrl: "https://passthepopcorn.me/torrents.php?id=205678",
+              raw: {}
+            }
+          ]
+        }
+      });
+    });
+    await page.route("**/api/intake/jobs", async (route) => {
+      requests.push({ url: route.request().url(), method: route.request().method(), body: route.request().postData() });
+      await route.fulfill({
+        status: 201,
+        json: {
+          job: {
+            ...apiJobs[0],
+            id: "job-manual",
+            candidate: { ...apiJobs[0].candidate!, site: "unknown", title: "Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p" },
+            source: {
+              site: "unknown",
+              title: "Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p",
+              mediaPath: "/home/emt/data/Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p.mkv",
+              ptpTarget: {
+                groupId: "205678",
+                displayTitle: "Skaz pro to, kak tsar Pyotr arapa zhenil AKA How Czar Peter the Great Married Off His Moor [1976]",
+                year: "1976",
+                imdbId: "tt0075169",
+                ptpUrl: "https://passthepopcorn.me/torrents.php?id=205678"
+              }
+            },
+            artifacts: {
+              ...apiJobs[0].artifacts,
+              releaseName: "Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p"
+            },
+            uploadPlan: {
+              ...apiJobs[0].uploadPlan,
+              releaseName: { ...apiJobs[0].uploadPlan.releaseName, generated: "Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p" }
+            }
+          }
+        }
+      });
+    });
+
+    await page.goto("/");
+    await page.getByRole("link", { name: /New Job/i }).click();
+    await expect(page.getByRole("heading", { name: "New Job" })).toBeVisible();
+
+    await page.getByLabel("Server media path").fill("/home/emt/data/Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p.mkv");
+    await page.getByRole("button", { name: "Validate path" }).click();
+    await expect(page.getByText("Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p.mkv")).toBeVisible();
+
+    await page.setInputFiles('input[type="file"][name="torrent"]', {
+      name: "source.torrent",
+      mimeType: "application/x-bittorrent",
+      buffer: Buffer.from("d4:infod6:lengthi1eee")
+    });
+    await page.getByLabel("Release name").fill("Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p");
+    await page.getByRole("button", { name: "Search PTP Movie" }).click();
+
+    const movieLink = page.getByRole("link", {
+      name: "Skaz pro to, kak tsar Pyotr arapa zhenil AKA How Czar Peter the Great Married Off His Moor [1976]"
+    });
+    await expect(movieLink).toHaveAttribute("href", "https://passthepopcorn.me/torrents.php?id=205678");
+    await page.getByRole("button", { name: "Confirm" }).click();
+    await expect(page.getByText("PTP Target")).toBeVisible();
+    await expect(page.getByText("Confirmed")).toBeVisible();
+
+    await page.getByRole("button", { name: "Create Job" }).click();
+    await expect(page.getByLabel("Upload queue")).toContainText("Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p");
+    expect(requests.some((request) => request.url.includes("/api/intake/jobs") && request.method === "POST")).toBe(true);
+  });
+
   test("uses the QUI-style light utility shell", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only style assertion.");
     await page.goto("/");

@@ -77,6 +77,18 @@ Expected flow:
 If you see `POST /api/browser/check/batch failed with HTTP 401: unauthorized`,
 the userscript token does not match `POPCORN_QUEUE_BROWSER_TOKEN`.
 
+## Manual New Job Intake
+
+1. Set `POPCORN_QUEUE_MEDIA_ROOTS=/home/emt/data` in `.env`.
+2. Start the API and web app.
+3. Open `New Job`.
+4. Enter a movie file path under `/home/emt/data`.
+5. Upload a `.torrent` file or paste a torrent URL.
+6. Search PTP, open the result link if needed, confirm the correct movie group,
+   and create the job.
+7. Confirm the job appears in `Jobs` and reaches review without waiting for qB
+   download.
+
 ## Pre-Upload Review Flow
 
 Jobs should automatically prepare until review. Before pressing `Start Upload`,

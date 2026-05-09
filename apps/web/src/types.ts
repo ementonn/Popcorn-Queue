@@ -1,6 +1,34 @@
 export type JobState = "created" | "preparing" | "review" | "uploading" | "paused" | "failed" | "done" | "needs_reseed" | "seeding";
 export type UploadReadiness = "blocked" | "missing_evidence" | "ready";
 
+export interface ManualIntakePtpTarget {
+  groupId: string;
+  displayTitle: string;
+  year: string | null;
+  imdbId: string | null;
+  ptpUrl: string;
+}
+
+export interface MediaPathValidationResult {
+  ok: boolean;
+  mediaPath: string;
+  basename: string;
+  kind: "file" | "directory" | "missing" | "outside-root" | "relative" | "unsupported" | "unreadable";
+  size: number | null;
+  error: string | null;
+}
+
+export interface PtpMovieSearchCandidate extends ManualIntakePtpTarget {
+  title: string;
+  raw: unknown;
+}
+
+export interface PtpMovieSearchResponse {
+  query: string;
+  parsedYear: string | null;
+  results: PtpMovieSearchCandidate[];
+}
+
 export interface ReviewGate {
   id: string;
   severity: "blocker" | "warning" | "info";
@@ -76,6 +104,9 @@ export interface ApiJob {
     site?: string;
     url?: string;
     title?: string;
+    mediaPath?: string;
+    torrentUrl?: string;
+    ptpTarget?: ManualIntakePtpTarget;
   };
   candidate?: {
     site: string;

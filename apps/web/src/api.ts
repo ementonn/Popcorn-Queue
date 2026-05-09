@@ -1,4 +1,16 @@
-import type { ApiJob, DiagnosticCheckResult, DiagnosticCheckTarget, DiagnosticsInfo, GlobalLogResponse, HealthInfo, JobLogResponse, ReviewDraftPatch } from "./types.js";
+import type {
+  ApiJob,
+  DiagnosticCheckResult,
+  DiagnosticCheckTarget,
+  DiagnosticsInfo,
+  GlobalLogResponse,
+  HealthInfo,
+  JobLogResponse,
+  ManualIntakePtpTarget,
+  MediaPathValidationResult,
+  PtpMovieSearchResponse,
+  ReviewDraftPatch
+} from "./types.js";
 
 export interface DashboardData {
   jobs: ApiJob[];
@@ -28,13 +40,17 @@ async function parseError(response: Response): Promise<string> {
 }
 
 export async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${apiBase}${path}`, {
-    headers: {
+  const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
+  const requestInit: RequestInit = { ...(init ?? {}) };
+  if (isFormData) {
+    if (init?.headers) requestInit.headers = init.headers;
+  } else {
+    requestInit.headers = {
       "Content-Type": "application/json",
       ...(init?.headers ?? {})
-    },
-    ...init
-  });
+    };
+  }
+  const response = await fetch(`${apiBase}${path}`, requestInit);
 
   if (!response.ok) {
     throw new Error(`${path} failed with HTTP ${response.status}: ${await parseError(response)}`);
@@ -68,6 +84,36 @@ export function loadDiagnostics(): Promise<DiagnosticsInfo | null> {
 
 export function runDiagnosticCheck(target: DiagnosticCheckTarget): Promise<DiagnosticCheckResult> {
   return fetchJson<DiagnosticCheckResult>(`/api/diagnostics/check/${target}`, { method: "POST", body: "{}" });
+}
+
+export function validateMediaPath(mediaPath: string): Promise<MediaPathValidationResult> {
+  return fetchJson<MediaPathValidationResult>("/api/intake/media-path/validate", {
+    method: "POST",
+    body: JSON.stringify({ mediaPath })
+  });
+}
+
+export function searchPtpMovie(input: { title?: string; mediaPath?: string }): Promise<PtpMovieSearchResponse> {
+  return fetchJson<PtpMovieSearchResponse>("/api/intake/ptp-search", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function createManualIntakeJob(input: {
+  mediaPath: string;
+  releaseName: string;
+  ptpTarget: ManualIntakePtpTarget;
+  torrentFile?: File | null;
+  torrentUrl?: string;
+}): Promise<{ job: ApiJob }> {
+  const form = new FormData();
+  form.set("mediaPath", input.mediaPath);
+  form.set("releaseName", input.releaseName);
+  form.set("ptpTarget", JSON.stringify(input.ptpTarget));
+  if (input.torrentFile) form.set("torrent", input.torrentFile);
+  if (input.torrentUrl) form.set("torrentUrl", input.torrentUrl);
+  return fetchJson<{ job: ApiJob }>("/api/intake/jobs", { method: "POST", body: form });
 }
 
 export function startUpload(jobId: string): Promise<{ job: ApiJob }> {
