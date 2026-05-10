@@ -803,6 +803,7 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
         jobRepository,
         releaseName: input.releaseName,
         ptpTarget: input.ptpTarget,
+        ptpClient,
         ...(input.mediaPath ? { mediaPath: input.mediaPath } : {}),
         ...(input.torrent ? { torrent: input.torrent } : {})
       });

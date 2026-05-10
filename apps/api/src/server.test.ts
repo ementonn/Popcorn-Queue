@@ -376,6 +376,23 @@ describe("API cache contract", () => {
 describe("API jobs", () => {
   beforeEach(() => {
     persistenceState.initialJobs = [];
+    vi.spyOn(PtpClient.prototype, "getGroup").mockResolvedValue({
+      totalResults: 1,
+      movies: [
+        {
+          GroupId: "205678",
+          Title: "Manual Movie",
+          Name: "Manual Movie",
+          Year: "2024",
+          ImdbId: "tt1234567",
+          Torrents: []
+        }
+      ]
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("allows browser preflight for review draft saves", async () => {
@@ -995,6 +1012,75 @@ describe("API jobs", () => {
       expect(job.reviewDraft).toMatchObject({ groupId: "205678", imdb: "tt1234567" });
       expect(job.torrent).toMatchObject({ filename: "Manual.Movie.source.torrent" });
       await expect(access(job.torrent!.filePath!)).resolves.toBeUndefined();
+    });
+  });
+
+  it("runs duplicate checks for manual intake jobs against the confirmed PTP group", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "popcorn-intake-manual-duplicate-"));
+    const mediaPath = path.join(root, "Manual.Movie.2024.1080p.WEB-DL.x265.HDR-GROUP.mkv");
+    await writeFile(mediaPath, "movie");
+    const getGroup = vi.spyOn(PtpClient.prototype, "getGroup").mockResolvedValue({
+      totalResults: 1,
+      movies: [
+        {
+          GroupId: "205678",
+          Title: "Manual Movie",
+          Name: "Manual Movie",
+          Year: "2024",
+          ImdbId: "tt1234567",
+          Torrents: [
+            {
+              Id: "1",
+              Quality: "High Definition",
+              Source: "WEB",
+              Codec: "H.265",
+              Resolution: "1080p",
+              Size: "1000",
+              Seeders: "1",
+              ReleaseName: "Manual.Movie.2024.1080p.WEB-DL.H265.HDR-EXISTING"
+            }
+          ]
+        }
+      ]
+    });
+    const config = testConfig();
+
+    await withConfiguredServer(config, { autoPrepare: false }, async (app) => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/intake/jobs",
+        payload: {
+          mediaPath,
+          releaseName: "Manual.Movie.2024.1080p.WEB-DL.x265.HDR-GROUP",
+          ptpTarget: {
+            groupId: "205678",
+            displayTitle: "Manual Movie [2024]",
+            year: "2024",
+            imdbId: "tt1234567",
+            ptpUrl: "https://passthepopcorn.me/torrents.php?id=205678"
+          }
+        }
+      });
+
+      expect(response.statusCode).toBe(201);
+      const job = response.json<{ job: Job }>().job;
+      expect(getGroup).toHaveBeenCalledWith("205678");
+      expect(job.checkResult?.decision).toMatchObject({
+        status: "full",
+        reason: "1080p HDR x265 is full."
+      });
+      expect(job.uploadPlan.reviewGates).toContainEqual(
+        expect.objectContaining({
+          id: "duplicate:slot-full",
+          severity: "blocker",
+          status: "open"
+        })
+      );
+      expect(job.uploadPlan.reviewGates).not.toContainEqual(
+        expect.objectContaining({
+          detail: "Manual PTP target confirmed."
+        })
+      );
     });
   });
 

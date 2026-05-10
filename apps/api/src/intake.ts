@@ -3,6 +3,7 @@ import path from "node:path";
 import type { FastifyRequest } from "fastify";
 import {
   buildJobWorkspacePaths,
+  evaluatePtpCoexistence,
   normalizeImdbId,
   mediaTitleFromPath,
   parseTorrentTitle,
@@ -278,25 +279,13 @@ export async function readManualIntakeRequest(request: FastifyRequest, fetchImpl
   return readJsonManualIntakeRequest(request, fetchImpl);
 }
 
-function manualCheckResult(candidate: TorrentCandidate, target: ManualIntakePtpTarget): BrowserCheckResult {
+async function manualCheckResult(candidate: TorrentCandidate, target: ManualIntakePtpTarget, ptpClient: PtpClient): Promise<BrowserCheckResult> {
+  const parsed = parseTorrentTitle(candidate.title, candidate.resolution);
+  const ptpData = await ptpClient.getGroup(target.groupId);
   return {
     candidate,
-    parsed: parseTorrentTitle(candidate.title, candidate.resolution),
-    decision: {
-      status: "review",
-      movieFound: true,
-      movie: {
-        GroupId: target.groupId,
-        Title: target.displayTitle,
-        Name: target.displayTitle,
-        Year: target.year ?? "",
-        ImdbId: target.imdbId ?? "",
-        Torrents: []
-      },
-      ptpUrl: target.ptpUrl,
-      reason: "Manual PTP target confirmed.",
-      confidence: "high"
-    },
+    parsed,
+    decision: evaluatePtpCoexistence(ptpData, parsed, candidate.imdbId),
     cache: { key: `ptp:group:${target.groupId}`, hit: false, policy: "permanent" }
   };
 }
@@ -307,6 +296,7 @@ export async function createManualIntakeJob(input: {
   mediaPath?: string;
   releaseName: string;
   ptpTarget: ManualIntakePtpTarget;
+  ptpClient: PtpClient;
   torrent?: IntakeTorrentInput;
 }): Promise<Job> {
   const candidate: TorrentCandidate = {
@@ -321,9 +311,10 @@ export async function createManualIntakeJob(input: {
         ...(input.torrent.contentType ? { contentType: input.torrent.contentType } : {})
       }
     : null;
+  const checkResult = await manualCheckResult(candidate, input.ptpTarget, input.ptpClient);
   const job = await input.jobRepository.createFromBrowser({
     candidate,
-    checkResult: manualCheckResult(candidate, input.ptpTarget),
+    checkResult,
     ...(torrent ? { torrent } : {}),
     sourceSite: "unknown",
     title: input.releaseName
@@ -345,7 +336,7 @@ export async function createManualIntakeJob(input: {
   };
   await writeFile(
     paths.sourceJson,
-    `${JSON.stringify({ candidate, checkResult: manualCheckResult(candidate, input.ptpTarget), torrent, source }, null, 2)}\n`,
+    `${JSON.stringify({ candidate, checkResult, torrent, source }, null, 2)}\n`,
     "utf8"
   );
   const workspace = {
