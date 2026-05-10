@@ -7,6 +7,7 @@ import {
   type BrowserCheckResult,
   type CacheStore,
   type NormalizedPtpResponse,
+  type PtpMovie,
   type TorrentCandidate
 } from "@popcorn-queue/core";
 import type { PtpClient } from "./ptp/client.js";
@@ -61,6 +62,12 @@ export class BrowserCheckService {
       await this.cache.set(cacheKey, data);
     }
 
+    const enrichedData = await this.enrichMissingMovieDetails(data);
+    if (enrichedData !== data) {
+      data = enrichedData;
+      await this.cache.set(cacheKey, data);
+    }
+
     const cacheInfo: BrowserCheckResult["cache"] = {
       key: cacheKey,
       hit,
@@ -82,6 +89,20 @@ export class BrowserCheckService {
     return key;
   }
 
+  private async enrichMissingMovieDetails(data: NormalizedPtpResponse): Promise<NormalizedPtpResponse> {
+    const movie = data.movies[0];
+    if (!movie?.GroupId || movie.ImdbId) return data;
+
+    await this.waitForRateLimit();
+    const details = await this.ptp.getGroup(movie.GroupId);
+    const detail = details.movies.find((item) => item.GroupId === movie.GroupId) ?? details.movies[0];
+    if (!detail?.ImdbId) return data;
+
+    const movies = [...data.movies];
+    movies[0] = mergeMovieDetails(movie, detail);
+    return { ...data, movies };
+  }
+
   private async waitForRateLimit(): Promise<void> {
     const delay = this.config.requestDelayMs ?? 2000;
     const elapsed = Date.now() - this.lastRequestAt;
@@ -90,4 +111,13 @@ export class BrowserCheckService {
     }
     this.lastRequestAt = Date.now();
   }
+}
+
+function mergeMovieDetails(movie: PtpMovie, detail: PtpMovie): PtpMovie {
+  const merged: PtpMovie = {
+    ...movie,
+    ...detail
+  };
+  if (!detail.Torrents?.length && movie.Torrents) merged.Torrents = movie.Torrents;
+  return merged;
 }
