@@ -58,4 +58,30 @@ describe("Prisma job persistence", () => {
       await persistence.disconnect();
     }
   });
+
+  it("repairs mojibake torrent filenames when loading existing jobs", async () => {
+    previousDatabaseUrl = process.env.DATABASE_URL;
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-prisma-filename-"));
+    process.env.DATABASE_URL = `file:${path.join(dataDir, "jobs.db")}`;
+    const persistence = new PrismaPersistence();
+    const filename = "[M-TEAM][1129276]镇魔司：苍龙觉醒.Z.torrent";
+    const mojibakeFilename = Buffer.from(filename, "utf8").toString("latin1");
+    try {
+      const job = await persistence.jobs.createFromBrowser({
+        candidate,
+        torrent: { filename: "source.torrent", bytes: 1 }
+      });
+      await persistence.prisma.job.update({
+        where: { id: job.id },
+        data: {
+          torrentJson: JSON.stringify({ filename: mojibakeFilename, bytes: 1 })
+        }
+      });
+
+      const loaded = await persistence.jobs.get(job.id);
+      expect(loaded?.torrent?.filename).toBe(filename);
+    } finally {
+      await persistence.disconnect();
+    }
+  });
 });

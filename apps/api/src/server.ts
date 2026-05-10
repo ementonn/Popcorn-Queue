@@ -19,6 +19,7 @@ import {
 } from "@popcorn-queue/worker";
 import { WebSessionAuth, makeBrowserAuthHook } from "./auth.js";
 import type { ApiConfig } from "./config.js";
+import { normalizeUploadedFilename } from "./filenames.js";
 import { createManualIntakeJob, IntakeError, readManualIntakeRequest, resolveManualPtpTarget, searchPtpMovies, validateMediaPath } from "./intake.js";
 import { appendJobEvent, readLogTail } from "./job-logs.js";
 import { createApiLogger } from "./logger.js";
@@ -860,7 +861,7 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
 
     for await (const part of parts) {
       if (part.type === "file") {
-        torrentFilename = part.filename || torrentFilename;
+        torrentFilename = part.filename ? normalizeUploadedFilename(part.filename, torrentFilename) : torrentFilename;
         torrentContentType = part.mimetype;
         const chunks: Buffer[] = [];
         for await (const chunk of part.file) chunks.push(chunk as Buffer);

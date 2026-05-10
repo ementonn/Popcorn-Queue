@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import type { CacheEntry, CacheStore, DownloadStatus, NormalizedPtpResponse, UploadReadiness } from "@popcorn-queue/core";
+import { repairUtf8Mojibake } from "./filenames.js";
 import {
   JobRepository,
   type AttachWorkspaceInput,
@@ -126,7 +127,10 @@ function deserializeJob(row: JobRow): Job {
   const checkResult = parseOptionalJson<Job["checkResult"]>(row.checkResultJson);
   if (checkResult !== undefined) job.checkResult = checkResult;
   const torrent = parseOptionalJson<Job["torrent"]>(row.torrentJson);
-  if (torrent !== undefined) job.torrent = torrent;
+  if (torrent !== undefined) {
+    torrent.filename = repairUtf8Mojibake(torrent.filename);
+    job.torrent = torrent;
+  }
 
   return job;
 }

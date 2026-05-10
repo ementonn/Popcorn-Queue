@@ -15,6 +15,7 @@ import {
   type TorrentCandidate
 } from "@popcorn-queue/core";
 import type { PtpClient } from "@popcorn-queue/integrations";
+import { normalizeUploadedFilename } from "./filenames.js";
 import type { AttachWorkspaceInput, Job } from "./jobs.js";
 
 type MaybePromise<T> = T | Promise<T>;
@@ -155,8 +156,7 @@ export function looksLikeTorrent(bytes: Buffer): boolean {
 }
 
 function safeFilename(value: string | null | undefined, fallback = "source.torrent"): string {
-  const basename = path.basename((value ?? "").trim());
-  return basename || fallback;
+  return normalizeUploadedFilename(value, fallback);
 }
 
 function filenameFromContentDisposition(value: string | null): string | null {

@@ -998,6 +998,85 @@ describe("API jobs", () => {
     });
   });
 
+  it("preserves UTF-8 uploaded torrent filenames", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "popcorn-intake-upload-utf8-"));
+    const mediaPath = path.join(root, "Manual.Movie.2024.1080p.WEB-DL.x265-GROUP.mkv");
+    await writeFile(mediaPath, "movie");
+    const config = testConfig();
+    const boundary = "popcorn-manual-intake-upload-utf8";
+    const torrentFilename = "[M-TEAM][1129276]镇魔司：苍龙觉醒.Z.torrent";
+
+    await withConfiguredServer(config, { autoPrepare: false }, async (app) => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/intake/jobs",
+        headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+        payload: multipartBody(
+          boundary,
+          {
+            mediaPath,
+            ptpTarget: JSON.stringify({
+              groupId: "205678",
+              displayTitle: "Manual Movie [2024]",
+              year: "2024",
+              imdbId: "tt1234567",
+              ptpUrl: "https://passthepopcorn.me/torrents.php?id=205678"
+            })
+          },
+          {
+            name: "torrent",
+            filename: torrentFilename,
+            contentType: "application/x-bittorrent",
+            value: "d4:infod6:lengthi1eee"
+          }
+        )
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(response.json<{ job: Job }>().job.torrent?.filename).toBe(torrentFilename);
+    });
+  });
+
+  it("repairs mojibake uploaded torrent filenames before storing jobs", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "popcorn-intake-upload-mojibake-"));
+    const mediaPath = path.join(root, "Manual.Movie.2024.1080p.WEB-DL.x265-GROUP.mkv");
+    await writeFile(mediaPath, "movie");
+    const config = testConfig();
+    const boundary = "popcorn-manual-intake-upload-mojibake";
+    const torrentFilename = "[M-TEAM][1129276]镇魔司：苍龙觉醒.Z.torrent";
+    const mojibakeFilename = Buffer.from(torrentFilename, "utf8").toString("latin1");
+
+    await withConfiguredServer(config, { autoPrepare: false }, async (app) => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/intake/jobs",
+        headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+        payload: multipartBody(
+          boundary,
+          {
+            mediaPath,
+            ptpTarget: JSON.stringify({
+              groupId: "205678",
+              displayTitle: "Manual Movie [2024]",
+              year: "2024",
+              imdbId: "tt1234567",
+              ptpUrl: "https://passthepopcorn.me/torrents.php?id=205678"
+            })
+          },
+          {
+            name: "torrent",
+            filename: mojibakeFilename,
+            contentType: "application/x-bittorrent",
+            value: "d4:infod6:lengthi1eee"
+          }
+        )
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(response.json<{ job: Job }>().job.torrent?.filename).toBe(torrentFilename);
+    });
+  });
+
   it("creates manual intake jobs from server media without a source torrent", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "popcorn-intake-media-only-"));
     const mediaPath = path.join(root, "Media.Only.2024.1080p.WEB-DL.x265-GROUP.mkv");
