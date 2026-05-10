@@ -112,6 +112,21 @@ function LoginView({
   );
 }
 
+function SessionBootView() {
+  return (
+    <main className="login-shell">
+      <div className="session-panel" role="status" aria-live="polite">
+        <div className="login-brand">
+          <img className="brand-mark" src="/icon.svg" alt="" aria-hidden="true" />
+          <span>Popcorn Queue</span>
+        </div>
+        <LoaderCircle className="spin-icon session-spinner" size={22} />
+        <span>Checking session</span>
+      </div>
+    </main>
+  );
+}
+
 export function App() {
   const [authSession, setAuthSession] = useState<AuthSessionInfo | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -328,8 +343,12 @@ export function App() {
     }
   }, []);
 
-  if (authLoading || (authSession?.authRequired && !authSession.authenticated)) {
-    return <LoginView loading={authLoading} onLogin={handleLogin} />;
+  if (authLoading) {
+    return <SessionBootView />;
+  }
+
+  if (authSession?.authRequired && !authSession.authenticated) {
+    return <LoginView loading={false} onLogin={handleLogin} />;
   }
 
   return (

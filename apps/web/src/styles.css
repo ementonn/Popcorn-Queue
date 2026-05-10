@@ -105,6 +105,19 @@ button.action {
   box-shadow: 0 16px 34px rgb(0 0 0 / 8%);
 }
 
+.session-panel {
+  display: grid;
+  width: min(100%, 280px);
+  justify-items: center;
+  gap: 14px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.session-spinner {
+  color: var(--primary);
+}
+
 .login-brand {
   display: flex;
   align-items: center;
@@ -381,6 +394,17 @@ nav a:not(.active):hover {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.optional-badge {
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .intake-grid {

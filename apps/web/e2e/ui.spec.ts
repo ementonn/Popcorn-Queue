@@ -204,6 +204,27 @@ test.describe("Popcorn Queue UI", () => {
     expect(loginRequests.at(-1)).toMatchObject({ username: "ptp-user", password: "ptp-pass" });
   });
 
+  test("keeps the login form hidden while checking an existing session", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only auth assertion.");
+    await page.unroute("**/api/auth/session");
+    let releaseSession!: () => void;
+    const sessionReady = new Promise<void>((resolve) => {
+      releaseSession = resolve;
+    });
+    await page.route("**/api/auth/session", async (route) => {
+      await sessionReady;
+      await route.fulfill({ json: { authRequired: true, authenticated: true, username: "ptp-user" } });
+    });
+
+    await page.goto("/");
+
+    await expect(page.getByRole("heading", { name: "Sign in" })).toHaveCount(0);
+    await expect(page.getByText("Checking session")).toBeVisible();
+
+    releaseSession();
+    await expect(page.getByLabel("Upload queue")).toBeVisible();
+  });
+
   test("creates a manual job from server media path, uploaded torrent, and confirmed PTP target", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only intake assertion.");
     const requests: Array<{ url: string; method: string; body: string | null }> = [];
@@ -330,6 +351,7 @@ test.describe("Popcorn Queue UI", () => {
     await page.getByRole("button", { name: "Validate path" }).click();
 
     await expect(page.getByLabel("Media", { exact: true }).getByText("Warning: selected path is a folder, not a file.")).toBeVisible();
+    await expect(page.getByLabel("Release", { exact: true }).getByText("Optional")).toBeVisible();
     await expect(page.getByLabel("Release name override")).toHaveValue("");
   });
 

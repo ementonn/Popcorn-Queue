@@ -222,7 +222,10 @@ export function NewJobPage({ onCreated, onStatus }: NewJobPageProps) {
       </section>
 
       <section className="intake-section" aria-labelledby="release-section-title">
-        <h2 id="release-section-title">Release</h2>
+        <div className="section-title-row">
+          <h2 id="release-section-title">Release</h2>
+          <span className="optional-badge">Optional</span>
+        </div>
         <label className="field">
           <span>Release name override</span>
           <input value={releaseName} onChange={(event) => setReleaseName(event.target.value)} placeholder="Movie.2024.1080p.WEB-DL.x265-GROUP" />
