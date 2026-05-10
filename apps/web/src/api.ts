@@ -134,14 +134,14 @@ export function resolvePtpTarget(input: { ptpUrl?: string; imdbUrl?: string }): 
 
 export function createManualIntakeJob(input: {
   mediaPath?: string;
-  releaseName: string;
+  releaseName?: string;
   ptpTarget: ManualIntakePtpTarget;
   torrentFile?: File | null;
   torrentUrl?: string;
 }): Promise<{ job: ApiJob }> {
   const form = new FormData();
   if (input.mediaPath?.trim()) form.set("mediaPath", input.mediaPath.trim());
-  form.set("releaseName", input.releaseName);
+  if (input.releaseName?.trim()) form.set("releaseName", input.releaseName.trim());
   form.set("ptpTarget", JSON.stringify(input.ptpTarget));
   if (input.torrentFile) form.set("torrent", input.torrentFile);
   if (input.torrentUrl) form.set("torrentUrl", input.torrentUrl);

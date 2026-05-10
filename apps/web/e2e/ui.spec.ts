@@ -288,7 +288,6 @@ test.describe("Popcorn Queue UI", () => {
       mimeType: "application/x-bittorrent",
       buffer: Buffer.from("d4:infod6:lengthi1eee")
     });
-    await page.getByLabel("Release name").fill("Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p");
     await page.getByRole("button", { name: "Search PTP Movie" }).click();
 
     const movieLink = page.getByRole("link", {
@@ -301,7 +300,11 @@ test.describe("Popcorn Queue UI", () => {
 
     await page.getByRole("button", { name: "Create Job" }).click();
     await expect(page.getByLabel("Upload queue")).toContainText("Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p");
-    expect(requests.some((request) => request.url.includes("/api/intake/jobs") && request.method === "POST")).toBe(true);
+    expect(requests.find((request) => request.url.includes("/api/intake/ptp-search"))?.body).toContain(
+      '"title":"Skaz.pro.to.kak.tsar.Pyotr.arapa.zhenil.1976.1080p"'
+    );
+    const createRequest = requests.find((request) => request.url.includes("/api/intake/jobs") && request.method === "POST");
+    expect(createRequest?.body).not.toContain('name="releaseName"');
   });
 
   test("warns when a manual media path is a directory", async ({ page }, testInfo) => {
@@ -327,7 +330,7 @@ test.describe("Popcorn Queue UI", () => {
     await page.getByRole("button", { name: "Validate path" }).click();
 
     await expect(page.getByLabel("Media", { exact: true }).getByText("Warning: selected path is a folder, not a file.")).toBeVisible();
-    await expect(page.getByLabel("Release name")).toHaveValue("Directory.Movie.2024.1080p.WEB-DL.x265-GROUP");
+    await expect(page.getByLabel("Release name override")).toHaveValue("");
   });
 
   test("creates a manual job with a manually resolved PTP movie target", async ({ page }, testInfo) => {
@@ -485,7 +488,6 @@ test.describe("Popcorn Queue UI", () => {
     await page.getByRole("link", { name: /New Job/i }).click();
     await page.getByLabel("Server media path").fill("/media/movies/Media.Only.2024.1080p.WEB-DL.x265-GROUP.mkv");
     await page.getByRole("button", { name: "Validate path" }).click();
-    await page.getByLabel("Release name").fill("Media.Only.2024.1080p.WEB-DL.x265-GROUP");
     await page.getByLabel("PTP URL or Movie ID").fill("https://passthepopcorn.me/torrents.php?id=205678");
     await page.getByLabel("Manual PTP target").getByRole("button", { name: "Confirm", exact: true }).click();
 
@@ -494,6 +496,7 @@ test.describe("Popcorn Queue UI", () => {
 
     const createRequest = requests.find((request) => request.url.includes("/api/intake/jobs"));
     expect(createRequest?.body).toContain('name="mediaPath"');
+    expect(createRequest?.body).not.toContain('name="releaseName"');
     expect(createRequest?.body).not.toContain('name="torrent"');
   });
 

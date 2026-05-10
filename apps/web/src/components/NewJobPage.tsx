@@ -8,12 +8,24 @@ interface NewJobPageProps {
   onStatus(status: { tone: "success" | "error" | "info"; text: string }): void;
 }
 
+const STRIPPED_SOURCE_EXTENSIONS = /\.(mkv|mp4|m2ts|ts|mov|avi|torrent)$/i;
+
 function releaseNameFromBasename(value: string): string {
-  return value.replace(/\.[^.]+$/, "");
+  return value.replace(STRIPPED_SOURCE_EXTENSIONS, "");
 }
 
 function releaseNameFromValidation(validation: MediaPathValidationResult): string {
   return validation.kind === "file" ? releaseNameFromBasename(validation.basename) : validation.basename;
+}
+
+function releaseNameFromPathLike(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  try {
+    return releaseNameFromBasename(decodeURIComponent(new URL(trimmed).pathname.split("/").filter(Boolean).at(-1) ?? ""));
+  } catch {
+    return releaseNameFromBasename(trimmed.split(/[\\/]/).filter(Boolean).at(-1) ?? "");
+  }
 }
 
 function errorText(error: unknown, fallback: string): string {
@@ -49,9 +61,13 @@ export function NewJobPage({ onCreated, onStatus }: NewJobPageProps) {
   const hasTorrent = torrentMode === "file" ? Boolean(torrentFile) : torrentUrl.trim().length > 0;
   const hasValidMediaPath = Boolean(validation?.ok);
   const hasInputSource = hasValidMediaPath || hasTorrent;
+  const derivedReleaseName =
+    releaseName.trim() ||
+    (validation?.ok ? releaseNameFromValidation(validation) : mediaPath.trim() ? releaseNameFromPathLike(mediaPath) : "") ||
+    (torrentMode === "file" ? (torrentFile ? releaseNameFromBasename(torrentFile.name) : "") : releaseNameFromPathLike(torrentUrl));
+  const canSearch = Boolean(derivedReleaseName || mediaPath.trim());
   const missingCreateRequirements = [
     hasInputSource ? null : "Validate media path or add source torrent",
-    releaseName.trim() ? null : "Enter release name",
     selectedTarget ? null : "Confirm PTP target"
   ].filter((item): item is string => Boolean(item));
   const createStatusText = busy
@@ -66,7 +82,6 @@ export function NewJobPage({ onCreated, onStatus }: NewJobPageProps) {
     try {
       const result = await validateMediaPath(mediaPath);
       setValidation(result);
-      if (result.ok && !releaseName.trim()) setReleaseName(releaseNameFromValidation(result));
       onStatus({
         tone: result.ok ? (result.warning ? "info" : "success") : "error",
         text: result.warning ? mediaValidationText(result) : result.ok ? "Media path validated" : result.error ?? "Invalid media path"
@@ -81,7 +96,7 @@ export function NewJobPage({ onCreated, onStatus }: NewJobPageProps) {
   async function handleSearch() {
     setBusy(true);
     try {
-      const result = await searchPtpMovie({ title: releaseName, mediaPath });
+      const result = await searchPtpMovie({ title: derivedReleaseName, mediaPath });
       setSearchResults(result.results);
       setSelectedTarget(null);
       setSearchNotice(result.results.length ? null : { tone: "error", text: "No PTP movies found" });
@@ -100,7 +115,7 @@ export function NewJobPage({ onCreated, onStatus }: NewJobPageProps) {
     try {
       const input: Parameters<typeof createManualIntakeJob>[0] = {
         ...(hasValidMediaPath ? { mediaPath: mediaPath.trim() } : {}),
-        releaseName,
+        ...(releaseName.trim() ? { releaseName: releaseName.trim() } : {}),
         ptpTarget: selectedTarget,
         ...(torrentFile ? { torrentFile } : {}),
         ...(torrentMode === "url" ? { torrentUrl: torrentUrl.trim() } : {})
@@ -209,7 +224,7 @@ export function NewJobPage({ onCreated, onStatus }: NewJobPageProps) {
       <section className="intake-section" aria-labelledby="release-section-title">
         <h2 id="release-section-title">Release</h2>
         <label className="field">
-          <span>Release name</span>
+          <span>Release name override</span>
           <input value={releaseName} onChange={(event) => setReleaseName(event.target.value)} placeholder="Movie.2024.1080p.WEB-DL.x265-GROUP" />
         </label>
       </section>
@@ -220,7 +235,7 @@ export function NewJobPage({ onCreated, onStatus }: NewJobPageProps) {
           {selectedTarget ? <span className="inline-status ok">Confirmed</span> : null}
         </div>
         <div className="intake-grid">
-          <button type="button" onClick={handleSearch} disabled={busy || !releaseName.trim()}>
+          <button type="button" onClick={handleSearch} disabled={busy || !canSearch}>
             <Search size={15} />
             Search PTP Movie
           </button>

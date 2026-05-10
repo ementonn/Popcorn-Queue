@@ -1096,4 +1096,52 @@ describe("API jobs", () => {
       expect(job.torrent).toMatchObject({ filename: "Torrent.Only.source.torrent", contentType: "application/x-bittorrent" });
     });
   });
+
+  it("derives manual intake release names when no override is supplied", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "popcorn-intake-derived-release-"));
+    const mediaPath = path.join(root, "Derived.Media.2024.1080p.WEB-DL.x265-GROUP.mkv");
+    await writeFile(mediaPath, "movie");
+    const config = testConfig();
+    const fetchImpl: typeof fetch = async () =>
+      new Response("d4:infod6:lengthi1eee", {
+        status: 200,
+        headers: { "content-type": "application/x-bittorrent", "content-disposition": 'attachment; filename="Derived.Torrent.2025.1080p.WEB-DL.x265-GROUP.torrent"' }
+      });
+
+    await withConfiguredServer(config, { autoPrepare: false, fetchImpl }, async (app) => {
+      const mediaResponse = await app.inject({
+        method: "POST",
+        url: "/api/intake/jobs",
+        payload: {
+          mediaPath,
+          ptpTarget: {
+            groupId: "401",
+            displayTitle: "Derived Media [2024]",
+            year: "2024",
+            imdbId: "tt1111111",
+            ptpUrl: "https://passthepopcorn.me/torrents.php?id=401"
+          }
+        }
+      });
+      expect(mediaResponse.statusCode).toBe(201);
+      expect(mediaResponse.json<{ job: Job }>().job.source.title).toBe("Derived.Media.2024.1080p.WEB-DL.x265-GROUP");
+
+      const torrentResponse = await app.inject({
+        method: "POST",
+        url: "/api/intake/jobs",
+        payload: {
+          torrentUrl: "https://tracker.example/download/derived.torrent",
+          ptpTarget: {
+            groupId: "402",
+            displayTitle: "Derived Torrent [2025]",
+            year: "2025",
+            imdbId: "tt2222222",
+            ptpUrl: "https://passthepopcorn.me/torrents.php?id=402"
+          }
+        }
+      });
+      expect(torrentResponse.statusCode).toBe(201);
+      expect(torrentResponse.json<{ job: Job }>().job.source.title).toBe("Derived.Torrent.2025.1080p.WEB-DL.x265-GROUP");
+    });
+  });
 });

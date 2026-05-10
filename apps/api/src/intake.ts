@@ -173,6 +173,10 @@ function filenameFromTorrentUrl(torrentUrl: string, response: Response): string 
   return safeFilename(decodeURIComponent(parsed.pathname), "source.torrent");
 }
 
+function torrentTitleFromFilename(filename: string): string {
+  return path.basename(filename).replace(/\.torrent$/i, "").trim();
+}
+
 export async function downloadTorrentFromUrl(torrentUrl: string, fetchImpl: typeof fetch): Promise<IntakeTorrentInput> {
   let url: URL;
   try {
@@ -256,7 +260,7 @@ async function readJsonManualIntakeRequest(request: FastifyRequest, fetchImpl: t
 function normalizeManualIntakeInput(input: { mediaPath?: string; releaseName?: string; ptpTarget: unknown; torrent: IntakeTorrentInput | null }): ManualIntakeInput {
   const mediaPath = (input.mediaPath ?? "").trim();
   if (!mediaPath && !input.torrent) throw new IntakeError("media_or_torrent_source_required");
-  const fallbackTitle = mediaPath ? mediaTitleFromPath(mediaPath) : input.torrent ? mediaTitleFromPath(input.torrent.filename) : "";
+  const fallbackTitle = mediaPath ? mediaTitleFromPath(mediaPath) : input.torrent ? torrentTitleFromFilename(input.torrent.filename) : "";
   const releaseName = (input.releaseName?.trim() || fallbackTitle).trim();
   if (!releaseName) throw new IntakeError("release_name_required");
 
