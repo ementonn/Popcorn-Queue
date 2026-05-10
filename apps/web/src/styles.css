@@ -1050,6 +1050,73 @@ h3 {
   font-size: 13px;
 }
 
+.phase-timeline {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.phase-timeline__item {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 9px 10px;
+}
+
+.phase-timeline__dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: #a6a6a6;
+}
+
+.phase-timeline__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--foreground);
+  font-size: 13px;
+}
+
+.phase-timeline__head span {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.phase-timeline__body p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.phase-timeline__item.done .phase-timeline__dot {
+  background: var(--green);
+}
+
+.phase-timeline__item.failed .phase-timeline__dot {
+  background: var(--red);
+}
+
+.phase-timeline__item.warning .phase-timeline__dot,
+.phase-timeline__item.running .phase-timeline__dot {
+  background: var(--amber);
+}
+
+.phase-timeline__item.skipped {
+  background: var(--muted);
+}
+
 .key-value,
 .diagnostic-grid {
   display: grid;

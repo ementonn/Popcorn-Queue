@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { downloadedBytesLabel, downloadDetail, downloadProgress, downloadSummary } from "../download-status.js";
+import { phaseLabel, phaseStateLabel, phaseStateTone } from "../job-display.js";
 import type { ApiJob, JobLogResponse, ReviewDraft, ReviewDraftPatch, ReviewGate } from "../types.js";
 import { DraftEditor } from "./DraftEditor.js";
 
@@ -109,6 +110,7 @@ export function ReviewPanel({ job, jobLogs, onSaveReviewDraft, onRegisterDraftFl
   const screenshots = job.artifacts?.screenshots ?? [];
   const draftLines = linesFromText(job.artifacts?.description);
   const recentLogs = jobLogs.lines.length ? jobLogs.lines.slice(-8) : (job.events ?? []).slice(-8).map((event) => event.message);
+  const phases = job.phases ?? [];
   const download = job.downloadStatus;
   const downloadProgressValue = downloadProgress(download);
 
@@ -237,6 +239,28 @@ export function ReviewPanel({ job, jobLogs, onSaveReviewDraft, onRegisterDraftFl
             </>
           ) : null}
         </div>
+      </section>
+
+      <section>
+        <h3>Phase Timeline</h3>
+        {phases.length ? (
+          <ol className="phase-timeline" aria-label="Phase timeline">
+            {phases.map((phase) => (
+              <li className={`phase-timeline__item ${phaseStateTone(phase.state)}`} key={phase.phase}>
+                <span className="phase-timeline__dot" aria-hidden="true" />
+                <div className="phase-timeline__body">
+                  <div className="phase-timeline__head">
+                    <strong>{phaseLabel(phase.phase)}</strong>
+                    <span>{phaseStateLabel(phase.state)}</span>
+                  </div>
+                  {phase.message ? <p>{phase.message}</p> : null}
+                </div>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          empty("No phase timeline yet.")
+        )}
       </section>
 
       <section>

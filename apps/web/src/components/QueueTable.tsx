@@ -1,4 +1,5 @@
 import { downloadDetail, downloadProgress, downloadSummary } from "../download-status.js";
+import { currentStepLabel } from "../job-display.js";
 import type { ApiJob, ReviewGate } from "../types.js";
 
 interface QueueTableProps {
@@ -34,11 +35,6 @@ function openGates(job: ApiJob): ReviewGate[] {
 function warningText(job: ApiJob): string {
   const warnings = openGates(job).filter((gate) => gate.severity === "warning").length;
   return warnings ? `${warnings} warning${warnings === 1 ? "" : "s"}` : "None";
-}
-
-function stepLabel(job: ApiJob): string {
-  if (job.state === "done" || job.humanStep === "Upload workflow complete") return "Complete";
-  return job.humanStep ?? job.phase;
 }
 
 function queueAction(job: ApiJob): QueueAction | null {
@@ -90,7 +86,7 @@ export function QueueTable({ jobs, selectedJobId, pendingAction, onSelect, onPau
                     </a>
                   </td>
                   <td data-label="Source">{sourceLabel(job)}</td>
-                  <td data-label="Step">{stepLabel(job)}</td>
+                  <td data-label="Step">{currentStepLabel(job)}</td>
                   <td className="download-cell" data-label="Download">
                     <div className="download-line">
                       <span>{downloadSummary(job.downloadStatus)}</span>

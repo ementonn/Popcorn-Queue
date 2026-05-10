@@ -159,6 +159,8 @@ test.describe("Popcorn Queue UI", () => {
     await expect(page.getByRole("columnheader", { name: "Download" })).toBeVisible();
     await expect(page.getByRole("columnheader", { name: "Blockers" })).toHaveCount(0);
     await expect(page.getByLabel("Upload queue").getByRole("link", { name: "ATHENA.2022.1080p.WEB.x265-SMURF" })).toBeVisible();
+    await expect(page.getByLabel("Upload queue").locator("tbody tr").filter({ hasText: "ATHENA.2022.1080p.WEB.x265-SMURF" }).locator('[data-label="Step"]')).toHaveText("Review");
+    await expect(page.getByLabel("Upload queue").locator("tbody tr").filter({ hasText: "Home.Sweet.Home.2021.1080p.WEB.x265-TJUPT" }).locator('[data-label="Step"]')).toHaveText("Prepare media");
     await expect(page.getByLabel("Upload queue")).toContainText("Downloaded");
     await expect(page.getByLabel("Upload queue")).toContainText("Downloading (42%)");
     await expect(page.getByLabel("Upload queue")).toContainText("42% - 8.0 MB/s - 12m");
@@ -670,12 +672,19 @@ test.describe("Popcorn Queue UI", () => {
       "Screenshots",
       "Upload Draft",
       "Torrent / qB Readiness",
+      "Phase Timeline",
       "Recent Job Log"
     ]);
     const drawer = page.getByTestId("job-drawer");
     await expect(drawer.locator(".readiness")).toHaveCount(0);
     await expect(drawer.getByRole("button", { name: "Close job review" })).toBeVisible();
-    await expect(drawer.getByText("Review screenshots and metadata")).toHaveCount(1);
+    await expect(drawer.locator(".job-drawer__title")).toContainText("Review");
+    await expect(drawer.getByText("Review screenshots and metadata")).toHaveCount(0);
+    await expect(drawer.getByText("Prepare media")).toBeVisible();
+    await expect(drawer.getByText("Review required.")).toBeVisible();
+    const timelineTop = await page.getByTestId("review-panel").getByRole("heading", { name: "Phase Timeline" }).evaluate((element) => element.getBoundingClientRect().top);
+    const logTop = await page.getByTestId("review-panel").getByRole("heading", { name: "Recent Job Log" }).evaluate((element) => element.getBoundingClientRect().top);
+    expect(timelineTop).toBeLessThan(logTop);
     const screenshotLink = page.getByTestId("review-panel").getByRole("link", { name: "Shot 1" });
     await expect(screenshotLink).toHaveAttribute("href", "https://example.test/shot1.png");
     await expect(screenshotLink.getByRole("img", { name: "Shot 1" })).toHaveAttribute("src", "https://example.test/shot1.png");

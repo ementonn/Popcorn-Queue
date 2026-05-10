@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { currentStepLabel } from "../job-display.js";
 import type { ApiJob } from "../types.js";
 
 interface JobDrawerProps {
@@ -16,11 +17,6 @@ const DESKTOP_MARGIN = 260;
 
 function releaseTitle(job: ApiJob): string {
   return job.artifacts?.releaseName ?? job.reviewDraft?.releaseName ?? job.uploadPlan?.releaseName?.generated ?? job.candidate?.title ?? job.source.title ?? job.id;
-}
-
-function stepLabel(job: ApiJob): string {
-  if (job.state === "done" || job.humanStep === "Upload workflow complete") return "Complete";
-  return job.humanStep ?? job.phase;
 }
 
 function clampWidth(value: number): number {
@@ -90,7 +86,7 @@ export function JobDrawer({ job, onClose, actions, children }: JobDrawerProps) {
         {actions ? <div className="job-drawer__actions">{actions}</div> : null}
         <div className="job-drawer__title">
           <h2>{title}</h2>
-          <p>{stepLabel(job)}</p>
+          <p>{currentStepLabel(job)}</p>
         </div>
       </header>
       <div className="job-drawer__body">{children}</div>
