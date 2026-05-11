@@ -74,7 +74,7 @@ const reviewJob = {
   },
   uploadPlan: {
     releaseName: { generated: "ATHENA.2022.1080p.WEB.x265-SMURF", group: "SMURF", container: "mkv", warnings: [] },
-    screenshots: { count: 6, imageHosts: ["imgbb"], toneMapHint: "bt709" },
+    screenshots: { count: 4, imageHosts: ["imgbb"], toneMapHint: "bt709" },
     torrentReuse: { strategy: "source", preservePieceHashes: true, reason: "Source torrent can be reused." },
     metadata: { imdbId: "tt1234567", providers: [], tags: ["web-dl", "hdr"] },
     media: {

@@ -25,7 +25,7 @@ import { appendJobEvent, readLogTail } from "./job-logs.js";
 import { createApiLogger } from "./logger.js";
 import { PrismaPersistence } from "./persistence.js";
 import { PreparationService } from "./preparation.js";
-import type { Job, PhaseRun, PhaseState } from "./jobs.js";
+import { JOB_PHASES, RETRYABLE_COMPLETED_PHASES, type Job, type PhaseRun, type PhaseState } from "./jobs.js";
 
 interface CreateManualJobBody extends Partial<TorrentCandidate> {
   title: string;
@@ -336,6 +336,7 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
     ...(imageUploader ? { imageUploader } : {}),
     ...(config.ptp.announceUrl ? { ptpAnnounceUrl: config.ptp.announceUrl } : {}),
     ...(torrentClient ? { torrentClient } : {}),
+    ...(options.commandExecutor ? { commandExecutor: options.commandExecutor } : {}),
     torrentClientOptions: {
       ...(config.integrations.qbittorrentCategory ? { category: config.integrations.qbittorrentCategory } : {}),
       ...(config.integrations.qbittorrentTags.length ? { tags: config.integrations.qbittorrentTags } : {}),
@@ -678,6 +679,15 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
     return jobRepository.retryFailed(id);
   }
 
+  async function retryCompletedPhaseJob(id: string, phase: UploadPhase) {
+    if (phase === "post-hook") {
+      const queued = await jobRepository.retryCompletedPhase(id, phase);
+      if (!queued) return null;
+      return reseedJob(id);
+    }
+    return preparation.retryCompletedPhase(id, phase);
+  }
+
   async function reseedJob(id: string) {
     const existing = await jobRepository.get(id);
     if (!existing) return null;
@@ -745,6 +755,15 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
 
   app.post<{ Params: { id: string } }>("/api/jobs/:id/retry-failed", async (request, reply) => {
     const job = await retryFailedJob(request.params.id);
+    if (!job) return reply.code(404).send({ error: "job_not_found" });
+    return { job };
+  });
+
+  app.post<{ Params: { id: string; phase: string } }>("/api/jobs/:id/phases/:phase/retry", async (request, reply) => {
+    const phase = request.params.phase as UploadPhase;
+    if (!JOB_PHASES.includes(phase)) return reply.code(400).send({ error: "unknown_phase" });
+    if (!RETRYABLE_COMPLETED_PHASES.has(phase)) return reply.code(400).send({ error: "phase_retry_not_available" });
+    const job = await retryCompletedPhaseJob(request.params.id, phase);
     if (!job) return reply.code(404).send({ error: "job_not_found" });
     return { job };
   });

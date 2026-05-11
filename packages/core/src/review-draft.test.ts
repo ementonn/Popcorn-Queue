@@ -70,6 +70,21 @@ describe("review draft contract", () => {
     });
   });
 
+  it("adds autodetected media feature suggestions to edition information", () => {
+    const uploadPlan = buildUploadPlan({ candidate });
+
+    const draft = buildReviewDraft({
+      candidate,
+      uploadPlan,
+      artifacts: {
+        mediaFeatureSuggestions: ["Dolby Vision", "HDR10", "3D Half SBS"]
+      }
+    });
+
+    expect(draft.remaster).toBe(true);
+    expect(draft.remasterTitle).toBe("Dolby Vision / HDR10 / 3D Half SBS");
+  });
+
   it("normalizes editable review draft patches", () => {
     const uploadPlan = buildUploadPlan({ candidate });
     const initial = buildReviewDraft({ candidate, uploadPlan, artifacts: {} });

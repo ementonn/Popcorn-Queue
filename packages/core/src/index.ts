@@ -5,6 +5,7 @@ export * from "./ptp-normalize.js";
 export * from "./ptp-form-fields.js";
 export * from "./ptp-options.js";
 export * from "./media.js";
+export * from "./media-features.js";
 export * from "./metadata.js";
 export * from "./ptp-upload-rules.js";
 export * from "./release.js";

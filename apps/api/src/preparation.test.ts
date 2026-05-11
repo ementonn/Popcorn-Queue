@@ -431,6 +431,7 @@ describe("PreparationService", () => {
       updateDownloadStatus: (id: string, status: Parameters<JobRepository["updateDownloadStatus"]>[1]) => repo.updateDownloadStatus(id, status),
       markPreparedForReview: (id: string, input: Parameters<JobRepository["markPreparedForReview"]>[1]) => repo.markPreparedForReview(id, input),
       markPreparationResult: (id: string, input: Parameters<JobRepository["markPreparationResult"]>[1]) => repo.markPreparationResult(id, input),
+      retryCompletedPhase: (id: string, phase: JobPhase) => repo.retryCompletedPhase(id, phase),
       markPreparationPhaseStarted: async (_id: string, phase: JobPhase) => {
         starts.push(phase);
         return repo.get(job.id);
@@ -565,9 +566,9 @@ describe("PreparationService", () => {
     expect(prepared.artifacts.mediaInfoJson).toContain("\"media\"");
     expect(prepared.artifacts.mediainfo).toBe(prepared.artifacts.mediaInfoText);
     expect(prepared.artifacts.mediainfo).toContain("Matroska");
-    expect(prepared.artifacts.screenshots).toHaveLength(6);
+    expect(prepared.artifacts.screenshots).toHaveLength(4);
     expect(prepared.artifacts.screenshots?.every((url) => url.startsWith("https://imgbb.test/"))).toBe(true);
-    expect(uploadedImages).toHaveLength(6);
+    expect(uploadedImages).toHaveLength(4);
     expect(prepared.artifacts.uploadTorrent).toBe("torrent/upload.torrent");
     expect(prepared.artifacts.qbReady).toBe(true);
     expect(uploadTorrentText).toContain("https://please.passthepopcorn.me/passkey/announce");

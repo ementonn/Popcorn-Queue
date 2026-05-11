@@ -281,8 +281,8 @@ describe("worker phase scaffold", () => {
 
     const output = await screenshots.run(context);
 
-    expect(output.plan.count).toBe(6);
-    expect(output.ffmpeg).toHaveLength(6);
+    expect(output.plan.count).toBe(4);
+    expect(output.ffmpeg).toHaveLength(4);
     expect(output.ffmpeg.every((attempt) => attempt.skippedReason === "External tool execution is disabled.")).toBe(true);
     expect(output.uploads.every((attempt) => attempt.skippedReason === "External upload execution is disabled.")).toBe(true);
     expect(calls.every((call) => call.args[0] !== "-hide_banner")).toBe(true);
@@ -334,8 +334,61 @@ describe("worker phase scaffold", () => {
     const output = await screenshots.run(context);
 
     expect(calls.some((call) => call.command === "ffmpeg")).toBe(true);
-    expect(uploaded).toHaveLength(6);
+    expect(uploaded).toHaveLength(4);
     expect(output.uploads.every((attempt) => attempt.result?.host === "imgbb")).toBe(true);
+  });
+
+  it("retries image hosting for existing local screenshot files", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-worker-image-retry-"));
+    const screenshotPath = path.join(tempDir, "shot-1.png");
+    await writeFile(screenshotPath, "png");
+    const imageHostUpload = createDefaultPhaseHandlers().find((handler): handler is PhaseHandler<"image-host-upload"> => handler.phase === "image-host-upload");
+    if (!imageHostUpload) throw new Error("Missing image-host-upload handler");
+    const store = new MemoryPhaseOutputStore({
+      screenshots: {
+        status: "completed",
+        message: "Stored screenshots reused.",
+        producedAt: "2026-05-08T00:00:00.000Z",
+        mediaPath: null,
+        outputDirectory: tempDir,
+        plan: buildUploadPlan({ candidate }).screenshots,
+        tools: {
+          ffmpeg: { tool: "ffmpeg", command: "ffmpeg", available: true, version: null, location: null, error: null },
+          oxipng: { tool: "oxipng", command: "oxipng", available: true, version: null, location: null, error: null }
+        },
+        ffmpeg: [],
+        optimizer: [],
+        uploads: [{ filePath: screenshotPath, host: null, skippedReason: "Stored local screenshot is pending image host upload." }],
+        files: [screenshotPath]
+      }
+    });
+
+    const output = await imageHostUpload.run(
+      createPhaseContext(
+        "job-image-retry",
+        { candidate, workingDirectory: tempDir },
+        {
+          outputStore: store,
+          runExternalTools: true,
+          imageUploader: {
+            name: "imgbb",
+            async uploadImage(filePath) {
+              return {
+                host: "imgbb",
+                url: `https://i.ibb.co/${path.basename(filePath)}`,
+                viewerUrl: `https://ibb.co/${path.basename(filePath)}`,
+                deleteUrl: null,
+                width: 1920,
+                height: 1080
+              };
+            }
+          }
+        }
+      )
+    );
+
+    expect(output.uploads[0]?.result?.url).toBe("https://i.ibb.co/shot-1.png");
+    expect(output.hostedJsonPath).toBe(path.join(tempDir, "hosted.json"));
   });
 
   it("fails the upload phase cleanly when no PTP submitter is configured", async () => {

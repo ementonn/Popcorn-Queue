@@ -6,6 +6,7 @@ import {
   buildScreenshotPlan,
   buildUploadPlan,
   createDownloadErrorStatus,
+  detectMediaFeatures,
   isDownloadComplete,
   type BrowserCheckResult,
   type DownloadStatus,
@@ -168,6 +169,7 @@ export interface PhaseOutputMap {
     mediaInfoText: CommandAttempt;
     mediaInfoJson: CommandAttempt;
     summary: MediaInfoSummary | null;
+    features: ReturnType<typeof detectMediaFeatures>;
   };
   screenshots: PhaseOutputBase & {
     mediaPath: string | null;
@@ -874,7 +876,11 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
           mediaInfo: mediaInfoText,
           mediaInfoText,
           mediaInfoJson,
-          summary
+          summary,
+          features: detectMediaFeatures({
+            mediaInfoJson: mediaInfoJson.result?.stdout ?? null,
+            releaseName: plan.releaseName.generated || context.job.candidate.title
+          })
         };
       }
     },
@@ -966,7 +972,31 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
             uploads: []
           };
         }
-        const hostedUploads = screenshots.uploads
+        const uploads: ImageUploadAttempt[] = [];
+        for (const attempt of screenshots.uploads) {
+          if (attempt.result) {
+            uploads.push({
+              filePath: attempt.filePath,
+              host: attempt.host,
+              result: attempt.result
+            });
+            continue;
+          }
+          if (!context.runExternalTools) {
+            uploads.push({ filePath: attempt.filePath, host: context.imageUploader?.name ?? attempt.host, skippedReason: "External upload execution is disabled." });
+          } else if (!context.imageUploader) {
+            uploads.push({ filePath: attempt.filePath, host: null, skippedReason: "Image host uploader is not configured." });
+          } else if (!(await pathExists(attempt.filePath))) {
+            uploads.push({ filePath: attempt.filePath, host: context.imageUploader.name, skippedReason: "Screenshot file was not created." });
+          } else {
+            try {
+              uploads.push({ filePath: attempt.filePath, host: context.imageUploader.name, result: await context.imageUploader.uploadImage(attempt.filePath) });
+            } catch (error) {
+              uploads.push({ filePath: attempt.filePath, host: context.imageUploader.name, error: error instanceof Error ? error.message : String(error) });
+            }
+          }
+        }
+        const hostedUploads = uploads
           .filter((attempt) => attempt.result)
           .map((attempt) => ({
             filePath: attempt.filePath,
@@ -983,7 +1013,7 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
           ...base("completed", "Image host upload results collected from screenshot phase."),
           files: screenshots.files,
           hostedJsonPath,
-          uploads: screenshots.uploads
+          uploads
         };
       }
     },
@@ -1226,6 +1256,35 @@ export class PhaseRunner {
       });
 
       if (output.status === "blocked" || output.status === "failed") {
+        return context.snapshotOutputs();
+      }
+    }
+
+    return context.snapshotOutputs();
+  }
+
+  async runSelected(phases: UploadPhase[], context: PhaseContext): Promise<Partial<PhaseOutputMap>> {
+    const selected = new Set(phases);
+
+    for (const handler of this.handlers.filter((item) => selected.has(item.phase))) {
+      if (await context.stopRequested()) {
+        await context.log("info", "Stop requested before phase.", { phase: handler.phase });
+        return context.snapshotOutputs();
+      }
+
+      await context.onPhaseStarted(handler.phase);
+      await context.log("info", "Starting phase.", { phase: handler.phase });
+      const output = await handler.run(context);
+      await context.writeOutput(handler.phase, output);
+      await context.onPhaseFinished(handler.phase, output);
+      await context.log(output.status === "failed" ? "error" : output.status === "blocked" ? "warn" : "info", "Finished phase.", {
+        phase: handler.phase,
+        status: output.status,
+        message: output.message
+      });
+
+      const reviewGateBlock = output.status === "blocked" && (handler.phase === "duplicate-check" || handler.phase === "preflight");
+      if (output.status === "failed" || (output.status === "blocked" && !reviewGateBlock)) {
         return context.snapshotOutputs();
       }
     }

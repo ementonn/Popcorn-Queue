@@ -38,6 +38,9 @@ test.describe("job review drawer", () => {
     await page.route("**/api/jobs/*/retry-failed", async (route) => {
       await route.fulfill({ json: { job: drawerJobs[0] } });
     });
+    await page.route("**/api/jobs/*/phases/*/retry", async (route) => {
+      await route.fulfill({ json: { job: drawerJobs[0] } });
+    });
   });
 
   test("opens job drawer over the table", async ({ page }, testInfo) => {
@@ -269,6 +272,21 @@ test.describe("job review drawer", () => {
     await expect(page.getByTestId("review-panel").getByRole("heading", { name: "MediaInfo / BDInfo" })).toHaveCount(0);
     await expect(page.getByLabel("Description")).toHaveValue(/General[\s\S]*Format\s*: Matroska/);
   });
+
+  test("retries completed timeline phases from the drawer", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only drawer assertion.");
+    let retryUrl = "";
+    await page.route("**/api/jobs/*/phases/*/retry", async (route) => {
+      retryUrl = route.request().url();
+      await route.fulfill({ json: { job: drawerJobs[0] } });
+    });
+    await page.goto("/");
+    await page.getByRole("link", { name: "Drawer.Movie.2026.1080p.WEB.x265-GROUP" }).click();
+
+    await page.getByTestId("review-panel").getByRole("button", { name: "Retry" }).first().click();
+
+    await expect.poll(() => retryUrl).toContain("/api/jobs/job-drawer/phases/inspect-media/retry");
+  });
 });
 
 const mediaInfoDescription = "General\nFormat                                   : Matroska";
@@ -309,13 +327,17 @@ const baseJob = {
   },
   uploadPlan: {
     releaseName: { generated: "Drawer.Movie.2026.1080p.WEB.x265-GROUP", group: "GROUP", container: "mkv", warnings: [] },
-    screenshots: { count: 6, imageHosts: ["imgbb"], toneMapHint: "bt709" },
+    screenshots: { count: 4, imageHosts: ["imgbb"], toneMapHint: "bt709" },
     torrentReuse: { strategy: "source", preservePieceHashes: true, reason: "source torrent" },
     metadata: { imdbId: "tt1234567", providers: [], tags: ["web-dl"] },
     media: { container: "mkv", discType: "file", audio: { codecs: [], languages: ["English"], commentaryLikely: false }, subtitles: { languages: [], embeddedLikely: false }, trumpableChecks: [] },
     reviewGates: []
   },
-  phases: []
+  phases: [
+    { phase: "inspect-media", state: "done", retryCount: 0, message: "MediaInfo command completed." },
+    { phase: "screenshots", state: "done", retryCount: 0, message: "Screenshot plan prepared." },
+    { phase: "upload", state: "done", retryCount: 0, message: "PTP upload submitted." }
+  ]
 };
 
 const drawerJobs = [

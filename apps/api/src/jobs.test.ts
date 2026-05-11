@@ -230,6 +230,83 @@ describe("JobRepository pre-upload state machine", () => {
     });
   });
 
+  it("queues retry for completed screenshot phase and dependent evidence phases", () => {
+    const repo = new JobRepository();
+    let job = repo.markPreparedForReview(repo.create({ candidate }).id, { uploadReadiness: "ready", artifacts: {} })!;
+    for (const phase of job.phases) phase.state = "done";
+
+    job = repo.retryCompletedPhase(job.id, "screenshots")!;
+
+    expect(job.state).toBe("preparing");
+    expect(job.phase).toBe("screenshots");
+    expect(job.phases.find((phase) => phase.phase === "screenshots")).toMatchObject({ state: "pending", retryCount: 1, message: "Retry queued." });
+    expect(job.phases.find((phase) => phase.phase === "image-host-upload")).toMatchObject({ state: "pending", message: "Waiting for screenshots retry." });
+    expect(job.phases.find((phase) => phase.phase === "preflight")).toMatchObject({ state: "pending", message: "Waiting for screenshots retry." });
+    expect(job.phases.find((phase) => phase.phase === "review")).toMatchObject({ state: "pending", message: "Waiting for screenshots retry." });
+  });
+
+  it("queues inspect-media retry without resetting screenshots", () => {
+    const repo = new JobRepository();
+    let job = repo.markPreparedForReview(repo.create({ candidate }).id, { uploadReadiness: "ready", artifacts: {} })!;
+    for (const phase of job.phases) phase.state = "done";
+
+    job = repo.retryCompletedPhase(job.id, "inspect-media")!;
+
+    expect(job.state).toBe("preparing");
+    expect(job.phase).toBe("inspect-media");
+    expect(job.phases.find((phase) => phase.phase === "inspect-media")).toMatchObject({ state: "pending", retryCount: 1 });
+    expect(job.phases.find((phase) => phase.phase === "screenshots")).toMatchObject({ state: "done" });
+    expect(job.phases.find((phase) => phase.phase === "preflight")).toMatchObject({ state: "pending", message: "Waiting for inspect-media retry." });
+  });
+
+  it("keeps manually cleared edition information from being re-added by media suggestions", () => {
+    const repo = new JobRepository();
+    let job = repo.create({ candidate });
+    const suggestedArtifacts = {
+      mediaFeatureSuggestions: ["HDR10"],
+      releaseName: "Movie.2024.1080p.BluRay.x264-GROUP"
+    };
+
+    job = repo.markPreparationResult(job.id, {
+      state: "review",
+      phase: "review",
+      uploadReadiness: "ready",
+      humanStep: "Review upload package",
+      artifacts: suggestedArtifacts,
+      phases: job.phases,
+      eventLevel: "info",
+      eventMessage: "Upload package ready for review."
+    })!;
+    expect(job.reviewDraft?.remaster).toBe(true);
+    expect(job.reviewDraft?.remasterTitle).toBe("HDR10");
+
+    job = repo.updateReviewDraft(job.id, { remaster: false, remasterTitle: "" })!;
+    job = repo.markPreparationResult(job.id, {
+      state: "review",
+      phase: "review",
+      uploadReadiness: "ready",
+      humanStep: "Review upload package",
+      artifacts: suggestedArtifacts,
+      phases: job.phases,
+      eventLevel: "info",
+      eventMessage: "Upload package ready for review."
+    })!;
+
+    expect(job.reviewDraft?.remaster).toBe(false);
+    expect(job.reviewDraft?.remasterTitle).toBe("");
+  });
+
+  it("rejects completed-phase retry for unsafe phases", () => {
+    const repo = new JobRepository();
+    let job = repo.markPreparedForReview(repo.create({ candidate }).id, { uploadReadiness: "ready", artifacts: {} })!;
+    for (const phase of job.phases) phase.state = "done";
+
+    job = repo.retryCompletedPhase(job.id, "upload")!;
+
+    expect(job.events.at(0)?.message).toBe("Phase retry is not available for upload.");
+    expect(job.phases.find((phase) => phase.phase === "upload")).toMatchObject({ state: "done", retryCount: 0 });
+  });
+
   it("resumes paused jobs to their active phase state", () => {
     const repo = new JobRepository();
     let preparing = repo.create({ candidate });

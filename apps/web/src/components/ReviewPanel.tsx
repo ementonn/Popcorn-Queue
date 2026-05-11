@@ -9,7 +9,19 @@ interface ReviewPanelProps {
   jobLogs: JobLogResponse;
   onSaveReviewDraft(jobId: string, patch: ReviewDraftPatch): Promise<void> | void;
   onRegisterDraftFlush?(jobId: string, flush: (() => Promise<void>) | null): void;
+  onRetryPhase?(jobId: string, phase: string): void;
 }
+
+const RETRYABLE_COMPLETED_PHASES = new Set([
+  "metadata",
+  "duplicate-check",
+  "inspect-media",
+  "screenshots",
+  "image-host-upload",
+  "torrent-create",
+  "preflight",
+  "post-hook"
+]);
 
 function openGates(job: ApiJob, severity: ReviewGate["severity"]): ReviewGate[] {
   return job.uploadPlan?.reviewGates.filter((gate) => gate.status === "open" && gate.severity === severity) ?? [];
@@ -108,7 +120,7 @@ function qbittorrentSeedStatus(job: ApiJob): string {
   return job.artifacts?.qbReady ? "Ready to seed" : "Waiting";
 }
 
-export function ReviewPanel({ job, jobLogs, onSaveReviewDraft, onRegisterDraftFlush }: ReviewPanelProps) {
+export function ReviewPanel({ job, jobLogs, onSaveReviewDraft, onRegisterDraftFlush, onRetryPhase }: ReviewPanelProps) {
   const draft = useMemo(() => (job ? job.reviewDraft ?? fallbackReviewDraft(job) : null), [job]);
   const [draftSaving, setDraftSaving] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
@@ -285,7 +297,19 @@ export function ReviewPanel({ job, jobLogs, onSaveReviewDraft, onRegisterDraftFl
                 <div className="phase-timeline__body">
                   <div className="phase-timeline__head">
                     <strong>{phaseLabel(phase.phase)}</strong>
-                    <span>{phaseStateLabel(phase.state)}</span>
+                    <div className="phase-timeline__actions">
+                      <span>{phaseStateLabel(phase.state)}</span>
+                      {onRetryPhase && phase.state === "done" && RETRYABLE_COMPLETED_PHASES.has(phase.phase) ? (
+                        <button
+                          type="button"
+                          className="phase-timeline__retry"
+                          onClick={() => onRetryPhase(job.id, phase.phase)}
+                          disabled={job.state === "preparing" || job.state === "uploading"}
+                        >
+                          Retry
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                   {phase.message ? <p>{phase.message}</p> : null}
                 </div>

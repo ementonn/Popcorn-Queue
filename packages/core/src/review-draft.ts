@@ -56,6 +56,7 @@ export interface BuildReviewDraftInput {
     releaseName?: string;
     description?: string;
     mediainfo?: string;
+    mediaFeatureSuggestions?: string[];
   };
   checkResult?: BrowserCheckResult;
 }
@@ -263,6 +264,16 @@ function stringList(value: unknown, mapping?: Map<string, string>): string[] | u
   return [...new Set(raw.map((item) => String(item).trim()).filter(Boolean).map((item) => (mapping ? mappedId(item, mapping) : item)))];
 }
 
+export function mergeSlashSeparated(left: string, right: string): string {
+  return [
+    ...new Set(
+      [...left.split("/"), ...right.split("/")]
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )
+  ].join(" / ");
+}
+
 function artistImportance(value: unknown): PtpArtistDraft["importance"] {
   const next = stringValue(value);
   return next === "1" || next === "2" || next === "3" || next === "4" || next === "5" ? next : "";
@@ -285,6 +296,7 @@ function artistList(value: unknown): PtpArtistDraft[] | undefined {
 export function buildReviewDraft(input: BuildReviewDraftInput): ReviewDraft {
   const parsed = input.uploadPlan.parsed;
   const movie = input.checkResult?.decision.movie;
+  const remasterTitle = mergeSlashSeparated("", (input.artifacts.mediaFeatureSuggestions ?? []).join(" / "));
   return {
     releaseName: input.artifacts.releaseName ?? input.uploadPlan.releaseName.generated,
     description: input.artifacts.description ?? "",
@@ -301,9 +313,9 @@ export function buildReviewDraft(input: BuildReviewDraftInput): ReviewDraft {
     trailer: "",
     tags: "",
     synopsis: "",
-    remaster: false,
+    remaster: Boolean(remasterTitle),
     remasterYear: "",
-    remasterTitle: "",
+    remasterTitle,
     special: "",
     subtitles: stringList(input.uploadPlan.media.subtitles.languages, SUBTITLE_LABEL_TO_ID) ?? [],
     trumpable: [],

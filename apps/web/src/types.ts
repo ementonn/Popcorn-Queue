@@ -150,6 +150,7 @@ export interface ApiJob {
     uploadTorrent?: string;
     qbReady?: boolean;
     reviewWarnings?: string[];
+    mediaFeatureSuggestions?: string[];
     ptpUrl?: string;
     ptpGroupId?: string;
     ptpTorrentId?: string;

@@ -140,7 +140,8 @@ test.describe("Popcorn Queue UI", () => {
     await expect(page.getByPlaceholder("Search jobs, IMDb, source")).toBeVisible();
     await expect(page.getByRole("button", { name: "Start Upload" })).toHaveCount(0);
     await expect(page.locator(".toolbar").getByRole("button", { name: "Upload" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+    await page.getByRole("link", { name: "ATHENA.2022.1080p.WEB.x265-SMURF" }).click();
+    await expect(page.locator(".toolbar").getByRole("button", { name: "Pause" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Retry failed steps" })).toBeVisible();
     await expect(page.locator(".toolbar").getByRole("button", { name: "Diagnostics" })).toHaveCount(0);
     await expect(page.getByRole("link", { name: /Diagnostics/i })).toBeVisible();
@@ -1093,7 +1094,7 @@ const apiJobs = [
     },
     uploadPlan: {
       releaseName: { generated: "ATHENA.2022.1080p.WEB.x265-SMURF", group: "SMURF", container: "mkv", warnings: [] },
-      screenshots: { count: 6, imageHosts: ["imgbb", "imgbox"], toneMapHint: "bt709" },
+      screenshots: { count: 4, imageHosts: ["imgbb", "imgbox"], toneMapHint: "bt709" },
       torrentReuse: { strategy: "search-generic-cache", preservePieceHashes: true, reason: "A source .torrent was uploaded." },
       metadata: { imdbId: "tt1234567", providers: [], tags: ["web-dl"] },
       media: { container: "mkv", discType: "file", audio: { codecs: [], languages: ["French"], commentaryLikely: false }, subtitles: { languages: [], embeddedLikely: false }, trumpableChecks: [] },
@@ -1134,7 +1135,7 @@ const apiJobs = [
     },
     uploadPlan: {
       releaseName: { generated: "Home.Sweet.Home.2021.1080p.WEB.x265-TJUPT", group: "TJUPT", container: "mkv", warnings: [] },
-      screenshots: { count: 6, imageHosts: ["imgbb"], toneMapHint: "bt2020" },
+      screenshots: { count: 4, imageHosts: ["imgbb"], toneMapHint: "bt2020" },
       torrentReuse: { strategy: "hash-from-content", preservePieceHashes: false, reason: "No reusable source torrent is available yet." },
       metadata: { imdbId: null, providers: [], tags: ["web-dl"] },
       media: { container: "mkv", discType: "file", audio: { codecs: [], languages: ["English"], commentaryLikely: false }, subtitles: { languages: [], embeddedLikely: false }, trumpableChecks: [] },

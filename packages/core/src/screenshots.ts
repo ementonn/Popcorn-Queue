@@ -18,10 +18,10 @@ export interface ScreenshotPlan {
 export interface ScreenshotPlanOptions {
   imageHosts?: string[];
   count?: number;
+  rng?: () => number;
 }
 
-const MOVIE_PERCENTAGES = [0.12, 0.22, 0.34, 0.48, 0.62, 0.76];
-const EPISODE_PERCENTAGES = [0.18, 0.42, 0.66];
+const DEFAULT_SCREENSHOT_COUNT = 4;
 const DEFAULT_IMAGE_HOSTS = ["ptpimg", "imgbb", "imgbox", "freeimage"];
 
 function formatTimestamp(seconds: number): string {
@@ -33,17 +33,24 @@ function formatTimestamp(seconds: number): string {
 }
 
 export function buildScreenshotPlan(parsed: ParsedTorrentCandidate, durationSeconds = 7200, options: ScreenshotPlanOptions = {}): ScreenshotPlan {
-  const isEpisode = /\bS\d{2}E\d{2}\b/i.test(parsed.title);
-  const percentages = (isEpisode ? EPISODE_PERCENTAGES : MOVIE_PERCENTAGES).slice(0, options.count);
+  const count = Math.max(1, Math.floor(options.count ?? DEFAULT_SCREENSHOT_COUNT));
   const safeDuration = durationSeconds > 0 && durationSeconds < 900 ? durationSeconds : Math.max(durationSeconds, 900);
-  const timestamps = percentages.map((percentage, index) => {
-    const maxTimestamp = Math.max(0, Math.floor(safeDuration) - 1);
-    const seconds = Math.min(Math.floor(safeDuration * percentage), maxTimestamp);
+  const maxTimestamp = Math.max(0, Math.floor(safeDuration) - 1);
+  const rng = options.rng ?? Math.random;
+  const usableStart = safeDuration < 60 ? 0 : Math.floor(safeDuration * 0.1);
+  const usableEnd = safeDuration < 60 ? maxTimestamp : Math.max(usableStart, Math.min(maxTimestamp, Math.floor(safeDuration * 0.9)));
+  const usableLength = Math.max(1, usableEnd - usableStart + 1);
+  const timestamps = Array.from({ length: count }, (_, index) => {
+    const windowStart = usableStart + Math.floor((usableLength * index) / count);
+    const windowEnd = usableStart + Math.floor((usableLength * (index + 1)) / count) - 1;
+    const windowLength = Math.max(1, windowEnd - windowStart + 1);
+    const randomOffset = Math.min(windowLength - 1, Math.floor(Math.max(0, Math.min(0.999999, rng())) * windowLength));
+    const seconds = Math.max(0, Math.min(maxTimestamp, windowStart + randomOffset));
     return {
       index: index + 1,
       seconds,
       label: formatTimestamp(seconds),
-      reason: index === 0 ? "Avoids opening credits." : index === percentages.length - 1 ? "Avoids end credits." : "Even content coverage."
+      reason: index === 0 ? "Avoids opening credits." : index === count - 1 ? "Avoids end credits." : "Randomized content coverage."
     };
   });
 

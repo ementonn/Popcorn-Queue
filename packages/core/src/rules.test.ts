@@ -31,7 +31,7 @@ describe("Upsies-style upload plan", () => {
 
     expect(plan.releaseName.generated).toBe("Perfect.Days.2023.1080p.BluRay.x264-GROUP");
     expect(plan.metadata.providers.find((provider) => provider.provider === "imdb")?.status).toBe("ready");
-    expect(plan.screenshots.count).toBe(6);
+    expect(plan.screenshots.count).toBe(4);
     expect(plan.torrentReuse.strategy).toBe("reuse-source-torrent");
     expect(plan.torrentReuse.preservePieceHashes).toBe(true);
   });

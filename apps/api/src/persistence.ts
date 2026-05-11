@@ -272,6 +272,10 @@ export class PrismaJobRepository {
     return this.withJob(id, (repo) => repo.retryFailed(id));
   }
 
+  async retryCompletedPhase(id: string, phase: Parameters<JobRepository["retryCompletedPhase"]>[1]): Promise<Job | null> {
+    return this.withJob(id, (repo) => repo.retryCompletedPhase(id, phase));
+  }
+
   async updateDownloadStatus(id: string, status: DownloadStatus): Promise<Job | null> {
     return this.withJob(id, (repo) => repo.updateDownloadStatus(id, status));
   }

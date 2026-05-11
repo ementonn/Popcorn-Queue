@@ -596,6 +596,57 @@ describe("API jobs", () => {
     });
   });
 
+  it("retries completed evidence phases without rerunning unrelated completed phases", async () => {
+    const { JobRepository } = await import("./jobs.js");
+    const repo = new JobRepository();
+    let seeded = repo.markPreparedForReview(
+      repo.create({
+        candidate: {
+          site: "mteam",
+          title: "Movie.2024.1080p.WEB-DL.x265.HDR-GROUP",
+          imdbId: "tt1234567"
+        }
+      }).id,
+      {
+        uploadReadiness: "ready",
+        artifacts: {
+          mediaFiles: ["media/upload/movie.mkv"],
+          screenshots: ["https://imgbb.test/1.png", "https://imgbb.test/2.png"],
+          mediaInfoText: "General\nComplete name : movie.mkv\n",
+          mediainfo: "General\nComplete name : movie.mkv\n",
+          uploadTorrent: "torrent/upload.torrent"
+        }
+      }
+    )!;
+    seeded.phases = seeded.phases.map((phase) => ({ ...phase, state: "done" as const, message: "Done." }));
+    persistenceState.initialJobs = [seeded];
+
+    await withServer(async (app) => {
+      const response = await app.inject({ method: "POST", url: `/api/jobs/${seeded.id}/phases/inspect-media/retry` });
+      expect(response.statusCode).toBe(200);
+      const job = response.json<{ job: Job }>().job;
+
+      expect(job.state).toBe("review");
+      expect(job.phase).toBe("review");
+      expect(job.artifacts.screenshots).toEqual(["https://imgbb.test/1.png", "https://imgbb.test/2.png"]);
+      expect(job.artifacts.mediaInfoText).toContain("Complete name");
+      expect(job.phases.find((phase) => phase.phase === "inspect-media")).toMatchObject({
+        state: "done",
+        retryCount: 1,
+        message: "Media analysis plan prepared."
+      });
+      expect(job.phases.find((phase) => phase.phase === "screenshots")).toMatchObject({
+        state: "done",
+        retryCount: 0,
+        message: "Done."
+      });
+
+      const unsafe = await app.inject({ method: "POST", url: `/api/jobs/${seeded.id}/phases/upload/retry` });
+      expect(unsafe.statusCode).toBe(400);
+      expect(unsafe.json()).toEqual({ error: "phase_retry_not_available" });
+    });
+  });
+
   it("automatically prepares created jobs to review when enabled", async () => {
     await withServer(
       async (app) => {

@@ -11,6 +11,7 @@ import {
   pauseJob,
   resumeJob,
   retryFailed,
+  retryPhase,
   runDiagnosticCheck,
   saveReviewDraft,
   startUpload
@@ -281,6 +282,29 @@ export function App() {
       setGlobalLogs(await loadGlobalLogs());
     } catch (error) {
       setStatus({ tone: "error", text: error instanceof Error ? error.message : `${label} failed` });
+    } finally {
+      setPendingJobAction((current) => (current?.jobId === pending.jobId && current.kind === pending.kind ? null : current));
+    }
+  }, [pendingJobAction, withLocalDraft]);
+
+  const handleRetryPhase = useCallback(async (jobId: string, phase: string) => {
+    if (pendingJobAction) return;
+    const pending: PendingJobAction = {
+      jobId,
+      label: "Retry phase...",
+      kind: "retry"
+    };
+    setPendingJobAction(pending);
+    setStatus({ tone: "info", text: `Retrying ${phase}` });
+    try {
+      const result = await retryPhase(jobId, phase);
+      setJobs((current) => updateJob(current, withLocalDraft(result.job)));
+      setSelectedJobId(result.job.id);
+      setStatus({ tone: "success", text: `Retry ${phase}: ${result.job.id}` });
+      setJobLogs(await loadJobLogs(result.job.id));
+      setGlobalLogs(await loadGlobalLogs());
+    } catch (error) {
+      setStatus({ tone: "error", text: error instanceof Error ? error.message : `Retry ${phase} failed` });
     } finally {
       setPendingJobAction((current) => (current?.jobId === pending.jobId && current.kind === pending.kind ? null : current));
     }
@@ -561,6 +585,7 @@ export function App() {
             jobLogs={jobLogs}
             onSaveReviewDraft={handleSaveReviewDraft}
             onRegisterDraftFlush={handleRegisterDraftFlush}
+            onRetryPhase={handleRetryPhase}
           />
         </JobDrawer>
       ) : null}

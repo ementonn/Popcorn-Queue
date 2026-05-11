@@ -14,10 +14,24 @@ const parsed: ParsedTorrentCandidate = {
 };
 
 describe("screenshot plans", () => {
+  it("defaults to four randomized timestamps", () => {
+    const plan = buildScreenshotPlan(parsed, 7200, { rng: () => 0.5 });
+
+    expect(plan.timestamps).toHaveLength(4);
+    expect(plan.count).toBe(4);
+  });
+
+  it("changes timestamps when the random source changes", () => {
+    const first = buildScreenshotPlan(parsed, 7200, { rng: () => 0.1 });
+    const second = buildScreenshotPlan(parsed, 7200, { rng: () => 0.9 });
+
+    expect(first.timestamps.map((timestamp) => timestamp.seconds)).not.toEqual(second.timestamps.map((timestamp) => timestamp.seconds));
+  });
+
   it("keeps timestamps inside short fixture videos", () => {
     const plan = buildScreenshotPlan(parsed, 2);
 
-    expect(plan.timestamps).toHaveLength(6);
+    expect(plan.timestamps).toHaveLength(4);
     expect(plan.timestamps.every((timestamp) => timestamp.seconds >= 0 && timestamp.seconds < 2)).toBe(true);
   });
 });

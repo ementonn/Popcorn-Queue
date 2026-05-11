@@ -164,6 +164,10 @@ export function retryFailed(jobId: string): Promise<{ job: ApiJob }> {
   return fetchJson<{ job: ApiJob }>(`/api/jobs/${jobId}/retry-failed`, { method: "POST", body: "{}" });
 }
 
+export function retryPhase(jobId: string, phase: string): Promise<{ job: ApiJob }> {
+  return fetchJson<{ job: ApiJob }>(`/api/jobs/${jobId}/phases/${phase}/retry`, { method: "POST", body: "{}" });
+}
+
 export function resolveGate(jobId: string, gateId: string): Promise<{ job: ApiJob }> {
   return fetchJson<{ job: ApiJob }>(`/api/jobs/${jobId}/review-gates/${gateId}/resolve`, { method: "POST", body: "{}" });
 }

@@ -1093,6 +1093,20 @@ h3 {
   font-weight: 650;
 }
 
+.phase-timeline__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.phase-timeline__retry {
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
 .phase-timeline__body p {
   margin: 4px 0 0;
   color: var(--text-muted);

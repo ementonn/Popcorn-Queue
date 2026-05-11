@@ -3,6 +3,7 @@ import {
   UPLOAD_PHASES,
   buildReviewDraft,
   buildUploadPlan,
+  mergeSlashSeparated,
   mergeReviewDraft,
   parseTorrentTitle,
   type BrowserCheckResult,
@@ -80,6 +81,7 @@ export interface Job {
     qbReady?: boolean;
     reviewBlockers?: string[];
     reviewWarnings?: string[];
+    mediaFeatureSuggestions?: string[];
     ptpUrl?: string;
     ptpGroupId?: string;
     ptpTorrentId?: string;
@@ -139,6 +141,28 @@ export interface PreparationPhaseFinishedInput {
   message: string;
 }
 
+export const RETRYABLE_COMPLETED_PHASES = new Set<JobPhase>([
+  "metadata",
+  "duplicate-check",
+  "inspect-media",
+  "screenshots",
+  "image-host-upload",
+  "torrent-create",
+  "preflight",
+  "post-hook"
+]);
+
+export const PHASE_RETRY_DEPENDENCIES: Partial<Record<JobPhase, JobPhase[]>> = {
+  metadata: ["metadata", "preflight", "review"],
+  "duplicate-check": ["duplicate-check", "preflight", "review"],
+  "inspect-media": ["inspect-media", "preflight", "review"],
+  screenshots: ["screenshots", "image-host-upload", "preflight", "review"],
+  "image-host-upload": ["image-host-upload", "preflight", "review"],
+  "torrent-create": ["torrent-create", "preflight", "review"],
+  preflight: ["preflight", "review"],
+  "post-hook": ["post-hook"]
+};
+
 export interface RestoreValidationFailureInput {
   message: string;
   missingFiles: string[];
@@ -187,6 +211,7 @@ function buildJobReviewDraft(job: Pick<Job, "candidate" | "uploadPlan" | "artifa
   if (job.artifacts.releaseName !== undefined) artifacts.releaseName = job.artifacts.releaseName;
   if (job.artifacts.description !== undefined) artifacts.description = job.artifacts.description;
   if (job.artifacts.mediainfo !== undefined) artifacts.mediainfo = job.artifacts.mediainfo;
+  if (job.artifacts.mediaFeatureSuggestions !== undefined) artifacts.mediaFeatureSuggestions = job.artifacts.mediaFeatureSuggestions;
   const input: Parameters<typeof buildReviewDraft>[0] = {
     candidate: job.candidate,
     uploadPlan: job.uploadPlan,
@@ -203,6 +228,8 @@ function ensureReviewDraft(job: Job): void {
     job.reviewDraft = draft;
     return;
   }
+  const draftWasEdited = job.events.some((event) => event.message === "Review draft updated.");
+  const shouldMergeEditionSuggestions = !draftWasEdited || job.reviewDraft.remaster || Boolean(job.reviewDraft.remasterTitle);
   job.reviewDraft = {
     ...draft,
     ...job.reviewDraft,
@@ -217,6 +244,8 @@ function ensureReviewDraft(job: Job): void {
     imdb: job.reviewDraft.imdb || draft.imdb || "",
     title: job.reviewDraft.title || draft.title || "",
     year: job.reviewDraft.year || draft.year || "",
+    remaster: shouldMergeEditionSuggestions ? job.reviewDraft.remaster || Boolean(draft.remasterTitle) : Boolean(job.reviewDraft.remaster),
+    remasterTitle: shouldMergeEditionSuggestions ? mergeSlashSeparated(job.reviewDraft.remasterTitle, draft.remasterTitle) : job.reviewDraft.remasterTitle,
     subtitles: job.reviewDraft.subtitles.length ? job.reviewDraft.subtitles : draft.subtitles,
     trumpable: job.reviewDraft.trumpable.length ? job.reviewDraft.trumpable : draft.trumpable,
     artists: job.reviewDraft.artists?.length ? job.reviewDraft.artists : draft.artists ?? []
@@ -592,6 +621,35 @@ export class JobRepository {
     job.state = "preparing";
     job.humanStep = "Preparing upload package";
     return this.record(job, "info", "Retry queued.", { phase: retryPhase });
+  }
+
+  retryCompletedPhase(id: string, phase: JobPhase): Job | null {
+    const job = this.jobs.get(id);
+    if (!job) return null;
+    if (!RETRYABLE_COMPLETED_PHASES.has(phase)) {
+      return this.record(job, "warn", `Phase retry is not available for ${phase}.`, { phase });
+    }
+    const run = job.phases.find((item) => item.phase === phase);
+    if (!run) return this.record(job, "warn", `Phase retry is not available for ${phase}.`, { phase });
+    if (run.state !== "done" && run.state !== "failed" && run.state !== "warning") {
+      return this.record(job, "warn", `Phase retry is only available after ${phase} has run.`, { phase, state: run.state });
+    }
+
+    const affected = PHASE_RETRY_DEPENDENCIES[phase] ?? [phase];
+    for (const affectedPhase of affected) {
+      const affectedRun = job.phases.find((item) => item.phase === affectedPhase);
+      if (!affectedRun) continue;
+      if (affectedPhase === phase) affectedRun.retryCount += 1;
+      affectedRun.state = "pending";
+      affectedRun.message = affectedPhase === phase ? "Retry queued." : `Waiting for ${phase} retry.`;
+      delete affectedRun.startedAt;
+      delete affectedRun.finishedAt;
+    }
+
+    job.state = phase === "post-hook" ? "needs_reseed" : "preparing";
+    job.phase = phase;
+    job.humanStep = phase === "post-hook" ? "Needs reseed" : "Preparing upload package";
+    return this.record(job, "info", "Phase retry queued.", { phase, affected });
   }
 
   markNeedsReseed(id: string, message: string): Job | null {
