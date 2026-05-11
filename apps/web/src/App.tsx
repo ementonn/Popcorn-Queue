@@ -154,6 +154,7 @@ export function App() {
     [jobs, selectedJobId]
   );
   const selectedJobComplete = selectedJob?.state === "done";
+  const selectedJobCanPause = Boolean(selectedJob && selectedJob.state !== "done" && selectedJob.state !== "needs_reseed");
   const selectedPendingAction = pendingJobAction?.jobId === selectedJob?.id ? pendingJobAction : null;
 
   const visibleJobs = useMemo(() => {
@@ -469,14 +470,16 @@ export function App() {
               </label>
               {!selectedJobComplete ? (
                 <>
-                  <button
-                    type="button"
-                    onClick={() => runJobAction(selectedJob?.state === "paused" ? resumeJob : pauseJob, selectedJob?.state === "paused" ? "Resume" : "Pause")}
-                    disabled={!selectedJob || Boolean(selectedPendingAction)}
-                  >
-                    {selectedJob?.state === "paused" ? <Play size={15} /> : <Pause size={15} />}
-                    {selectedJob?.state === "paused" ? "Resume" : "Pause"}
-                  </button>
+                  {selectedJobCanPause ? (
+                    <button
+                      type="button"
+                      onClick={() => runJobAction(selectedJob?.state === "paused" ? resumeJob : pauseJob, selectedJob?.state === "paused" ? "Resume" : "Pause")}
+                      disabled={!selectedJob || Boolean(selectedPendingAction)}
+                    >
+                      {selectedJob?.state === "paused" ? <Play size={15} /> : <Pause size={15} />}
+                      {selectedJob?.state === "paused" ? "Resume" : "Pause"}
+                    </button>
+                  ) : null}
                   <button type="button" onClick={() => runJobAction(retryFailed, "Retry failed steps", { kind: "retry" })} disabled={!selectedJob || Boolean(selectedPendingAction)}>
                     <RefreshCcw size={15} />
                     Retry failed steps
@@ -531,18 +534,20 @@ export function App() {
                     {selectedPendingAction?.kind === "upload" ? "Uploading..." : "Upload"}
                   </button>
                 ) : null}
-                <button
-                  type="button"
-                  onClick={() =>
-                    runJobAction(selectedJob.state === "paused" ? resumeJob : pauseJob, selectedJob.state === "paused" ? "Resume" : "Pause", {
-                      kind: selectedJob.state === "paused" ? "resume" : "pause"
-                    })
-                  }
-                  disabled={Boolean(selectedPendingAction)}
-                >
-                  {selectedJob.state === "paused" ? <Play size={15} /> : <Pause size={15} />}
-                  {selectedJob.state === "paused" ? "Resume" : "Pause"}
-                </button>
+                {selectedJobCanPause ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      runJobAction(selectedJob.state === "paused" ? resumeJob : pauseJob, selectedJob.state === "paused" ? "Resume" : "Pause", {
+                        kind: selectedJob.state === "paused" ? "resume" : "pause"
+                      })
+                    }
+                    disabled={Boolean(selectedPendingAction)}
+                  >
+                    {selectedJob.state === "paused" ? <Play size={15} /> : <Pause size={15} />}
+                    {selectedJob.state === "paused" ? "Resume" : "Pause"}
+                  </button>
+                ) : null}
                 <button type="button" onClick={() => runJobAction(retryFailed, "Retry failed steps", { kind: "retry" })} disabled={Boolean(selectedPendingAction)}>
                   <RefreshCcw size={15} />
                   Retry

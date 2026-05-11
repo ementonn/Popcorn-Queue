@@ -678,6 +678,74 @@ describe("API jobs", () => {
     });
   });
 
+  it("retries needs-reseed jobs by handing the upload torrent to qBittorrent", async () => {
+    const jobPath = await mkdtemp(path.join(os.tmpdir(), "popcorn-retry-reseed-job-"));
+    const torrentPath = path.join(jobPath, "torrent", "upload.torrent");
+    await mkdir(path.join(jobPath, "media", "upload"), { recursive: true });
+    await mkdir(path.dirname(torrentPath), { recursive: true });
+    await writeFile(path.join(jobPath, "media", "upload", "Restored.Movie.2024.1080p.BluRay.x264-GROUP.mkv"), "mkv");
+    await writeFile(torrentPath, "torrent");
+    const addCalls: Array<{ torrentPath: string; downloadPath: string; skipHashCheck?: boolean }> = [];
+
+    await withServer(
+      async (app) => {
+        const imported = await app.inject({
+          method: "POST",
+          url: "/api/jobs/import",
+          payload: {
+            jobPath,
+            manifest: {
+              version: 1,
+              jobId: "needs-reseed-job",
+              createdAt: "2026-05-08T00:00:00.000Z",
+              state: "done",
+              source: { title: "Restored.Movie.2024.1080p.BluRay.x264-GROUP" },
+              uploadFiles: ["media/upload/Restored.Movie.2024.1080p.BluRay.x264-GROUP.mkv"],
+              torrentFile: "torrent/upload.torrent",
+              sourceRef: { sourceId: "source-1", originalDownloadPresent: false }
+            }
+          }
+        });
+        expect(imported.statusCode).toBe(201);
+        expect(imported.json<{ job: Job }>().job.state).toBe("needs_reseed");
+
+        const retry = await app.inject({ method: "POST", url: "/api/jobs/needs-reseed-job/retry-failed" });
+        expect(retry.statusCode).toBe(200);
+        const job = retry.json<{ job: Job }>().job;
+
+        expect(job.state).toBe("seeding");
+        expect(job.phase).toBe("done");
+        expect(job.phases.find((phase) => phase.phase === "post-hook")).toMatchObject({ state: "done" });
+        expect(addCalls).toEqual([
+          {
+            torrentPath,
+            downloadPath: path.join(jobPath, "media", "upload"),
+            skipHashCheck: true
+          }
+        ]);
+      },
+      {
+        autoPrepare: false,
+        torrentClient: {
+          name: "mock-qb",
+          async addTorrent(options) {
+            addCalls.push(options);
+            return { infoHash: "ABC123" };
+          },
+          async getStatus() {
+            throw new Error("getStatus should not run during retry reseed.");
+          },
+          async isComplete() {
+            return true;
+          },
+          async listFiles() {
+            return [];
+          }
+        }
+      }
+    );
+  });
+
   it("keeps restored done jobs in review when required upload files are missing", async () => {
     const jobPath = await mkdtemp(path.join(os.tmpdir(), "popcorn-missing-restored-job-"));
     await withServer(async (app) => {

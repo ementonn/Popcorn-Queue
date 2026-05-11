@@ -223,6 +223,26 @@ function ensureReviewDraft(job: Job): void {
   };
 }
 
+export function repairJobRuntimeState(job: Job): Job {
+  const postHook = job.phases.find((phase) => phase.phase === "post-hook");
+  if (postHook?.state === "failed" && (job.state === "done" || job.phase === "done")) {
+    job.state = "needs_reseed";
+    job.phase = "post-hook";
+    job.humanStep = "Needs reseed";
+    const done = job.phases.find((phase) => phase.phase === "done");
+    if (done) {
+      done.state = "pending";
+      done.message = "Waiting for seed handoff.";
+      delete done.finishedAt;
+    }
+  }
+  if (job.state === "needs_reseed") {
+    job.phase = "post-hook";
+    job.humanStep = "Needs reseed";
+  }
+  return job;
+}
+
 export class JobRepository {
   private readonly jobs = new Map<string, Job>();
 
@@ -230,7 +250,10 @@ export class JobRepository {
     initialJobs: Job[] = [],
     private readonly options: JobRepositoryOptions = {}
   ) {
-    for (const job of initialJobs) this.jobs.set(job.id, job);
+    for (const job of initialJobs) {
+      const repaired = repairJobRuntimeState(job);
+      this.jobs.set(repaired.id, repaired);
+    }
   }
 
   createFromBrowser(input: {
@@ -490,9 +513,6 @@ export class JobRepository {
   markUploadResult(id: string, result: PtpUploadResult, phases?: PhaseRun[]): Job | null {
     const job = this.jobs.get(id);
     if (!job) return null;
-    job.state = "done";
-    job.phase = "done";
-    job.humanStep = "Complete";
     job.artifacts = {
       ...job.artifacts,
       ptpUrl: result.ptpUrl,
@@ -502,6 +522,19 @@ export class JobRepository {
     if (phases) job.phases = phases;
     this.setPhaseState(job, "upload", "done", "PTP upload submitted.");
     const postHook = job.phases.find((run) => run.phase === "post-hook");
+    if (postHook?.state === "failed") {
+      job.state = "needs_reseed";
+      job.phase = "post-hook";
+      job.humanStep = "Needs reseed";
+      return this.record(job, "warn", "PTP upload complete but qBittorrent seed handoff failed.", {
+        ...result,
+        message: postHook.message
+      });
+    }
+
+    job.state = "done";
+    job.phase = "done";
+    job.humanStep = "Complete";
     if (!postHook || postHook.state === "pending" || postHook.state === "running") {
       this.setPhaseState(job, "post-hook", "skipped", "No post-upload hooks are configured.");
     }
@@ -565,7 +598,9 @@ export class JobRepository {
     const job = this.jobs.get(id);
     if (!job) return null;
     job.state = "needs_reseed";
+    job.phase = "post-hook";
     job.humanStep = "Needs reseed";
+    this.setPhaseState(job, "post-hook", "warning", message);
     return this.record(job, "warn", message);
   }
 
@@ -573,7 +608,10 @@ export class JobRepository {
     const job = this.jobs.get(id);
     if (!job) return null;
     job.state = "seeding";
+    job.phase = "done";
     job.humanStep = "Seeding";
+    this.setPhaseState(job, "post-hook", "done", "PTP upload torrent handed to qBittorrent for seeding.");
+    this.setPhaseState(job, "done", "done", "Complete.");
     return this.record(job, "info", "Reseed complete.", { infoHash });
   }
 

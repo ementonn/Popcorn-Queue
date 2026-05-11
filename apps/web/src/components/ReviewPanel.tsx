@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { downloadedBytesLabel, downloadDetail, downloadProgress, downloadSummary } from "../download-status.js";
 import { phaseLabel, phaseStateLabel, phaseStateTone } from "../job-display.js";
-import type { ApiJob, JobLogResponse, ReviewDraft, ReviewDraftPatch, ReviewGate } from "../types.js";
+import type { ApiJob, JobLogResponse, PtpMovieSummary, ReviewDraft, ReviewDraftPatch, ReviewGate } from "../types.js";
 import { DraftEditor } from "./DraftEditor.js";
 
 interface ReviewPanelProps {
@@ -80,6 +80,25 @@ function sourceTorrentLabel(job: ApiJob): string {
   return job.torrent?.filePath ?? filename ?? "pending";
 }
 
+function formatPtpMovieTitle(movie: PtpMovieSummary): string {
+  const primary = (movie.Title || movie.Name || "").trim();
+  const aka = movie.Name && movie.Title && movie.Name !== movie.Title ? ` AKA ${movie.Name}` : "";
+  const year = movie.Year ? ` [${movie.Year}]` : "";
+  return `${primary}${aka}${year}`.trim();
+}
+
+function matchedPtpMovie(job: ApiJob): { url: string; label: string } | null {
+  const url = job.checkResult?.decision?.ptpUrl ?? job.source.ptpTarget?.ptpUrl ?? null;
+  if (!url) return null;
+  const label =
+    (job.checkResult?.decision?.movie ? formatPtpMovieTitle(job.checkResult.decision.movie) : "") ||
+    job.source.ptpTarget?.displayTitle ||
+    job.candidate?.title ||
+    job.source.title ||
+    url;
+  return { url, label };
+}
+
 function qbittorrentSeedStatus(job: ApiJob): string {
   const qbState = job.downloadStatus?.state;
   const postHookDone = job.phases?.some((phase) => phase.phase === "post-hook" && phase.state === "done");
@@ -111,6 +130,7 @@ export function ReviewPanel({ job, jobLogs, onSaveReviewDraft, onRegisterDraftFl
   const draftLines = linesFromText(job.artifacts?.description);
   const recentLogs = jobLogs.lines.length ? jobLogs.lines.slice(-8) : (job.events ?? []).slice(-8).map((event) => event.message);
   const phases = job.phases ?? [];
+  const matchedMovie = matchedPtpMovie(job);
   const download = job.downloadStatus;
   const downloadProgressValue = downloadProgress(download);
 
@@ -131,12 +151,26 @@ export function ReviewPanel({ job, jobLogs, onSaveReviewDraft, onRegisterDraftFl
 
       <section>
         <h3>Duplicate/PTP Result</h3>
-        {job.checkResult?.decision ? (
+        {job.checkResult?.decision || matchedMovie ? (
           <div className="key-value">
-            <span>Status</span>
-            <strong>{job.checkResult.decision.status}</strong>
-            <span>Reason</span>
-            <strong>{job.checkResult.decision.reason}</strong>
+            {job.checkResult?.decision ? (
+              <>
+                <span>Status</span>
+                <strong>{job.checkResult.decision.status}</strong>
+                <span>Reason</span>
+                <strong>{job.checkResult.decision.reason}</strong>
+              </>
+            ) : null}
+            {matchedMovie ? (
+              <>
+                <span>Matched PTP movie</span>
+                <strong>
+                  <a href={matchedMovie.url} target="_blank" rel="noreferrer">
+                    {matchedMovie.label}
+                  </a>
+                </strong>
+              </>
+            ) : null}
           </div>
         ) : (
           empty("No duplicate result yet.")
@@ -144,7 +178,7 @@ export function ReviewPanel({ job, jobLogs, onSaveReviewDraft, onRegisterDraftFl
       </section>
 
       <section>
-        <h3>Download</h3>
+        <h3>Source</h3>
         {download ? (
           <div className="download-review">
             <div className="download-review-head">
@@ -168,7 +202,7 @@ export function ReviewPanel({ job, jobLogs, onSaveReviewDraft, onRegisterDraftFl
             </div>
           </div>
         ) : (
-          empty("No qB snapshot yet.")
+          empty("No source status yet.")
         )}
       </section>
 

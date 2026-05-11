@@ -53,6 +53,59 @@ describe("JobRepository pre-upload state machine", () => {
     expect(job.phases.find((phase) => phase.phase === "done")).toMatchObject({ state: "done", message: "Complete." });
   });
 
+  it("keeps uploaded jobs out of Complete when the qBittorrent post-hook fails", () => {
+    const repo = new JobRepository();
+    let job = repo.markPreparedForReview(repo.create({ candidate }).id, { uploadReadiness: "ready", artifacts: {} })!;
+    job = repo.startUpload(job.id)!;
+
+    const phases = job.phases.map((phase) => {
+      if (phase.phase === "upload") return { ...phase, state: "done" as const, message: "PTP upload submitted." };
+      if (phase.phase === "post-hook") {
+        return { ...phase, state: "failed" as const, message: "qBittorrent add torrent failed with HTTP 403." };
+      }
+      return phase;
+    });
+
+    job = repo.markUploadResult(
+      job.id,
+      { ptpUrl: "https://passthepopcorn.me/torrents.php?id=1&torrentid=2", groupId: "1", torrentId: "2" },
+      phases
+    )!;
+
+    expect(job.state).toBe("needs_reseed");
+    expect(job.phase).toBe("post-hook");
+    expect(job.humanStep).toBe("Needs reseed");
+    expect(job.artifacts.ptpUrl).toBe("https://passthepopcorn.me/torrents.php?id=1&torrentid=2");
+    expect(job.phases.find((phase) => phase.phase === "post-hook")).toMatchObject({
+      state: "failed",
+      message: "qBittorrent add torrent failed with HTTP 403."
+    });
+    expect(job.phases.find((phase) => phase.phase === "done")).toMatchObject({ state: "pending" });
+  });
+
+  it("repairs legacy complete jobs whose post-hook failed", () => {
+    const seedRepo = new JobRepository();
+    let legacy = seedRepo.markPreparedForReview(seedRepo.create({ candidate }).id, { uploadReadiness: "ready", artifacts: {} })!;
+    legacy = seedRepo.startUpload(legacy.id)!;
+    legacy.state = "done";
+    legacy.phase = "done";
+    legacy.humanStep = "Complete";
+    legacy.phases = legacy.phases.map((phase) => {
+      if (phase.phase === "upload") return { ...phase, state: "done" as const, message: "PTP upload submitted." };
+      if (phase.phase === "post-hook") return { ...phase, state: "failed" as const, message: "qBittorrent add torrent failed with HTTP 403." };
+      if (phase.phase === "done") return { ...phase, state: "done" as const, message: "Complete." };
+      return phase;
+    });
+
+    const repo = new JobRepository([legacy]);
+    const repaired = repo.get(legacy.id)!;
+
+    expect(repaired.state).toBe("needs_reseed");
+    expect(repaired.phase).toBe("post-hook");
+    expect(repaired.humanStep).toBe("Needs reseed");
+    expect(repaired.phases.find((phase) => phase.phase === "done")).toMatchObject({ state: "pending" });
+  });
+
   it("blocks Start Upload when readiness is blocked", () => {
     const repo = new JobRepository();
     let job = repo.create({

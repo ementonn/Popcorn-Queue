@@ -151,23 +151,34 @@ export class QBittorrentClient implements TorrentClient {
   }
 
   async addTorrent(options: TorrentClientAddOptions): Promise<{ infoHash: string }> {
-    await this.login();
     const torrentBytes = await readFile(options.torrentPath);
     const infoHash = computeTorrentInfoHash(torrentBytes);
-    const form = new FormData();
-    const torrentBuffer = torrentBytes.buffer.slice(torrentBytes.byteOffset, torrentBytes.byteOffset + torrentBytes.byteLength) as ArrayBuffer;
-    form.set("torrents", new Blob([torrentBuffer]), path.basename(options.torrentPath));
-    form.set("savepath", options.downloadPath);
-    if (options.category) form.set("category", options.category);
-    if (options.tags?.length) form.set("tags", options.tags.join(","));
-    if (options.skipHashCheck !== undefined) form.set("skip_checking", options.skipHashCheck ? "true" : "false");
 
-    const init: RequestInit = {
-      method: "POST",
-      body: form
-    };
-    if (this.cookie) init.headers = { cookie: this.cookie };
-    const response = await this.fetchImpl(this.url("/api/v2/torrents/add"), init);
+    let response: Response | null = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await this.login();
+      const form = new FormData();
+      const torrentBuffer = torrentBytes.buffer.slice(torrentBytes.byteOffset, torrentBytes.byteOffset + torrentBytes.byteLength) as ArrayBuffer;
+      form.set("torrents", new Blob([torrentBuffer]), path.basename(options.torrentPath));
+      form.set("savepath", options.downloadPath);
+      if (options.category) form.set("category", options.category);
+      if (options.tags?.length) form.set("tags", options.tags.join(","));
+      if (options.skipHashCheck !== undefined) form.set("skip_checking", options.skipHashCheck ? "true" : "false");
+
+      const init: RequestInit = {
+        method: "POST",
+        body: form
+      };
+      if (this.cookie) init.headers = { cookie: this.cookie };
+      response = await this.fetchImpl(this.url("/api/v2/torrents/add"), init);
+      if ((response.status === 401 || response.status === 403) && attempt === 0) {
+        this.cookie = null;
+        continue;
+      }
+      break;
+    }
+
+    if (!response) throw new Error("qBittorrent add torrent did not return a response.");
     if (!response.ok) throw new Error(`qBittorrent add torrent failed with HTTP ${response.status}.`);
     return { infoHash };
   }

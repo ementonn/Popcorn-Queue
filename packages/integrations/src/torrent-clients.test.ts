@@ -73,6 +73,50 @@ describe("QBittorrentClient", () => {
     expect(calls[1]).toBe("http://127.0.0.1:10049/api/v2/torrents/info?hashes=abc");
   });
 
+  it("refreshes qBittorrent auth and retries add torrent when a cached session is rejected", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "popcorn-qb-reauth-"));
+    const torrentPath = path.join(directory, "upload.torrent");
+    await writeFile(torrentPath, "d4:infod6:lengthi5e4:name9:movie.mkvee");
+    const calls: Array<{ url: string; cookie: string | null }> = [];
+    let addAttempts = 0;
+    let loginCount = 0;
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const headers = init?.headers as Record<string, string> | Headers | undefined;
+      calls.push({
+        url: String(input),
+        cookie: headers instanceof Headers ? headers.get("cookie") : headers?.cookie ?? null
+      });
+      if (String(input).endsWith("/api/v2/auth/login")) {
+        loginCount += 1;
+        return new Response("Ok.", { status: 200, headers: { "set-cookie": `SID=session-${loginCount}` } });
+      }
+      if (String(input).endsWith("/api/v2/torrents/add")) {
+        addAttempts += 1;
+        return new Response(addAttempts === 1 ? "Forbidden" : "Ok.", { status: addAttempts === 1 ? 403 : 200 });
+      }
+      return new Response("Not found", { status: 404 });
+    };
+
+    const client = new QBittorrentClient({
+      baseUrl: "127.0.0.1:10049",
+      username: "user",
+      password: "pass",
+      fetchImpl
+    });
+
+    await expect(client.addTorrent({ torrentPath, downloadPath: "/tmp/media", skipHashCheck: true })).resolves.toMatchObject({
+      infoHash: expect.stringMatching(/^[A-F0-9]{40}$/)
+    });
+    expect(calls.map((call) => call.url)).toEqual([
+      "http://127.0.0.1:10049/api/v2/auth/login",
+      "http://127.0.0.1:10049/api/v2/torrents/add",
+      "http://127.0.0.1:10049/api/v2/auth/login",
+      "http://127.0.0.1:10049/api/v2/torrents/add"
+    ]);
+    expect(calls[1]?.cookie).toBe("SID=session-1");
+    expect(calls[3]?.cookie).toBe("SID=session-2");
+  });
+
   it("computes torrent info hashes and lists qBittorrent files without external network", async () => {
     const torrent = Buffer.from("d4:infod6:lengthi5e4:name9:movie.mkvee");
     const calls: string[] = [];

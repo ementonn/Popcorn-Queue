@@ -672,7 +672,35 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
   }
 
   async function retryFailedJob(id: string) {
+    const existing = await jobRepository.get(id);
+    if (!existing) return null;
+    if (existing.state === "needs_reseed") return reseedJob(id);
     return jobRepository.retryFailed(id);
+  }
+
+  async function reseedJob(id: string) {
+    const existing = await jobRepository.get(id);
+    if (!existing) return null;
+    if (!torrentClient) {
+      return jobRepository.markNeedsReseed(existing.id, "qBittorrent is not configured for automatic reseed.");
+    }
+
+    const jobRoot = existing.workspace?.jobRoot ?? buildJobWorkspacePaths(config.paths.dataRoot, existing.id).jobRoot;
+    const torrentPath = path.join(jobRoot, existing.artifacts.uploadTorrent ?? "torrent/upload.torrent");
+    const downloadPath = path.join(jobRoot, "media", "upload");
+    try {
+      const addOptions: Parameters<TorrentDownloadClient["addTorrent"]>[0] = {
+        torrentPath,
+        downloadPath,
+        skipHashCheck: true
+      };
+      if (config.integrations.qbittorrentCategory) addOptions.category = config.integrations.qbittorrentCategory;
+      if (config.integrations.qbittorrentTags.length) addOptions.tags = config.integrations.qbittorrentTags;
+      const result = await torrentClient.addTorrent(addOptions);
+      return jobRepository.markReseeded(existing.id, result.infoHash);
+    } catch {
+      return jobRepository.markNeedsReseed(existing.id, "reseed failed");
+    }
   }
 
   async function resumeJob(id: string) {
@@ -728,31 +756,9 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
   });
 
   app.post<{ Params: { id: string } }>("/api/jobs/:id/reseed", async (request, reply) => {
-    const existing = await jobRepository.get(request.params.id);
-    if (!existing) return reply.code(404).send({ error: "job_not_found" });
-    if (!torrentClient) {
-      const job = await jobRepository.markNeedsReseed(existing.id, "qBittorrent is not configured for automatic reseed.");
-      return { job };
-    }
-
-    const jobRoot = existing.workspace?.jobRoot ?? buildJobWorkspacePaths(config.paths.dataRoot, existing.id).jobRoot;
-    const torrentPath = path.join(jobRoot, existing.artifacts.uploadTorrent ?? "torrent/upload.torrent");
-    const downloadPath = path.join(jobRoot, "media", "upload");
-    try {
-      const addOptions = {
-        torrentPath,
-        downloadPath,
-        tags: config.integrations.qbittorrentTags,
-        skipHashCheck: true
-      };
-      if (config.integrations.qbittorrentCategory) Object.assign(addOptions, { category: config.integrations.qbittorrentCategory });
-      const result = await torrentClient.addTorrent(addOptions);
-      const job = await jobRepository.markReseeded(existing.id, result.infoHash);
-      return { job };
-    } catch {
-      const job = await jobRepository.markNeedsReseed(existing.id, "reseed failed");
-      return { job };
-    }
+    const job = await reseedJob(request.params.id);
+    if (!job) return reply.code(404).send({ error: "job_not_found" });
+    return { job };
   });
 
   app.post<{ Params: { id: string } }>("/api/jobs/:id/debug/skip", async (request, reply) => {

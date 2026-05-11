@@ -598,7 +598,16 @@ test.describe("Popcorn Queue UI", () => {
     const preparingJob = { ...apiJobs[1], id: "job-preparing", state: "preparing", humanStep: "Preparing upload media", artifacts: { releaseName: "PREPARING.2024.1080p.WEB.x265-GROUP" } };
     const pausedJob = { ...apiJobs[1], id: "job-paused", state: "paused", humanStep: "Preparing upload media", artifacts: { releaseName: "PAUSED.2024.1080p.WEB.x265-GROUP" } };
     const doneJob = { ...apiJobs[0], id: "job-done", state: "done", phase: "done", humanStep: "Complete", artifacts: { ...apiJobs[0].artifacts, releaseName: "DONE.2024.1080p.WEB.x265-GROUP" } };
+    const needsReseedJob = {
+      ...apiJobs[0],
+      id: "job-needs-reseed",
+      state: "needs_reseed",
+      phase: "post-hook",
+      humanStep: "Needs reseed",
+      artifacts: { ...apiJobs[0].artifacts, releaseName: "NEEDS.RESEED.2024.1080p.WEB.x265-GROUP" }
+    };
     let retryCalled = false;
+    let reseedRetryCalled = false;
     let pauseCalled = false;
     let resumeCalled = false;
     let reviewStartedUpload = false;
@@ -608,7 +617,7 @@ test.describe("Popcorn Queue UI", () => {
         await route.fallback();
         return;
       }
-      await route.fulfill({ json: { jobs: [reviewJob, failedJob, preparingJob, pausedJob, doneJob] } });
+      await route.fulfill({ json: { jobs: [reviewJob, failedJob, needsReseedJob, preparingJob, pausedJob, doneJob] } });
     });
     await page.route("**/api/jobs/job-review/start-upload", async (route) => {
       reviewStartedUpload = true;
@@ -617,6 +626,10 @@ test.describe("Popcorn Queue UI", () => {
     await page.route("**/api/jobs/job-failed/retry-failed", async (route) => {
       retryCalled = true;
       await route.fulfill({ json: { job: { ...failedJob, state: "preparing", humanStep: "Preparing upload package" } } });
+    });
+    await page.route("**/api/jobs/job-needs-reseed/retry-failed", async (route) => {
+      reseedRetryCalled = true;
+      await route.fulfill({ json: { job: { ...needsReseedJob, state: "seeding", phase: "done", humanStep: "Seeding" } } });
     });
     await page.route("**/api/jobs/job-preparing/pause", async (route) => {
       pauseCalled = true;
@@ -630,15 +643,26 @@ test.describe("Popcorn Queue UI", () => {
     await page.goto("/");
     const reviewRow = page.getByRole("row", { name: /REVIEW\.2024/ });
     const failedRow = page.getByRole("row", { name: /FAILED\.2024/ });
+    const needsReseedRow = page.getByRole("row", { name: /NEEDS\.RESEED\.2024/ });
     const preparingRow = page.getByRole("row", { name: /PREPARING\.2024/ });
     const pausedRow = page.getByRole("row", { name: /PAUSED\.2024/ });
     const doneRow = page.getByRole("row", { name: /DONE\.2024/ });
 
     await expect(reviewRow.getByRole("button", { name: "Upload", exact: true })).toBeVisible();
     await expect(failedRow.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+    await expect(needsReseedRow.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
     await expect(preparingRow.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
     await expect(pausedRow.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
     await expect(doneRow.getByRole("button")).toHaveCount(0);
+
+    await needsReseedRow.click();
+    const reseedDrawer = page.getByTestId("job-drawer");
+    await expect(reseedDrawer).toContainText("Needs reseed");
+    await expect(reseedDrawer.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+    await expect(reseedDrawer.getByRole("button", { name: "Pause", exact: true })).toHaveCount(0);
+    await expect(page.locator(".toolbar").getByRole("button", { name: "Pause", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Close job review" }).click();
+    await expect(page.getByTestId("job-drawer")).toHaveCount(0);
 
     await reviewRow.getByRole("button", { name: "Upload", exact: true }).click();
     await expect(page.getByTestId("job-drawer")).toContainText("REVIEW.2024.1080p.WEB.x265-GROUP");
@@ -648,6 +672,10 @@ test.describe("Popcorn Queue UI", () => {
 
     await failedRow.getByRole("button", { name: "Retry", exact: true }).click();
     await expect.poll(() => retryCalled).toBe(true);
+    await page.getByRole("button", { name: "Close job review" }).click();
+    await expect(page.getByTestId("job-drawer")).toHaveCount(0);
+    await needsReseedRow.getByRole("button", { name: "Retry", exact: true }).click();
+    await expect.poll(() => reseedRetryCalled).toBe(true);
     await page.getByRole("button", { name: "Close job review" }).click();
     await expect(page.getByTestId("job-drawer")).toHaveCount(0);
     await preparingRow.getByRole("button", { name: "Pause", exact: true }).click();
@@ -668,7 +696,7 @@ test.describe("Popcorn Queue UI", () => {
     expect(headings).toEqual([
       "Warnings",
       "Duplicate/PTP Result",
-      "Download",
+      "Source",
       "Screenshots",
       "Upload Draft",
       "Torrent / qB Readiness",
@@ -682,6 +710,8 @@ test.describe("Popcorn Queue UI", () => {
     await expect(drawer.getByText("Review screenshots and metadata")).toHaveCount(0);
     await expect(drawer.getByText("Prepare media")).toBeVisible();
     await expect(drawer.getByText("Review required.")).toBeVisible();
+    await expect(page.getByTestId("review-panel")).toContainText("Matched PTP movie");
+    await expect(page.getByTestId("review-panel").getByRole("link", { name: "Athena AKA Athene [2022]" })).toHaveAttribute("href", "https://passthepopcorn.me/torrents.php?id=123");
     const timelineTop = await page.getByTestId("review-panel").getByRole("heading", { name: "Phase Timeline" }).evaluate((element) => element.getBoundingClientRect().top);
     const logTop = await page.getByTestId("review-panel").getByRole("heading", { name: "Recent Job Log" }).evaluate((element) => element.getBoundingClientRect().top);
     expect(timelineTop).toBeLessThan(logTop);
@@ -871,7 +901,7 @@ test.describe("Popcorn Queue UI", () => {
     await page.getByRole("link", { name: "Home.Sweet.Home.2021.1080p.WEB.x265-TJUPT" }).click();
     const reviewPanel = page.getByTestId("review-panel");
 
-    await expect(reviewPanel.getByRole("heading", { name: "Download" })).toBeVisible();
+    await expect(reviewPanel.getByRole("heading", { name: "Source" })).toBeVisible();
     await expect(reviewPanel).toContainText("Downloading (42%)");
     await expect(reviewPanel).toContainText("42% - 8.0 MB/s - 12m");
     await expect(reviewPanel).toContainText("4.0 MB / 10.0 MB");
@@ -980,7 +1010,7 @@ test.describe("Popcorn Queue UI", () => {
 
     await expect(page.getByTestId("job-drawer")).toBeVisible();
     await expect(page.getByTestId("job-drawer")).toContainText("Home.Sweet.Home.2021.1080p.WEB.x265-TJUPT");
-    await expect(page.getByTestId("review-panel").getByRole("heading", { name: "Download" })).toBeVisible();
+    await expect(page.getByTestId("review-panel").getByRole("heading", { name: "Source" })).toBeVisible();
   });
 
   test("surfaces API error details on pause actions", async ({ page }, testInfo) => {
@@ -1008,7 +1038,14 @@ const apiJobs = [
     updatedAt: "2026-05-08T00:00:00.000Z",
     source: { site: "M-Team", title: "ATHENA.2022.FRENCH.1080p.NF.WEB-DL.x265-SMURF" },
     candidate: { site: "mteam", title: "ATHENA.2022.FRENCH.1080p.NF.WEB-DL.x265-SMURF", imdbId: "tt1234567" },
-    checkResult: { decision: { status: "review", reason: "IMDb + resolution match" } },
+    checkResult: {
+      decision: {
+        status: "review",
+        reason: "IMDb + resolution match",
+        ptpUrl: "https://passthepopcorn.me/torrents.php?id=123",
+        movie: { GroupId: "123", Title: "Athena", Name: "Athene", Year: "2022", ImdbId: "tt1234567" }
+      }
+    },
     torrent: { filename: "ATHENA.2022.PTer.source.torrent", bytes: 6871947673 },
     downloadStatus: {
       client: "qbittorrent",

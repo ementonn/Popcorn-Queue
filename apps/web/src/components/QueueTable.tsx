@@ -39,6 +39,7 @@ function warningText(job: ApiJob): string {
 
 function queueAction(job: ApiJob): QueueAction | null {
   if (job.state === "done") return null;
+  if (job.state === "needs_reseed") return "retry";
   if (job.state === "failed") return "retry";
   if (job.state === "review") return "upload";
   if (job.state === "paused") return "resume";

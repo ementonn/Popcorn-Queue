@@ -36,6 +36,14 @@ export interface PtpMovieSearchResponse {
   results: PtpMovieSearchCandidate[];
 }
 
+export interface PtpMovieSummary {
+  GroupId?: string;
+  Title?: string;
+  Name?: string;
+  Year?: string;
+  ImdbId?: string;
+}
+
 export interface ReviewGate {
   id: string;
   severity: "blocker" | "warning" | "info";
@@ -125,6 +133,7 @@ export interface ApiJob {
     decision?: {
       status: string;
       reason: string;
+      movie?: PtpMovieSummary;
       ptpUrl?: string | null;
     };
   };

@@ -3,6 +3,7 @@ import type { CacheEntry, CacheStore, DownloadStatus, NormalizedPtpResponse, Upl
 import { repairUtf8Mojibake } from "./filenames.js";
 import {
   JobRepository,
+  repairJobRuntimeState,
   type AttachWorkspaceInput,
   type CreateJobInput,
   type ImportRestoredJobInput,
@@ -132,7 +133,7 @@ function deserializeJob(row: JobRow): Job {
     job.torrent = torrent;
   }
 
-  return job;
+  return repairJobRuntimeState(job);
 }
 
 export class PrismaPersistence {
