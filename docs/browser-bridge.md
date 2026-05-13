@@ -27,21 +27,27 @@ old `ptp_checker.js` workflow.
 
 ## Setup
 
-Install the userscript, then use the Tampermonkey menu commands:
+Run `npm run userscript:local`, then install
+`apps/userscript/popcorn-queue-bridge.local.user.js` in Tampermonkey. The local
+file is generated from `.env`, ignored by Git, and includes the concrete
+`@connect` host for the configured API URL plus the supported source-site
+download hosts.
 
-- `Set Popcorn Queue API URL`
-- `Set Popcorn Queue Web URL`
+After installing the generated userscript, use the Tampermonkey menu command to
+set the browser token:
+
 - `Set Browser Token`
 
-`Set Popcorn Queue API URL` points to the API service. The web URL points to the
-QUI-style frontend used for opening `/jobs/:id` links. The token must match
-`POPCORN_QUEUE_BROWSER_TOKEN` on the API service.
+The token must match `POPCORN_QUEUE_BROWSER_TOKEN` on the API service. To change
+the API or web URL, update `.env`, rerun `npm run userscript:local`, and update
+the installed Tampermonkey script.
 
 ## Usage
 
 - `Check PTP` checks the visible torrent rows using the API cache.
 - `Recheck` bypasses the saved PTP cache for the visible rows without deleting it.
-- Right-click a rendered PTP badge to run the same bypass-cache recheck.
+- Right-click a rendered PTP badge to bypass the saved cache for that one
+  torrent row.
 - Click a PTP badge with a linked movie to open PTP.
 - Click a queued job badge after pressing `Up` to open the Popcorn Queue job. The
   badge polls the job status and phase for several minutes after handoff.

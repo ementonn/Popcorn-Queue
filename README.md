@@ -74,7 +74,13 @@ Keep your real `.env` local; it is ignored by Git.
 
 ## Browser Bridge
 
-Install `apps/userscript/popcorn-queue-bridge.user.js` in a userscript manager such as Tampermonkey. Use the userscript menu to configure the API URL, web URL, and browser token from your local `.env`.
+Run `npm run userscript:local`, then install
+`apps/userscript/popcorn-queue-bridge.local.user.js` in a userscript manager
+such as Tampermonkey. The generated local script is ignored by Git and contains
+the API/Web URLs and userscript connection permissions derived from your local
+`.env`. Use the userscript menu to set the browser token from
+`POPCORN_QUEUE_BROWSER_TOKEN`. To change the API or Web URL later, update
+`.env`, rerun `npm run userscript:local`, and update the installed userscript.
 
 The browser bridge can send source-site candidates and torrent files to the API. The web UI then prepares jobs for review.
 

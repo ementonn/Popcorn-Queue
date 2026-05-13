@@ -16,6 +16,7 @@
     "logs:worker": "tail -f logs/worker.log",
     "logs:job": "sh -c 'if [ -n \"$1\" ]; then tail -f \"data/jobs/$1/logs/job.log\"; else find data/jobs -path \"*/logs/job.log\" -print 2>/dev/null || true; fi' --",
     "configure": "tsx scripts/configure.ts",
+    "userscript:local": "tsx scripts/generate-userscript.ts",
     "ptp:login": "tsx scripts/ptp-login.ts",
     "screenshots": "tsx scripts/generate-release-assets.ts",
     "audit:public": "tsx scripts/public-release-audit.ts",

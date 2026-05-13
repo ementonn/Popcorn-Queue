@@ -66,9 +66,13 @@ instead of moving to upload review.
 
 ## Browser Bridge
 
-Install `apps/userscript/popcorn-queue-bridge.user.js` in Tampermonkey, then set
-the API URL, Web URL, and browser token from `.env`. The URLs are derived from
-`POPCORN_QUEUE_PUBLIC_HOST`, `POPCORN_QUEUE_PORT`, and `POPCORN_QUEUE_WEB_PORT`.
+Run `npm run userscript:local`, install
+`apps/userscript/popcorn-queue-bridge.local.user.js` in Tampermonkey, then set
+the browser token from `.env`. The generated script's default API/Web URLs are
+derived from `POPCORN_QUEUE_PUBLIC_HOST`, `POPCORN_QUEUE_PORT`, and
+`POPCORN_QUEUE_WEB_PORT`; the generated file is ignored by Git because it can
+contain your private host or IP. When those URL settings change, rerun
+`npm run userscript:local` and update the installed Tampermonkey script.
 
 Expected flow:
 

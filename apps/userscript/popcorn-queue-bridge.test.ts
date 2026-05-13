@@ -10,8 +10,39 @@ function userscriptMetadata(): string {
   return match?.[0] ?? "";
 }
 
+function connectHosts(): string[] {
+  return [...userscriptMetadata().matchAll(/^\/\/ @connect\s+(.+)$/gm)].map((match) => match[1].trim());
+}
+
+function userscriptText(): string {
+  return readFileSync(userscriptPath, "utf8");
+}
+
 describe("Popcorn Queue userscript metadata", () => {
-  it("allows a user-configured remote API host", () => {
+  it("keeps the committed userscript as a wildcard template", () => {
     expect(userscriptMetadata()).toMatch(/^\/\/ @connect\s+\*$/m);
+  });
+
+  it("does not commit concrete userscript connect hosts", () => {
+    expect(connectHosts()).toEqual(["*"]);
+  });
+
+  it("does not expose runtime URL menu overrides", () => {
+    const text = userscriptText();
+
+    expect(text).not.toContain("Set Popcorn Queue API URL");
+    expect(text).not.toContain("Set Popcorn Queue Web URL");
+    expect(text).not.toContain("GM_setValue(\"serviceUrl\"");
+    expect(text).not.toContain("GM_setValue(\"webUrl\"");
+  });
+});
+
+describe("Popcorn Queue userscript checks", () => {
+  it("rechecks only the right-clicked torrent", () => {
+    const text = userscriptText();
+
+    expect(text).toContain("await recheckTorrent(site, status, torrent);");
+    expect(text).toContain('apiRequest("POST", "/api/browser/check"');
+    expect(text).not.toContain("await runCheck(site, status, { bypassCache: true });");
   });
 });

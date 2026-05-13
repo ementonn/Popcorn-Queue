@@ -16,20 +16,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
-// @connect      localhost
-// @connect      127.0.0.1
 // @connect      *
-// @connect      example.com
-// @connect      tjupt.org
-// @connect      pterclub.net
-// @connect      hdbits.org
-// @connect      hhanclub.net
-// @connect      hhan.club
-// @connect      api.m-team.cc
-// @connect      api.m-team.io
-// @connect      kp.m-team.cc
-// @connect      *.m-team.cc
-// @connect      *.m-team.io
 // ==/UserScript==
 
 (function () {
@@ -48,11 +35,11 @@
   }
 
   function serviceUrl() {
-    return String(getSetting("serviceUrl", DEFAULT_SERVICE_URL)).replace(/\/+$/, "");
+    return DEFAULT_SERVICE_URL.replace(/\/+$/, "");
   }
 
   function webUrl() {
-    return String(getSetting("webUrl", DEFAULT_WEB_URL)).replace(/\/+$/, "");
+    return DEFAULT_WEB_URL.replace(/\/+$/, "");
   }
 
   function browserToken() {
@@ -60,16 +47,6 @@
   }
 
   function registerSettings() {
-    GM_registerMenuCommand("Set Popcorn Queue API URL", () => {
-      const current = serviceUrl();
-      const next = prompt("Popcorn Queue API URL", current);
-      if (next) GM_setValue("serviceUrl", next.replace(/\/+$/, ""));
-    });
-    GM_registerMenuCommand("Set Popcorn Queue Web URL", () => {
-      const current = webUrl();
-      const next = prompt("Popcorn Queue web URL", current);
-      if (next) GM_setValue("webUrl", next.replace(/\/+$/, ""));
-    });
     GM_registerMenuCommand("Set Browser Token", () => {
       const next = prompt("Popcorn Queue browser token", browserToken());
       if (next !== null) GM_setValue("browserToken", next);
@@ -489,10 +466,18 @@
     const copy = { ...torrent };
     delete copy.element;
     delete copy.badge;
+    delete copy.uploadButton;
     return copy;
   }
 
+  function removeUploadButton(torrent) {
+    if (!torrent.uploadButton) return;
+    torrent.uploadButton.remove();
+    delete torrent.uploadButton;
+  }
+
   function addUploadButton(torrent, result, badge) {
+    removeUploadButton(torrent);
     const button = document.createElement("span");
     button.textContent = "Up";
     button.title = "Send to Popcorn Queue";
@@ -510,6 +495,7 @@
       }
     });
     badge.after(button);
+    torrent.uploadButton = button;
   }
 
   function setBridgeStatus(status, text, tone) {
@@ -593,6 +579,32 @@
     }
   }
 
+  async function recheckTorrent(site, status, torrent) {
+    const runId = ++activeCheckRunId;
+    if (!browserToken()) {
+      setBridgeStatus(status, "Set browser token first", "warn");
+      return;
+    }
+    removeUploadButton(torrent);
+    const loadingBadge = makeBadge("loading", "Rechecking through Popcorn Queue");
+    torrent.badge.replaceWith(loadingBadge);
+    torrent.badge = loadingBadge;
+    setBridgeStatus(status, "Rechecking 1 candidate", "loading");
+    try {
+      const response = await apiRequest("POST", "/api/browser/check", { ...stripElement(torrent), bypassCache: true });
+      if (runId !== activeCheckRunId) return;
+      if (!response.result) throw new Error("Unexpected API response: missing result");
+      renderCheckResult(site, status, torrent, response.result);
+      setBridgeStatus(status, "Recheck complete", "ok");
+    } catch (error) {
+      const message = formatError(error);
+      const badge = makeBadge("error", message);
+      torrent.badge.replaceWith(badge);
+      torrent.badge = badge;
+      setBridgeStatus(status, message, "error");
+    }
+  }
+
   function renderCheckResult(site, status, torrent, result) {
     const tooltip = [
       result.decision.reason,
@@ -601,6 +613,7 @@
       "Right-click to recheck this page without using the saved cache"
     ].filter(Boolean).join("\n");
     const badge = makeBadge(result.decision.status, tooltip);
+    removeUploadButton(torrent);
     torrent.badge.replaceWith(badge);
     torrent.badge = badge;
     if (result.decision.ptpUrl) {
@@ -609,7 +622,7 @@
     }
     badge.addEventListener("contextmenu", async (event) => {
       event.preventDefault();
-      await runCheck(site, status, { bypassCache: true });
+      await recheckTorrent(site, status, torrent);
     });
     if (isUploadable(result.decision.status)) addUploadButton(torrent, result, badge);
   }
