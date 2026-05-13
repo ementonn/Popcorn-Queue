@@ -288,6 +288,30 @@ export interface DiagnosticsInfo {
   };
 }
 
+export type SettingFieldType = "text" | "number" | "boolean" | "password";
+export type SettingGroup = "Browser" | "PTP" | "Image Hosts" | "qBittorrent" | "Tools";
+
+export interface SettingField {
+  key: string;
+  label: string;
+  group: SettingGroup;
+  type: SettingFieldType;
+  secret: boolean;
+  value: string;
+  configured: boolean;
+}
+
+export interface SettingsResponse {
+  envPath: string;
+  fields: SettingField[];
+}
+
+export interface SaveSettingsResponse extends SettingsResponse {
+  saved: true;
+  reloaded: true;
+  restartRequired: false;
+}
+
 export interface JobLogResponse {
   lines: string[];
 }

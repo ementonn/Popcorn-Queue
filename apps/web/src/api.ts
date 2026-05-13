@@ -10,7 +10,9 @@ import type {
   ManualIntakePtpTarget,
   MediaPathValidationResult,
   PtpMovieSearchResponse,
-  ReviewDraftPatch
+  ReviewDraftPatch,
+  SettingsResponse,
+  SaveSettingsResponse
 } from "./types.js";
 
 export interface DashboardData {
@@ -109,6 +111,17 @@ export function loadDiagnostics(): Promise<DiagnosticsInfo | null> {
 
 export function runDiagnosticCheck(target: DiagnosticCheckTarget): Promise<DiagnosticCheckResult> {
   return fetchJson<DiagnosticCheckResult>(`/api/diagnostics/check/${target}`, { method: "POST", body: "{}" });
+}
+
+export function loadSettings(): Promise<SettingsResponse> {
+  return fetchJson<SettingsResponse>("/api/settings");
+}
+
+export function saveSettings(values: Record<string, string | null>): Promise<SaveSettingsResponse> {
+  return fetchJson<SaveSettingsResponse>("/api/settings", {
+    method: "PATCH",
+    body: JSON.stringify({ values })
+  });
 }
 
 export function validateMediaPath(mediaPath: string): Promise<MediaPathValidationResult> {

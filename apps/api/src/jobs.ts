@@ -277,12 +277,16 @@ export class JobRepository {
 
   constructor(
     initialJobs: Job[] = [],
-    private readonly options: JobRepositoryOptions = {}
+    private options: JobRepositoryOptions = {}
   ) {
     for (const job of initialJobs) {
       const repaired = repairJobRuntimeState(job);
       this.jobs.set(repaired.id, repaired);
     }
+  }
+
+  setOptions(options: JobRepositoryOptions): void {
+    this.options = { ...this.options, ...options };
   }
 
   createFromBrowser(input: {

@@ -1,4 +1,4 @@
-import { Activity, FilePlus2, LoaderCircle, LockKeyhole, LogOut, Pause, Play, RefreshCcw, Search, SlidersHorizontal } from "lucide-react";
+import { Activity, FilePlus2, LoaderCircle, LockKeyhole, LogOut, Pause, Play, RefreshCcw, Search, Settings as SettingsIcon, SlidersHorizontal } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   loadDashboard,
@@ -21,6 +21,7 @@ import { JobDrawer } from "./components/JobDrawer.js";
 import { NewJobPage } from "./components/NewJobPage.js";
 import { QueueTable } from "./components/QueueTable.js";
 import { ReviewPanel } from "./components/ReviewPanel.js";
+import { SettingsPage } from "./components/SettingsPage.js";
 import type {
   ApiJob,
   AuthSessionInfo,
@@ -33,7 +34,7 @@ import type {
   ReviewDraft
 } from "./types.js";
 
-type ActiveView = "jobs" | "new-job" | "diagnostics";
+type ActiveView = "jobs" | "new-job" | "diagnostics" | "settings";
 type PendingJobAction = { jobId: string; label: string; kind: "upload" | "pause" | "resume" | "retry" };
 
 function updateJob(jobs: ApiJob[], updated: ApiJob): ApiJob[] {
@@ -417,6 +418,17 @@ export function App() {
             <FilePlus2 size={16} />
             New Job
           </a>
+          <a
+            href="/settings"
+            className={activeView === "settings" ? "active" : undefined}
+            onClick={(event) => {
+              event.preventDefault();
+              setActiveView("settings");
+            }}
+          >
+            <SettingsIcon size={16} />
+            Settings
+          </a>
         </nav>
         <div className="sidebar-section">
           <p>Service</p>
@@ -475,6 +487,16 @@ export function App() {
             >
               New Job
             </a>
+            <a
+              href="/settings"
+              className={activeView === "settings" ? "active" : undefined}
+              onClick={(event) => {
+                event.preventDefault();
+                setActiveView("settings");
+              }}
+            >
+              Settings
+            </a>
           </nav>
           {authSession?.authRequired && authSession.authenticated ? (
             <button type="button" className="mobile-logout" onClick={handleLogout}>
@@ -528,6 +550,8 @@ export function App() {
           />
         ) : activeView === "new-job" ? (
           <NewJobPage onCreated={handleManualJobCreated} onStatus={setStatus} />
+        ) : activeView === "settings" ? (
+          <SettingsPage onStatus={setStatus} />
         ) : (
           <DiagnosticsPanel
             health={health}

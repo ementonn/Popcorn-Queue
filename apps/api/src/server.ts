@@ -25,6 +25,7 @@ import { appendJobEvent, readLogTail } from "./job-logs.js";
 import { createApiLogger } from "./logger.js";
 import { PrismaPersistence } from "./persistence.js";
 import { PreparationService } from "./preparation.js";
+import { defaultSettingsEnvPath, loadConfigFromEnvPath, saveSettingsEnv, settingsResponse, type SaveSettingsInput } from "./settings.js";
 import { JOB_PHASES, RETRYABLE_COMPLETED_PHASES, type Job, type PhaseRun, type PhaseState } from "./jobs.js";
 
 interface CreateManualJobBody extends Partial<TorrentCandidate> {
@@ -45,6 +46,7 @@ export interface BuildServerOptions {
   torrentClient?: TorrentDownloadClient;
   commandExecutor?: CommandExecutor;
   fetchImpl?: typeof fetch;
+  settingsEnvPath?: string;
 }
 
 async function pathExists(filePath: string): Promise<boolean> {
@@ -291,6 +293,7 @@ function isCorsOriginAllowed(config: ApiConfig, origin: string | undefined, host
 export function buildServer(config: ApiConfig, options: BuildServerOptions = {}) {
   const logger = createApiLogger(config);
   const autoPrepare = options.autoPrepare ?? true;
+  const settingsEnvPath = options.settingsEnvPath ?? defaultSettingsEnvPath();
   const app = logger ? fastify({ loggerInstance: logger }) : fastify({ logger: false });
   const persistence = new PrismaPersistence({
     jobs: {
@@ -299,51 +302,68 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
   });
   const jobRepository = persistence.jobs;
   const cache = persistence.ptpCache;
-  const ptpClient = new PtpClient({
-    apiUser: config.ptp.apiUser,
-    apiKey: config.ptp.apiKey,
-    baseUrl: config.ptp.baseUrl,
-    userAgent: config.ptp.userAgent
-  });
-  const browserChecks = new BrowserCheckService(ptpClient, cache, {
-    requestDelayMs: config.ptp.requestDelayMs
-  });
-  const torrentClient = options.torrentClient ?? (config.integrations.qbittorrentUrl
-    ? new QBittorrentClient({
-        baseUrl: config.integrations.qbittorrentUrl,
-        username: config.integrations.qbittorrentUsername,
-        password: config.integrations.qbittorrentPassword
-      })
-    : null);
-  const imageUploader =
-    config.integrations.imageHost === "imgbb" && config.integrations.imgbbApiKey
-      ? new ImgBbUploader(config.integrations.imgbbApiKey)
-      : undefined;
-  const ptpSubmitter = configuredPtpSubmitter(config, options.ptpSubmitter);
-  const browserAuth = makeBrowserAuthHook(config.browserToken);
-  const webAuth = new WebSessionAuth({
-    enabled: config.webAuth.enabled,
-    username: config.ptp.username,
-    password: config.ptp.password,
-    sessionCookieName: config.webAuth.sessionCookieName,
-    sessionMaxAgeSeconds: config.webAuth.sessionMaxAgeSeconds
-  });
-  const preparation = new PreparationService({
-    dataRoot: config.paths.dataRoot,
-    jobs: jobRepository,
-    runExternalTools: config.integrations.runExternalTools,
-    toolCommands: toolCommandMap(config),
-    ...(imageUploader ? { imageUploader } : {}),
-    ...(config.ptp.announceUrl ? { ptpAnnounceUrl: config.ptp.announceUrl } : {}),
-    ...(torrentClient ? { torrentClient } : {}),
-    ...(options.commandExecutor ? { commandExecutor: options.commandExecutor } : {}),
-    torrentClientOptions: {
-      ...(config.integrations.qbittorrentCategory ? { category: config.integrations.qbittorrentCategory } : {}),
-      ...(config.integrations.qbittorrentTags.length ? { tags: config.integrations.qbittorrentTags } : {}),
-      waitTimeoutMs: config.integrations.qbittorrentDownloadWaitMs,
-      waitIntervalMs: config.integrations.qbittorrentDownloadPollMs
-    }
-  });
+
+  let ptpClient: PtpClient;
+  let browserChecks: BrowserCheckService;
+  let torrentClient: TorrentDownloadClient | null;
+  let ptpSubmitter: PtpSubmitter | undefined;
+  let browserAuthHook: ReturnType<typeof makeBrowserAuthHook>;
+  let webAuth: WebSessionAuth;
+  let preparation: PreparationService;
+
+  function applyRuntimeConfig(nextConfig: ApiConfig): void {
+    config = nextConfig;
+    jobRepository.setOptions({ imageHosts: configuredImageHosts(config) });
+    ptpClient = new PtpClient({
+      apiUser: config.ptp.apiUser,
+      apiKey: config.ptp.apiKey,
+      baseUrl: config.ptp.baseUrl,
+      userAgent: config.ptp.userAgent
+    });
+    browserChecks = new BrowserCheckService(ptpClient, cache, {
+      requestDelayMs: config.ptp.requestDelayMs
+    });
+    torrentClient = options.torrentClient ?? (config.integrations.qbittorrentUrl
+      ? new QBittorrentClient({
+          baseUrl: config.integrations.qbittorrentUrl,
+          username: config.integrations.qbittorrentUsername,
+          password: config.integrations.qbittorrentPassword
+        })
+      : null);
+    const imageUploader =
+      config.integrations.imageHost === "imgbb" && config.integrations.imgbbApiKey
+        ? new ImgBbUploader(config.integrations.imgbbApiKey)
+        : undefined;
+    ptpSubmitter = configuredPtpSubmitter(config, options.ptpSubmitter);
+    browserAuthHook = makeBrowserAuthHook(config.browserToken);
+    webAuth = new WebSessionAuth({
+      enabled: config.webAuth.enabled,
+      username: config.ptp.username,
+      password: config.ptp.password,
+      sessionCookieName: config.webAuth.sessionCookieName,
+      sessionMaxAgeSeconds: config.webAuth.sessionMaxAgeSeconds
+    });
+    preparation = new PreparationService({
+      dataRoot: config.paths.dataRoot,
+      jobs: jobRepository,
+      runExternalTools: config.integrations.runExternalTools,
+      toolCommands: toolCommandMap(config),
+      ...(imageUploader ? { imageUploader } : {}),
+      ...(config.ptp.announceUrl ? { ptpAnnounceUrl: config.ptp.announceUrl } : {}),
+      ...(torrentClient ? { torrentClient } : {}),
+      ...(options.commandExecutor ? { commandExecutor: options.commandExecutor } : {}),
+      torrentClientOptions: {
+        ...(config.integrations.qbittorrentCategory ? { category: config.integrations.qbittorrentCategory } : {}),
+        ...(config.integrations.qbittorrentTags.length ? { tags: config.integrations.qbittorrentTags } : {}),
+        waitTimeoutMs: config.integrations.qbittorrentDownloadWaitMs,
+        waitIntervalMs: config.integrations.qbittorrentDownloadPollMs
+      }
+    });
+  }
+
+  applyRuntimeConfig(config);
+
+  const browserAuth = async (...args: Parameters<ReturnType<typeof makeBrowserAuthHook>>) => browserAuthHook(...args);
 
   function enqueuePreparation(jobId: string): void {
     if (autoPrepare) preparation.enqueue(jobId);
@@ -381,7 +401,7 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
       fileSize: 32 * 1024 * 1024
     }
   });
-  app.addHook("preHandler", webAuth.hook());
+  app.addHook("preHandler", async (request, reply) => webAuth.hook()(request, reply));
 
   app.get("/api/auth/session", async (request) => webAuth.info(request));
 
@@ -391,6 +411,23 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
   });
 
   app.post("/api/auth/logout", async (request, reply) => webAuth.logout(request, reply));
+
+  app.get("/api/settings", async () => settingsResponse(settingsEnvPath, config));
+
+  app.patch<{ Body: SaveSettingsInput }>("/api/settings", async (request, reply) => {
+    try {
+      await saveSettingsEnv(settingsEnvPath, request.body ?? {});
+      applyRuntimeConfig(loadConfigFromEnvPath(settingsEnvPath));
+      return reply.send({
+        ...settingsResponse(settingsEnvPath, config),
+        saved: true,
+        reloaded: true,
+        restartRequired: false
+      });
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : "settings_save_failed" });
+    }
+  });
 
   app.get("/api/health", async () => ({
     ok: true,

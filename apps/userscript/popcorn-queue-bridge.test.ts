@@ -46,3 +46,15 @@ describe("Popcorn Queue userscript checks", () => {
     expect(text).not.toContain("await runCheck(site, status, { bypassCache: true });");
   });
 });
+
+describe("Popcorn Queue userscript upload button", () => {
+  it("supports right-click upload without opening Popcorn Queue", () => {
+    const text = userscriptText();
+
+    expect(text).toContain("Up without open popcorn queue");
+    expect(text).toContain('button.addEventListener("contextmenu"');
+    expect(text).toContain("await sendJob(torrent, result, button, badge, { openQueue: false });");
+    expect(text).toContain("await sendJob(torrent, result, button, badge);");
+    expect(text).toContain("if (options.openQueue !== false) window.open(jobUrl(response.job.id), \"_blank\");");
+  });
+});

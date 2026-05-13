@@ -271,6 +271,108 @@ describe("API cache contract", () => {
     });
   });
 
+  it("returns hot-reloadable settings without exposing secret values or restart-only keys", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "popcorn-settings-"));
+    const envPath = path.join(directory, ".env");
+    await writeFile(
+      envPath,
+      [
+        "DATABASE_URL=file:./private.db",
+        "PTP_API_KEY=old-api-key",
+        "QBITTORRENT_URL=127.0.0.1:10526",
+        "POPCORN_QUEUE_RUN_EXTERNAL_TOOLS=true"
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    const config = testConfig();
+    config.ptp.apiKey = "old-api-key";
+    config.integrations.qbittorrentUrl = "127.0.0.1:10526";
+    config.integrations.runExternalTools = true;
+
+    try {
+      await withConfiguredServer(config, { autoPrepare: false, settingsEnvPath: envPath }, async (app) => {
+        const response = await app.inject({ method: "GET", url: "/api/settings" });
+        expect(response.statusCode).toBe(200);
+        const settings = response.json<{
+          envPath: string;
+          fields: Array<{ key: string; secret: boolean; value: string; configured: boolean }>;
+        }>();
+        const keys = settings.fields.map((field) => field.key);
+
+        expect(settings.envPath).toBe(envPath);
+        expect(keys).toContain("PTP_API_KEY");
+        expect(keys).toContain("QBITTORRENT_URL");
+        expect(keys).toContain("POPCORN_QUEUE_RUN_EXTERNAL_TOOLS");
+        expect(keys).not.toContain("DATABASE_URL");
+        expect(keys).not.toContain("POPCORN_QUEUE_PORT");
+        expect(settings.fields.find((field) => field.key === "PTP_API_KEY")).toMatchObject({
+          secret: true,
+          value: "",
+          configured: true
+        });
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("saves settings to dotenv and hot reloads runtime configuration", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "popcorn-settings-"));
+    const envPath = path.join(directory, ".env");
+    await writeFile(
+      envPath,
+      [
+        "DATABASE_URL=file:./private.db",
+        "QBITTORRENT_URL=",
+        "PTP_REQUEST_DELAY_MS=2000",
+        "PTP_API_KEY=old-api-key"
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    const config = testConfig();
+    config.integrations.qbittorrentUrl = "";
+    config.ptp.requestDelayMs = 2000;
+    config.ptp.apiKey = "old-api-key";
+
+    try {
+      await withConfiguredServer(config, { autoPrepare: false, settingsEnvPath: envPath }, async (app) => {
+        const save = await app.inject({
+          method: "PATCH",
+          url: "/api/settings",
+          payload: {
+            values: {
+              QBITTORRENT_URL: "127.0.0.1:10526",
+              PTP_REQUEST_DELAY_MS: "1234",
+              PTP_API_KEY: "new-api-key"
+            }
+          }
+        });
+        expect(save.statusCode).toBe(200);
+        expect(save.json()).toMatchObject({ saved: true, reloaded: true, restartRequired: false });
+
+        const text = await readFile(envPath, "utf8");
+        expect(text).toContain("DATABASE_URL=file:./private.db");
+        expect(text).toContain("QBITTORRENT_URL=127.0.0.1:10526");
+        expect(text).toContain("PTP_REQUEST_DELAY_MS=1234");
+        expect(text).toContain("PTP_API_KEY=new-api-key");
+
+        const health = await app.inject({ method: "GET", url: "/api/health" });
+        expect(health.statusCode).toBe(200);
+        expect(health.json()).toMatchObject({ external: { torrentClientConfigured: true } });
+
+        const settings = await app.inject({ method: "GET", url: "/api/settings" });
+        expect(settings.json<{ fields: Array<{ key: string; value: string; configured: boolean }> }>().fields.find((field) => field.key === "PTP_API_KEY")).toMatchObject({
+          value: "",
+          configured: true
+        });
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("protects web API routes with local PTP username and password sessions", async () => {
     const config = testConfig();
     config.webAuth.enabled = true;

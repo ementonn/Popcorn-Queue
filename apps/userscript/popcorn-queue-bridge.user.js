@@ -441,7 +441,7 @@
     }, 4000);
   }
 
-  async function sendJob(torrent, result, button, badge) {
+  async function sendJob(torrent, result, button, badge, options = {}) {
     button.textContent = "DL...";
     const sourceTorrent = torrent.sourceTorrentId
       ? await downloadMTeamTorrent(torrent.sourceTorrentId, torrent)
@@ -458,7 +458,7 @@
     badge.textContent = "QUEUED";
     if (response.job && response.job.id) {
       startJobPolling(response.job.id, button, badge);
-      window.open(jobUrl(response.job.id), "_blank");
+      if (options.openQueue !== false) window.open(jobUrl(response.job.id), "_blank");
     }
   }
 
@@ -480,7 +480,7 @@
     removeUploadButton(torrent);
     const button = document.createElement("span");
     button.textContent = "Up";
-    button.title = "Send to Popcorn Queue";
+    button.title = "Send to Popcorn Queue\nRight-click: Up without open popcorn queue";
     button.className = "pq-bridge-control pq-bridge-upload";
     button.style.cssText = "display:inline-block;margin-left:3px;padding:1px 6px;border-radius:3px;font-size:11px;font-weight:bold;cursor:pointer;vertical-align:middle;background:#1c6bba;color:#fff;";
     button.addEventListener("click", async (event) => {
@@ -488,6 +488,17 @@
       event.stopPropagation();
       try {
         await sendJob(torrent, result, button, badge);
+      } catch (error) {
+        button.textContent = "FAIL";
+        button.title = formatError(error);
+        button.style.background = "#e5484d";
+      }
+    });
+    button.addEventListener("contextmenu", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      try {
+        await sendJob(torrent, result, button, badge, { openQueue: false });
       } catch (error) {
         button.textContent = "FAIL";
         button.title = formatError(error);

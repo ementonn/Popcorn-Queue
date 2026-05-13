@@ -206,6 +206,10 @@ export class PrismaPersistence {
 export class PrismaJobRepository {
   constructor(private readonly persistence: PrismaPersistence) {}
 
+  setOptions(options: JobRepositoryOptions): void {
+    this.persistence.options.jobs = { ...(this.persistence.options.jobs ?? {}), ...options };
+  }
+
   async createFromBrowser(input: Parameters<JobRepository["createFromBrowser"]>[0]): Promise<Job> {
     const job = new JobRepository([], this.persistence.options.jobs).createFromBrowser(input);
     await this.save(job);
