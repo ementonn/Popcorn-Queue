@@ -1,6 +1,6 @@
 import { spawn, type SpawnOptionsWithoutStdio } from "node:child_process";
 
-export type WorkerTool = "ffmpeg" | "mediainfo" | "mkvmerge" | "oxipng";
+export type WorkerTool = "ffmpeg" | "mediainfo" | "mkvmerge" | "mpv" | "oxipng" | "xvfb-run";
 
 export interface CommandInvocation {
   command: string;
@@ -134,6 +134,7 @@ export function commandSucceeded(result: CommandResult): boolean {
 function availabilityArgs(tool: WorkerTool): string[] {
   if (tool === "ffmpeg") return ["-version"];
   if (tool === "mediainfo") return ["--Version"];
+  if (tool === "xvfb-run") return ["--help"];
   return ["--version"];
 }
 
@@ -181,13 +182,15 @@ export async function checkWorkerTools(
   executor: CommandExecutor = nodeCommandExecutor,
   commands: Partial<Record<WorkerTool, string>> = {}
 ): Promise<Record<WorkerTool, ToolAvailability>> {
-  const [ffmpeg, mediainfo, mkvmerge, oxipng] = await Promise.all([
+  const [ffmpeg, mediainfo, mkvmerge, mpv, oxipng, xvfbRun] = await Promise.all([
     checkToolAvailability("ffmpeg", executor, commands.ffmpeg ?? "ffmpeg"),
     checkToolAvailability("mediainfo", executor, commands.mediainfo ?? "mediainfo"),
     checkToolAvailability("mkvmerge", executor, commands.mkvmerge ?? "mkvmerge"),
-    checkToolAvailability("oxipng", executor, commands.oxipng ?? "oxipng")
+    checkToolAvailability("mpv", executor, commands.mpv ?? "mpv"),
+    checkToolAvailability("oxipng", executor, commands.oxipng ?? "oxipng"),
+    checkToolAvailability("xvfb-run", executor, commands["xvfb-run"] ?? "xvfb-run")
   ]);
-  return { ffmpeg, mediainfo, mkvmerge, oxipng };
+  return { ffmpeg, mediainfo, mkvmerge, mpv, oxipng, "xvfb-run": xvfbRun };
 }
 
 export async function runCommand(

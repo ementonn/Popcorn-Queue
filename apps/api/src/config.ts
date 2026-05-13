@@ -41,7 +41,9 @@ export interface ApiConfig {
     ffmpegBin: string;
     mediainfoBin: string;
     mkvmergeBin: string;
+    mpvBin: string;
     oxipngBin: string;
+    xvfbRunBin: string;
     workDir: string;
     outputDir: string;
   };
@@ -208,7 +210,9 @@ export function loadConfig(env = process.env): ApiConfig {
       ffmpegBin: env.FFMPEG_BIN ?? "ffmpeg",
       mediainfoBin: env.MEDIAINFO_BIN ?? "mediainfo",
       mkvmergeBin: env.MKVMERGE_BIN ?? "mkvmerge",
+      mpvBin: env.MPV_BIN ?? "mpv",
       oxipngBin: env.OXIPNG_BIN ?? "oxipng",
+      xvfbRunBin: env.XVFB_RUN_BIN ?? "xvfb-run",
       workDir: env.POPCORN_QUEUE_WORK_DIR ?? "./data/work",
       outputDir: env.POPCORN_QUEUE_OUTPUT_DIR ?? "./data/output"
     },

@@ -100,7 +100,7 @@ export function DiagnosticsPanel({
     { target: "image-host" as const, label: "Image host", button: "Check image host", base: diagnostics?.integrations.imageHost },
     { target: "tools" as const, label: "Tools", button: "Check tools", base: diagnostics?.integrations.tools }
   ];
-  const toolOrder: DiagnosticToolName[] = ["ffmpeg", "mediainfo", "mkvmerge", "oxipng"];
+  const toolOrder: DiagnosticToolName[] = ["ffmpeg", "mediainfo", "mkvmerge", "mpv", "oxipng", "xvfb-run"];
 
   async function run(target: DiagnosticCheckTarget) {
     setRunning(target);

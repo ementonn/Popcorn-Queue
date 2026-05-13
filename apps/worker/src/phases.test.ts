@@ -188,7 +188,9 @@ describe("worker phase scaffold", () => {
           ffmpeg: { tool: "ffmpeg", command: "ffmpeg", available: true, version: "ffmpeg test", location: "/usr/bin/ffmpeg", error: null },
           mediainfo: { tool: "mediainfo", command: "mediainfo", available: true, version: "mediainfo test", location: "/usr/bin/mediainfo", error: null },
           mkvmerge: { tool: "mkvmerge", command: "mkvmerge", available: true, version: "mkvmerge test", location: "/usr/bin/mkvmerge", error: null },
-          oxipng: { tool: "oxipng", command: "oxipng", available: true, version: "oxipng test", location: "/usr/bin/oxipng", error: null }
+          mpv: { tool: "mpv", command: "mpv", available: true, version: "mpv test", location: "/usr/bin/mpv", error: null },
+          oxipng: { tool: "oxipng", command: "oxipng", available: true, version: "oxipng test", location: "/usr/bin/oxipng", error: null },
+          "xvfb-run": { tool: "xvfb-run", command: "xvfb-run", available: true, version: "xvfb-run test", location: "/usr/bin/xvfb-run", error: null }
         },
         mediaInfo: {
           invocation: textInvocation,
@@ -340,6 +342,48 @@ describe("worker phase scaffold", () => {
     expect(output.uploads.every((attempt) => attempt.result?.host === "imgbb")).toBe(true);
   });
 
+  it("fails preparation and stops when screenshot capture fails", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-worker-screenshot-fail-"));
+    const mediaPath = path.join(tempDir, "movie.mkv");
+    await writeFile(mediaPath, "mkv");
+    const calls: CommandInvocation[] = [];
+    const baseExecutor = fakeExecutor(calls);
+    const executor: CommandExecutor = async (invocation) => {
+      if (invocation.command === "ffmpeg" && invocation.args.includes("-frames:v")) {
+        calls.push(invocation);
+        return {
+          ...commandResult(invocation),
+          exitCode: 8,
+          stderr: "No such filter: 'zscale'"
+        };
+      }
+      return baseExecutor(invocation);
+    };
+
+    const outputs = await new PhaseRunner().runPreparationToReview(
+      createPhaseContext(
+        "job-screenshot-fail",
+        {
+          candidate,
+          mediaPath,
+          workingDirectory: tempDir,
+          outputDirectory: path.join(tempDir, "screens")
+        },
+        {
+          runExternalTools: true,
+          commandExecutor: executor
+        }
+      )
+    );
+
+    expect(outputs.screenshots?.status).toBe("failed");
+    expect(outputs.screenshots?.message).toContain("Screenshot capture failed");
+    expect(outputs.screenshots?.ffmpeg[0]?.result?.stderr).toContain("No such filter");
+    expect(outputs["image-host-upload"]).toBeUndefined();
+    expect(outputs.preflight).toBeUndefined();
+    expect(outputs.review).toBeUndefined();
+  });
+
   it("retries image hosting for existing local screenshot files", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-worker-image-retry-"));
     const screenshotPath = path.join(tempDir, "shot-1.png");
@@ -356,8 +400,11 @@ describe("worker phase scaffold", () => {
         plan: buildUploadPlan({ candidate }).screenshots,
         tools: {
           ffmpeg: { tool: "ffmpeg", command: "ffmpeg", available: true, version: null, location: null, error: null },
-          oxipng: { tool: "oxipng", command: "oxipng", available: true, version: null, location: null, error: null }
+          mpv: { tool: "mpv", command: "mpv", available: true, version: null, location: null, error: null },
+          oxipng: { tool: "oxipng", command: "oxipng", available: true, version: null, location: null, error: null },
+          "xvfb-run": { tool: "xvfb-run", command: "xvfb-run", available: true, version: null, location: null, error: null }
         },
+        requiredTools: ["ffmpeg", "oxipng"],
         ffmpeg: [],
         optimizer: [],
         uploads: [{ filePath: screenshotPath, host: null, skippedReason: "Stored local screenshot is pending image host upload." }],
@@ -738,6 +785,70 @@ describe("worker phase scaffold", () => {
     ]);
   });
 
+  it("uses an already completed qBittorrent content path outside the job download directory", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-worker-qb-existing-"));
+    const torrentPath = path.join(tempDir, "source.torrent");
+    const qbDownloadDir = path.join(tempDir, "qb-downloads", "Take.Off.2026.2160p.WEB.x265.DV-UBWEB");
+    const mediaPath = path.join(qbDownloadDir, "Take.Off.2026.2160p.WEB.x265.DV-UBWEB.mkv");
+    await mkdir(qbDownloadDir, { recursive: true });
+    await writeFile(torrentPath, "source torrent");
+    await writeFile(mediaPath, "movie");
+    const download = createDefaultPhaseHandlers().find((handler): handler is PhaseHandler<"download-or-locate"> => handler.phase === "download-or-locate");
+    if (!download) throw new Error("Missing download-or-locate handler");
+
+    const context = createPhaseContext(
+      "job-qb-existing-download",
+      {
+        candidate: {
+          ...candidate,
+          title: "Take.Off.2026.2160p.WEB.x265.DV-UBWEB"
+        },
+        sourceTorrentPath: torrentPath,
+        workingDirectory: path.join(tempDir, "job")
+      },
+      {
+        torrentClientOptions: { waitTimeoutMs: 0, waitIntervalMs: 1 },
+        torrentClient: {
+          name: "mock-qb",
+          async addTorrent() {
+            return { infoHash: "TAKEOFFHASH" };
+          },
+          async getStatus(infoHash) {
+            return {
+              client: "mock-qb",
+              infoHash,
+              state: "uploading",
+              progress: 1,
+              downloaded: 5,
+              size: 5,
+              amountLeft: 0,
+              downloadSpeed: 0,
+              uploadSpeed: 0,
+              eta: 0,
+              seeds: 2,
+              peers: 1,
+              savePath: qbDownloadDir,
+              contentPath: mediaPath,
+              lastUpdatedAt: "2026-05-08T00:00:00.000Z",
+              error: null
+            };
+          },
+          async isComplete() {
+            throw new Error("isComplete should be implemented through getStatus in the worker wait loop.");
+          },
+          async listFiles() {
+            return [{ name: path.basename(mediaPath), size: 5, progress: 1 }];
+          }
+        }
+      }
+    );
+
+    const output = await download.run(context);
+
+    expect(output.status).toBe("completed");
+    expect(output.filePath).toBe(mediaPath);
+  });
+
   it("does not prepare media into cwd when working directory is missing", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-no-workspace-"));
     const source = path.join(tempDir, `NoWorkspace-${Date.now()}.mkv`);
@@ -896,6 +1007,97 @@ describe("worker phase scaffold", () => {
     expect(screenshotCalls).not.toHaveLength(0);
     expect(screenshotCalls.every((call) => call.args.includes("-nostdin"))).toBe(true);
     expect(screenshotCalls.every((call) => call.args.includes("-y"))).toBe(true);
+  });
+
+  it("uses upsies-style colorspace filters for HDR screenshots", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-screenshot-colorspace-"));
+    const source = path.join(tempDir, "source", "Movie.2024.2160p.WEB-DL.HDR10.x265-GROUP.mkv");
+    await mkdir(path.dirname(source), { recursive: true });
+    await writeFile(source, "mkv");
+    const calls: CommandInvocation[] = [];
+    const screenshots = createDefaultPhaseHandlers().find((handler): handler is PhaseHandler<"screenshots"> => handler.phase === "screenshots");
+    if (!screenshots) throw new Error("Missing screenshots handler");
+
+    await screenshots.run(
+      createPhaseContext(
+        "job-screenshot-colorspace",
+        {
+          candidate: {
+            ...candidate,
+            title: "Movie.2024.2160p.WEB-DL.HDR10.x265-GROUP",
+            resolution: "2160p"
+          },
+          mediaPath: source,
+          workingDirectory: tempDir,
+          outputDirectory: path.join(tempDir, "screens")
+        },
+        {
+          runExternalTools: true,
+          commandExecutor: fakeExecutor(calls)
+        }
+      )
+    );
+
+    const screenshotCall = calls.find((call) => call.command === "ffmpeg" && call.args.includes("-frames:v"));
+    expect(screenshotCall).toBeDefined();
+    const args = screenshotCall?.args ?? [];
+    const vf = args[args.indexOf("-vf") + 1] ?? "";
+    expect(vf).toContain("scale='max(sar,1)*iw':'max(1/sar,1)*ih'");
+    expect(vf).toContain("in_color_matrix=bt2020");
+    expect(vf).toContain("flags=full_chroma_int+full_chroma_inp+accurate_rnd+spline");
+    expect(vf).toContain("zscale=t=linear,tonemap=hable,zscale=t=bt709,format=rgb24");
+    expect(args).toContain("-pix_fmt");
+    expect(args[args.indexOf("-pix_fmt") + 1]).toBe("rgb24");
+  });
+
+  it("uses mpv gpu-next under xvfb for Dolby Vision screenshots", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-screenshot-dv-"));
+    const source = path.join(tempDir, "source", "Take.Off.2026.2160p.WEB.x265.DV-UBWEB.mp4");
+    await mkdir(path.dirname(source), { recursive: true });
+    await writeFile(source, "mp4");
+    const calls: CommandInvocation[] = [];
+    const screenshots = createDefaultPhaseHandlers().find((handler): handler is PhaseHandler<"screenshots"> => handler.phase === "screenshots");
+    if (!screenshots) throw new Error("Missing screenshots handler");
+
+    const output = await screenshots.run(
+      createPhaseContext(
+        "job-screenshot-dv",
+        {
+          candidate: {
+            ...candidate,
+            title: "Take.Off.2026.2160p.WEB.x265.DV-UBWEB",
+            resolution: "2160p"
+          },
+          mediaPath: source,
+          workingDirectory: tempDir,
+          outputDirectory: path.join(tempDir, "screens")
+        },
+        {
+          runExternalTools: true,
+          toolCommands: {
+            mpv: "/opt/bin/mpv",
+            "xvfb-run": "/opt/bin/xvfb-run"
+          },
+          commandExecutor: fakeExecutor(calls)
+        }
+      )
+    );
+
+    const ffmpegScreenshotCalls = calls.filter((call) => call.command === "ffmpeg" && call.args.includes("-frames:v"));
+    const mpvScreenshotCalls = calls.filter((call) => call.command === "/opt/bin/xvfb-run" && call.args.some((arg) => arg.includes("screenshot-to-file")));
+
+    expect(ffmpegScreenshotCalls).toHaveLength(0);
+    expect(mpvScreenshotCalls).toHaveLength(output.plan.count);
+    expect(output.requiredTools).toEqual(["mpv", "xvfb-run", "oxipng"]);
+    for (const call of mpvScreenshotCalls) {
+      expect(call.args).toContain("/opt/bin/mpv");
+      expect(call.args).toContain("--vo=gpu-next");
+      expect(call.args).toContain("--gpu-context=x11egl");
+      expect(call.args).toContain("--gpu-sw=yes");
+      expect(call.args).toContain("--tone-mapping=hable");
+      expect(call.args).toContain("--target-trc=srgb");
+      expect(call.args.some((arg) => arg.startsWith("--input-commands=screenshot-to-file "))).toBe(true);
+    }
   });
 
   it("emits preparation phase lifecycle callbacks", async () => {

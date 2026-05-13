@@ -37,6 +37,8 @@ import { createSingleFileTorrent } from "./torrent-create.js";
 export { UPLOAD_PHASES };
 export type { UploadPhase };
 
+type ScreenshotWorkerTool = Extract<WorkerTool, "ffmpeg" | "mpv" | "oxipng" | "xvfb-run">;
+
 export type PhaseLogLevel = "debug" | "info" | "warn" | "error";
 export type PhaseExecutionStatus = "completed" | "skipped" | "blocked" | "failed";
 
@@ -176,7 +178,8 @@ export interface PhaseOutputMap {
     mediaPath: string | null;
     outputDirectory: string;
     plan: ScreenshotPlan;
-    tools: Pick<Record<WorkerTool, ToolAvailability>, "ffmpeg" | "oxipng">;
+    tools: Pick<Record<WorkerTool, ToolAvailability>, "ffmpeg" | "mpv" | "oxipng" | "xvfb-run">;
+    requiredTools: ScreenshotWorkerTool[];
     ffmpeg: CommandAttempt[];
     optimizer: CommandAttempt[];
     uploads: ImageUploadAttempt[];
@@ -405,6 +408,17 @@ async function resolveMediaFilePath(inputPath: string): Promise<string | null> {
   return files.sort((a, b) => b.size - a.size)[0]?.filePath ?? null;
 }
 
+async function resolveExistingMediaPath(inputPath: string | null | undefined): Promise<string | null> {
+  if (!inputPath) return null;
+  try {
+    const info = await stat(inputPath);
+    if (info.isDirectory()) return resolveMediaFilePath(inputPath);
+    return isMediaPath(inputPath) ? inputPath : null;
+  } catch {
+    return null;
+  }
+}
+
 function defaultDownloadDirectory(context: PhaseContext): string | null {
   if (context.job.downloadDirectory) return context.job.downloadDirectory;
   if (context.job.workingDirectory) return path.join(context.job.workingDirectory, "download");
@@ -439,16 +453,36 @@ function selectMainMediaFile(files: TorrentClientFile[]): TorrentClientFile | nu
     .sort((a, b) => b.size - a.size)[0] ?? null;
 }
 
-async function waitForTorrentComplete(context: PhaseContext, infoHash: string): Promise<boolean> {
+async function waitForTorrentComplete(context: PhaseContext, infoHash: string): Promise<DownloadStatus | null> {
   const deadline = Date.now() + context.torrentClientOptions.waitTimeoutMs;
   do {
     const status = await context.torrentClient!.getStatus(infoHash);
     await context.reportDownloadStatus(status);
-    if (isDownloadComplete(status)) return true;
-    if (context.torrentClientOptions.waitTimeoutMs <= 0 || Date.now() >= deadline) return false;
+    if (isDownloadComplete(status)) return status;
+    if (context.torrentClientOptions.waitTimeoutMs <= 0 || Date.now() >= deadline) return null;
     await new Promise((resolve) => setTimeout(resolve, context.torrentClientOptions.waitIntervalMs));
   } while (Date.now() < deadline);
-  return false;
+  return null;
+}
+
+async function locateDownloadedTorrentMedia(status: DownloadStatus, files: TorrentClientFile[], downloadDirectory: string): Promise<string | null> {
+  const contentMediaPath = await resolveExistingMediaPath(status.contentPath);
+  if (contentMediaPath) return contentMediaPath;
+
+  const mainFile = selectMainMediaFile(files);
+  if (!mainFile) return null;
+
+  const candidatePaths = [
+    status.contentPath ? path.join(status.contentPath, mainFile.name) : null,
+    status.contentPath ? path.join(path.dirname(status.contentPath), mainFile.name) : null,
+    status.savePath ? path.join(status.savePath, mainFile.name) : null,
+    path.join(downloadDirectory, mainFile.name)
+  ];
+  const uniqueCandidates = [...new Set(candidatePaths.filter((candidate): candidate is string => Boolean(candidate)))];
+  for (const candidate of uniqueCandidates) {
+    if (await pathExists(candidate)) return candidate;
+  }
+  return uniqueCandidates.at(-1) ?? null;
 }
 
 export function mediaInfoTextInvocation(command: string, mediaPath: string): CommandInvocation {
@@ -483,11 +517,93 @@ export function sanitizeMediaInfoText(text: string, uploadRoot: string): string 
     .join("\n");
 }
 
-function screenshotInvocation(command: string, mediaPath: string, timestamp: string, outputPath: string): CommandInvocation {
+function screenshotVideoFilter(toneMapHint: ScreenshotPlan["toneMapHint"], tonemap: boolean): string {
+  const scale = ["'max(sar,1)*iw'", "'max(1/sar,1)*ih'"];
+  if (toneMapHint === "bt2020") {
+    scale.push("in_h_chr_pos=0", "in_v_chr_pos=0", "in_color_matrix=bt2020");
+  } else if (toneMapHint === "bt709") {
+    scale.push("in_h_chr_pos=0", "in_v_chr_pos=128", "in_color_matrix=bt709");
+  }
+  scale.push("flags=full_chroma_int+full_chroma_inp+accurate_rnd+spline");
+  const filters = [`scale=${scale.join(":")}`];
+  if (tonemap) filters.push("zscale=t=linear", "tonemap=hable", "zscale=t=bt709", "format=rgb24");
+  return filters.join(",");
+}
+
+function isHdrTonemappable(hdrFormats: readonly string[]): boolean {
+  return hdrFormats.some((format) => /^HDR/i.test(format));
+}
+
+function isDolbyVision(hdrFormats: readonly string[]): boolean {
+  return hdrFormats.some((format) => /^DV$/i.test(format) || /DOVI|Dolby Vision/i.test(format));
+}
+
+function requiredScreenshotTools(hdrFormats: readonly string[]): ScreenshotWorkerTool[] {
+  return isDolbyVision(hdrFormats) ? ["mpv", "xvfb-run", "oxipng"] : ["ffmpeg", "oxipng"];
+}
+
+function screenshotInvocation(
+  command: string,
+  mediaPath: string,
+  timestamp: string,
+  outputPath: string,
+  options: { toneMapHint: ScreenshotPlan["toneMapHint"]; tonemap: boolean }
+): CommandInvocation {
   return {
     command,
-    args: ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-ss", timestamp, "-i", mediaPath, "-frames:v", "1", "-q:v", "2", outputPath],
+    args: [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-nostdin",
+      "-y",
+      "-ss",
+      timestamp,
+      "-i",
+      mediaPath,
+      "-vf",
+      screenshotVideoFilter(options.toneMapHint, options.tonemap),
+      "-pix_fmt",
+      "rgb24",
+      "-frames:v",
+      "1",
+      outputPath
+    ],
     timeoutMs: 60_000
+  };
+}
+
+function quoteMpvCommandString(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
+}
+
+function mpvGpuNextScreenshotInvocation(xvfbRunCommand: string, mpvCommand: string, mediaPath: string, timestamp: string, outputPath: string): CommandInvocation {
+  return {
+    command: xvfbRunCommand,
+    args: [
+      "-a",
+      mpvCommand,
+      "--no-config",
+      "--no-audio",
+      "--no-sub",
+      "--vo=gpu-next",
+      "--gpu-context=x11egl",
+      "--gpu-sw=yes",
+      "--screenshot-format=png",
+      "--screenshot-high-bit-depth=no",
+      "--screenshot-png-compression=9",
+      "--target-prim=bt.709",
+      "--target-trc=srgb",
+      "--target-gamut=bt.709",
+      "--target-peak=203",
+      "--tone-mapping=hable",
+      "--gamut-mapping-mode=auto",
+      `--start=${timestamp}`,
+      "--pause",
+      `--input-commands=screenshot-to-file ${quoteMpvCommandString(outputPath)} video; quit`,
+      mediaPath
+    ],
+    timeoutMs: 90_000
   };
 }
 
@@ -510,6 +626,19 @@ async function maybeRun(context: PhaseContext, invocation: CommandInvocation): P
   if (invocation.env) options.env = invocation.env;
   const result = await runCommand(context.commandExecutor, invocation.command, invocation.args, options);
   return { invocation, result };
+}
+
+function attemptTargetsFile(attempt: CommandAttempt, filePath: string): boolean {
+  return attempt.invocation.args.some((arg) => arg.includes(filePath));
+}
+
+function screenshotFailureDetail(attempts: CommandAttempt[]): string | null {
+  const failed = attempts.find((attempt) => attempt.result && !commandSucceeded(attempt.result));
+  if (failed?.result?.error?.message) return failed.result.error.message;
+  const stderr = failed?.result?.stderr.trim();
+  if (stderr) return stderr.split(/\r?\n/)[0] ?? stderr;
+  const skipped = attempts.find((attempt) => attempt.skippedReason);
+  return skipped?.skippedReason ?? null;
 }
 
 function numberFromTrack(value: unknown): number | null {
@@ -734,8 +863,8 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
           if (context.torrentClientOptions.category) addOptions.category = context.torrentClientOptions.category;
           if (context.torrentClientOptions.tags?.length) addOptions.tags = context.torrentClientOptions.tags;
           const { infoHash } = await context.torrentClient.addTorrent(addOptions);
-          const complete = await waitForTorrentComplete(context, infoHash);
-          if (!complete) {
+          const completeStatus = await waitForTorrentComplete(context, infoHash);
+          if (!completeStatus) {
             return {
               ...base("blocked", "Torrent is still downloading."),
               sourceUrl: context.job.candidate.sourceUrl ?? null,
@@ -748,10 +877,10 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
           }
 
           const files = await context.torrentClient.listFiles(infoHash);
-          const mainFile = selectMainMediaFile(files);
-          const filePath = mainFile ? path.join(downloadDirectory, mainFile.name) : null;
+          const filePath = await locateDownloadedTorrentMedia(completeStatus, files, downloadDirectory);
+          const located = filePath ? await pathExists(filePath) : false;
           return {
-            ...base(filePath && (await pathExists(filePath)) ? "completed" : "blocked", filePath ? "Downloaded media located." : "No media file was found in torrent contents."),
+            ...base(located ? "completed" : "blocked", located ? "Downloaded media located." : "No media file was found in torrent contents."),
             sourceUrl: context.job.candidate.sourceUrl ?? null,
             downloadUrl: context.job.candidate.downloadUrl ?? null,
             filePath,
@@ -828,7 +957,7 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
           uploadDirectory: directories.uploadDirectory,
           intermediateDirectory: directories.intermediateDirectory,
           runExternalTools: context.runExternalTools,
-          ffmpegCommand: context.toolCommands.ffmpeg ?? "ffmpeg",
+          mkvmergeCommand: context.toolCommands.mkvmerge ?? "mkvmerge",
           commandExecutor: context.commandExecutor
         });
         return {
@@ -898,25 +1027,44 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
         const optimizer: CommandAttempt[] = [];
         const uploads: ImageUploadAttempt[] = [];
         const files = screenshotPlan.timestamps.map((timestamp) => outputScreenshotPath(outputDirectory, timestamp.index));
+        const useMpv = isDolbyVision(plan.parsed.hdr);
+        const requiredTools = requiredScreenshotTools(plan.parsed.hdr);
+        const screenshotOptions = {
+          toneMapHint: screenshotPlan.toneMapHint,
+          tonemap: isHdrTonemappable(plan.parsed.hdr)
+        };
 
         for (const timestamp of screenshotPlan.timestamps) {
           const outputPath = outputScreenshotPath(outputDirectory, timestamp.index);
-          const invocation = screenshotInvocation(context.toolCommands.ffmpeg ?? "ffmpeg", mediaPath ?? "<media-path>", timestamp.label, outputPath);
+          const invocation = useMpv
+            ? mpvGpuNextScreenshotInvocation(context.toolCommands["xvfb-run"] ?? "xvfb-run", context.toolCommands.mpv ?? "mpv", mediaPath ?? "<media-path>", timestamp.label, outputPath)
+            : screenshotInvocation(context.toolCommands.ffmpeg ?? "ffmpeg", mediaPath ?? "<media-path>", timestamp.label, outputPath, screenshotOptions);
           if (!context.runExternalTools) {
             ffmpeg.push(skippedAttempt(invocation, "External tool execution is disabled."));
-          } else if (!tools.ffmpeg.available) {
+          } else if (useMpv && !tools.mpv.available) {
+            ffmpeg.push(skippedAttempt(invocation, "mpv is unavailable."));
+          } else if (useMpv && !tools["xvfb-run"].available) {
+            ffmpeg.push(skippedAttempt(invocation, "xvfb-run is unavailable."));
+          } else if (!useMpv && !tools.ffmpeg.available) {
             ffmpeg.push(skippedAttempt(invocation, "ffmpeg is unavailable."));
           } else if (!mediaPath || !(await pathExists(mediaPath))) {
             ffmpeg.push(skippedAttempt(invocation, "No existing media path is available for screenshots."));
           } else {
             await mkdir(outputDirectory, { recursive: true });
-            ffmpeg.push(await maybeRun(context, screenshotInvocation(tools.ffmpeg.command, mediaPath, timestamp.label, outputPath)));
+            ffmpeg.push(
+              await maybeRun(
+                context,
+                useMpv
+                  ? mpvGpuNextScreenshotInvocation(tools["xvfb-run"].command, tools.mpv.command, mediaPath, timestamp.label, outputPath)
+                  : screenshotInvocation(tools.ffmpeg.command, mediaPath, timestamp.label, outputPath, screenshotOptions)
+              )
+            );
           }
         }
 
         for (const file of files) {
           const invocation = optimizerInvocation(context.toolCommands.oxipng ?? "oxipng", file);
-          const screenshotCreated = ffmpeg.some((attempt) => attempt.invocation.args.includes(file) && attempt.result && commandSucceeded(attempt.result));
+          const screenshotCreated = ffmpeg.some((attempt) => attemptTargetsFile(attempt, file) && attempt.result && commandSucceeded(attempt.result));
           if (!context.runExternalTools) {
             optimizer.push(skippedAttempt(invocation, "External tool execution is disabled."));
           } else if (!tools.oxipng.available) {
@@ -929,7 +1077,7 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
         }
 
         for (const file of files) {
-          const screenshotCreated = ffmpeg.some((attempt) => attempt.invocation.args.includes(file) && attempt.result && commandSucceeded(attempt.result));
+          const screenshotCreated = ffmpeg.some((attempt) => attemptTargetsFile(attempt, file) && attempt.result && commandSucceeded(attempt.result));
           if (!context.runExternalTools) {
             uploads.push({ filePath: file, host: context.imageUploader?.name ?? null, skippedReason: "External upload execution is disabled." });
           } else if (!context.imageUploader) {
@@ -945,15 +1093,31 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
           }
         }
 
+        const missingScreenshots = context.runExternalTools
+          ? (
+              await Promise.all(
+                files.map(async (file) => {
+                  const captureSucceeded = ffmpeg.some((attempt) => attemptTargetsFile(attempt, file) && attempt.result && commandSucceeded(attempt.result));
+                  return captureSucceeded && (await pathExists(file)) ? null : file;
+                })
+              )
+            ).filter((file): file is string => Boolean(file))
+          : [];
+        const captureFailed = missingScreenshots.length > 0;
+        const captureFailureDetail = captureFailed ? screenshotFailureDetail(ffmpeg) : null;
+
         return {
-          ...base("completed", "Screenshot plan prepared."),
+          ...base(captureFailed ? "failed" : "completed", captureFailed ? `Screenshot capture failed${captureFailureDetail ? `: ${captureFailureDetail}` : ` for ${missingScreenshots.length} file(s).`}` : "Screenshot plan prepared."),
           mediaPath,
           outputDirectory,
           plan: screenshotPlan,
           tools: {
             ffmpeg: tools.ffmpeg,
-            oxipng: tools.oxipng
+            mpv: tools.mpv,
+            oxipng: tools.oxipng,
+            "xvfb-run": tools["xvfb-run"]
           },
+          requiredTools,
           ffmpeg,
           optimizer,
           uploads,
@@ -1071,8 +1235,9 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
         const openGates = plan.reviewGates.filter((gate) => gate.status === "open");
         const missingTools: WorkerTool[] = [];
         if (mediaInspection && !mediaInspection.tools.mediainfo.available) missingTools.push("mediainfo");
-        if (screenshots && !screenshots.tools.ffmpeg.available) missingTools.push("ffmpeg");
-        if (screenshots && !screenshots.tools.oxipng.available) missingTools.push("oxipng");
+        for (const tool of screenshots?.requiredTools ?? (screenshots ? (["ffmpeg", "oxipng"] as ScreenshotWorkerTool[]) : [])) {
+          if (!screenshots?.tools[tool]?.available && !missingTools.includes(tool)) missingTools.push(tool);
+        }
         const hasBlocker = openGates.some((gate) => gate.severity === "blocker");
         return {
           ...base(hasBlocker ? "blocked" : "completed", hasBlocker ? "Open blocker review gates remain." : "Preflight evidence collected."),

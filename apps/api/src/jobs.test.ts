@@ -296,6 +296,57 @@ describe("JobRepository pre-upload state machine", () => {
     expect(job.reviewDraft?.remasterTitle).toBe("");
   });
 
+  it("refreshes generated draft descriptions after evidence retries when the draft was not edited", () => {
+    const repo = new JobRepository();
+    const oldDescription = "General\nFormat                                   : Matroska\n";
+    const nextDescription = `${oldDescription}\n[img]https://img.example/screenshot-01.png[/img]`;
+    let job = repo.markPreparedForReview(repo.create({ candidate }).id, {
+      uploadReadiness: "missing_evidence",
+      artifacts: {
+        mediaInfoText: oldDescription,
+        mediainfo: oldDescription,
+        description: oldDescription
+      }
+    })!;
+
+    expect(job.reviewDraft?.description).toBe(oldDescription);
+
+    job = repo.markPreparationResult(job.id, {
+      state: "review",
+      phase: "review",
+      uploadReadiness: "ready",
+      humanStep: "Review upload package",
+      artifacts: {
+        ...job.artifacts,
+        screenshots: ["https://img.example/screenshot-01.png", "https://img.example/screenshot-02.png", "https://img.example/screenshot-03.png"],
+        uploadTorrent: "torrent/upload.torrent",
+        description: nextDescription
+      },
+      phases: job.phases,
+      eventLevel: "info",
+      eventMessage: "Phase retry ready for review."
+    })!;
+
+    expect(job.reviewDraft?.description).toBe(nextDescription);
+
+    job = repo.updateReviewDraft(job.id, { description: "Manual description" })!;
+    job = repo.markPreparationResult(job.id, {
+      state: "review",
+      phase: "review",
+      uploadReadiness: "ready",
+      humanStep: "Review upload package",
+      artifacts: {
+        ...job.artifacts,
+        description: `${nextDescription}\n[img]https://img.example/screenshot-04.png[/img]`
+      },
+      phases: job.phases,
+      eventLevel: "info",
+      eventMessage: "Phase retry ready for review."
+    })!;
+
+    expect(job.reviewDraft?.description).toBe("Manual description");
+  });
+
   it("rejects completed-phase retry for unsafe phases", () => {
     const repo = new JobRepository();
     let job = repo.markPreparedForReview(repo.create({ candidate }).id, { uploadReadiness: "ready", artifacts: {} })!;

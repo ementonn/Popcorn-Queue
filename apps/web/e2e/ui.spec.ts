@@ -83,7 +83,9 @@ test.describe("Popcorn Queue UI", () => {
             ffmpeg: { tool: "ffmpeg", command: "ffmpeg", available: true, version: "ffmpeg version 6.1", location: "/usr/bin/ffmpeg", error: null },
             mediainfo: { tool: "mediainfo", command: "mediainfo", available: true, version: "MediaInfoLib - v24.01", location: "/usr/bin/mediainfo", error: null },
             mkvmerge: { tool: "mkvmerge", command: "mkvmerge", available: true, version: "mkvmerge v82.0", location: "/usr/bin/mkvmerge", error: null },
-            oxipng: { tool: "oxipng", command: "oxipng", available: false, version: null, location: null, error: "not found" }
+            mpv: { tool: "mpv", command: "mpv", available: true, version: "mpv 0.41.0", location: "/usr/bin/mpv", error: null },
+            oxipng: { tool: "oxipng", command: "oxipng", available: false, version: null, location: null, error: "not found" },
+            "xvfb-run": { tool: "xvfb-run", command: "xvfb-run", available: true, version: "Usage: xvfb-run", location: "/usr/bin/xvfb-run", error: null }
           },
           logs: { api: ["api booted", "job updated"] }
         }
@@ -719,6 +721,35 @@ test.describe("Popcorn Queue UI", () => {
     const screenshotLink = page.getByTestId("review-panel").getByRole("link", { name: "Shot 1" });
     await expect(screenshotLink).toHaveAttribute("href", "https://example.test/shot1.png");
     await expect(screenshotLink.getByRole("img", { name: "Shot 1" })).toHaveAttribute("src", "https://example.test/medium/shot1.png");
+  });
+
+  test("does not render internal screenshot artifact paths as browser image URLs", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only review assertion.");
+    await page.unroute("**/api/jobs");
+    await page.route("**/api/jobs", async (route) => {
+      await route.fulfill({
+        json: {
+          jobs: [
+            {
+              ...apiJobs[0],
+              artifacts: {
+                ...apiJobs[0].artifacts,
+                screenshots: ["screenshots/raw/screenshot-01.png"],
+                screenshotPreviews: ["screenshots/raw/screenshot-01.png"]
+              }
+            }
+          ]
+        }
+      });
+    });
+
+    await page.goto("/");
+    await page.getByRole("link", { name: "ATHENA.2022.1080p.WEB.x265-SMURF" }).click();
+
+    const reviewPanel = page.getByTestId("review-panel");
+    await expect(reviewPanel.getByRole("link", { name: "Shot 1" })).toHaveCount(0);
+    await expect(reviewPanel.locator('img[src*="screenshots/raw/screenshot-01.png"]')).toHaveCount(0);
+    await expect(reviewPanel).toContainText("Screenshots captured locally, waiting for image host upload.");
   });
 
   test("autosaves upload draft fields and shows source torrent display names", async ({ page }, testInfo) => {

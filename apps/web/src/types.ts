@@ -226,7 +226,7 @@ export interface HealthInfo {
 
 export type DiagnosticCheckTarget = "qbittorrent" | "ptp" | "image-host" | "tools";
 export type DiagnosticCheckStatus = "not_checked" | "ok" | "configured" | "missing" | "failed" | "disabled";
-export type DiagnosticToolName = "ffmpeg" | "mediainfo" | "mkvmerge" | "oxipng";
+export type DiagnosticToolName = "ffmpeg" | "mediainfo" | "mkvmerge" | "mpv" | "oxipng" | "xvfb-run";
 
 export interface DiagnosticTool {
   tool: DiagnosticToolName;

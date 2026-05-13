@@ -46,6 +46,18 @@ function empty(value: string) {
   return <p className="muted">{value}</p>;
 }
 
+function isPublicImageUrl(value: string | null | undefined): value is string {
+  return /^https?:\/\//i.test(value ?? "");
+}
+
+function publicScreenshotLinks(screenshots: string[], previews: string[]): Array<{ url: string; previewUrl: string }> {
+  return screenshots.flatMap((screenshot, index) => {
+    if (!isPublicImageUrl(screenshot)) return [];
+    const preview = previews[index];
+    return [{ url: screenshot, previewUrl: isPublicImageUrl(preview) ? preview : screenshot }];
+  });
+}
+
 function groupIdFromUrl(url: string | null | undefined): string | null {
   if (!url) return null;
   try {
@@ -138,8 +150,10 @@ export function ReviewPanel({ job, jobLogs, onSaveReviewDraft, onRegisterDraftFl
   }
 
   const warnings = allWarnings(job);
-  const screenshots = job.artifacts?.screenshots ?? [];
+  const screenshotArtifacts = job.artifacts?.screenshots ?? [];
   const screenshotPreviews = job.artifacts?.screenshotPreviews ?? [];
+  const screenshots = publicScreenshotLinks(screenshotArtifacts, screenshotPreviews);
+  const hasInternalScreenshotArtifacts = screenshotArtifacts.some((screenshot) => !isPublicImageUrl(screenshot));
   const draftLines = linesFromText(job.artifacts?.description);
   const recentLogs = jobLogs.lines.length ? jobLogs.lines.slice(-8) : (job.events ?? []).slice(-8).map((event) => event.message);
   const phases = job.phases ?? [];
@@ -224,14 +238,14 @@ export function ReviewPanel({ job, jobLogs, onSaveReviewDraft, onRegisterDraftFl
         {screenshots.length ? (
           <div className="screenshot-grid">
             {screenshots.slice(0, 6).map((screenshot, index) => (
-              <a href={screenshot} key={screenshot} target="_blank" rel="noreferrer">
-                <img src={screenshotPreviews[index] ?? screenshot} alt={`Shot ${index + 1}`} loading="lazy" />
+              <a href={screenshot.url} key={screenshot.url} target="_blank" rel="noreferrer">
+                <img src={screenshot.previewUrl} alt={`Shot ${index + 1}`} loading="lazy" />
                 <span>Shot {index + 1}</span>
               </a>
             ))}
           </div>
         ) : (
-          empty(`${job.uploadPlan?.screenshots?.count ?? 0} planned shots, waiting for capture.`)
+          empty(hasInternalScreenshotArtifacts ? "Screenshots captured locally, waiting for image host upload." : `${job.uploadPlan?.screenshots?.count ?? 0} planned shots, waiting for capture.`)
         )}
       </section>
 

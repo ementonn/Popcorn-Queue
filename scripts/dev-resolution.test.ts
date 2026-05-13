@@ -7,6 +7,13 @@ import { describe, expect, it } from "vitest";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 
+function stripKnownNodeWarnings(stderr: string): string {
+  return stderr.replace(
+    /\(node:\d+\) \[DEP0205\] DeprecationWarning: `module\.register\(\)` is deprecated\. Use `module\.registerHooks\(\)` instead\.\n\(Use `node --trace-deprecation \.\.\.` to show where the warning was created\)\n?/g,
+    ""
+  );
+}
+
 function withCleanWorkspacePackages(run: () => void): void {
   const suffix = `dev-resolution-${process.pid}-${randomUUID()}`;
   const backups = [
@@ -55,7 +62,7 @@ describe("development package resolution", () => {
         }
       );
 
-      expect(result.stderr).toBe("");
+      expect(stripKnownNodeWarnings(result.stderr)).toBe("");
       expect(result.status).toBe(0);
     });
   });

@@ -473,7 +473,9 @@ export class PreparationService {
           ffmpeg: storedTool("ffmpeg"),
           mediainfo: storedTool("mediainfo"),
           mkvmerge: storedTool("mkvmerge"),
-          oxipng: storedTool("oxipng")
+          mpv: storedTool("mpv"),
+          oxipng: storedTool("oxipng"),
+          "xvfb-run": storedTool("xvfb-run")
         },
         mediaInfo: mediaInfoText
           ? { invocation: textInvocation, result: storedCommandResult(textInvocation, mediaInfoText) }
@@ -526,8 +528,11 @@ export class PreparationService {
         plan: buildScreenshotPlan(job.uploadPlan.parsed, undefined, { rng: () => 0.5 }),
         tools: {
           ffmpeg: storedTool("ffmpeg"),
-          oxipng: storedTool("oxipng")
+          mpv: storedTool("mpv"),
+          oxipng: storedTool("oxipng"),
+          "xvfb-run": storedTool("xvfb-run")
         },
+        requiredTools: ["ffmpeg", "oxipng"],
         ffmpeg: [],
         optimizer: [],
         uploads,
@@ -569,11 +574,6 @@ export class PreparationService {
     if (hostedUrls.length) {
       artifacts.screenshots = hostedUrls;
       artifacts.screenshotPreviews = hostedPreviews;
-    } else {
-      const screenshotFiles = outputs.screenshots?.files
-        .map((file) => relativeToJob(jobRoot, file))
-        .filter((file): file is string => Boolean(file)) ?? [];
-      if (screenshotFiles.length) artifacts.screenshots = screenshotFiles;
     }
 
     const mediaInspection = outputs["inspect-media"];

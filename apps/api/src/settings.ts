@@ -62,7 +62,9 @@ const HOT_SETTING_FIELDS: SettingFieldDefinition[] = [
   { key: "FFMPEG_BIN", label: "ffmpeg", group: "Tools", type: "text" },
   { key: "MEDIAINFO_BIN", label: "MediaInfo", group: "Tools", type: "text" },
   { key: "MKVMERGE_BIN", label: "mkvmerge", group: "Tools", type: "text" },
-  { key: "OXIPNG_BIN", label: "oxipng", group: "Tools", type: "text" }
+  { key: "MPV_BIN", label: "mpv", group: "Tools", type: "text" },
+  { key: "OXIPNG_BIN", label: "oxipng", group: "Tools", type: "text" },
+  { key: "XVFB_RUN_BIN", label: "xvfb-run", group: "Tools", type: "text" }
 ];
 
 const HOT_SETTING_KEYS = new Set(HOT_SETTING_FIELDS.map((field) => field.key));
@@ -160,7 +162,9 @@ function configValue(config: ApiConfig, key: string): string {
     FFMPEG_BIN: config.integrations.ffmpegBin,
     MEDIAINFO_BIN: config.integrations.mediainfoBin,
     MKVMERGE_BIN: config.integrations.mkvmergeBin,
-    OXIPNG_BIN: config.integrations.oxipngBin
+    MPV_BIN: config.integrations.mpvBin,
+    OXIPNG_BIN: config.integrations.oxipngBin,
+    XVFB_RUN_BIN: config.integrations.xvfbRunBin
   };
   return values[key] ?? "";
 }

@@ -84,6 +84,12 @@ function fixturePreparationCommandExecutor(): CommandExecutor {
       await writeFile(outputPath, args.includes("-frames:v") ? "png" : "mkv");
       return commandResult(command, args);
     }
+    if (command.includes("mkvmerge")) {
+      const outputIndex = args.indexOf("-o");
+      const mkvmergeOutputPath = outputIndex >= 0 ? args[outputIndex + 1] : null;
+      if (mkvmergeOutputPath) await writeFile(mkvmergeOutputPath, "mkv");
+      return commandResult(command, args);
+    }
     if (command.includes("mediainfo")) {
       return commandResult(command, args, { stdout: args[0] === "--Output=JSON" ? fixtureMediaInfoJson : fixtureMediaInfoText });
     }
@@ -120,6 +126,32 @@ describe("PreparationService", () => {
     expect(prepared.uploadReadiness).not.toBe("blocked");
     expect(prepared.events.some((event) => event.message === "Upload package ready for review.")).toBe(true);
     expect(prepared.events.some((event) => event.message.includes("uploaded to PTP"))).toBe(false);
+  });
+
+  it("does not expose local screenshot paths as review image URLs", async () => {
+    const dataRoot = await mkdtemp(path.join(os.tmpdir(), "popcorn-prep-local-shots-"));
+    const jobs = new JobRepository();
+    const job = jobs.create({
+      candidate: {
+        site: "mteam",
+        title: "Local.Shot.2024.1080p.WEB-DL.x265-GROUP",
+        imdbId: "tt1234567"
+      }
+    });
+
+    const service = new PreparationService({
+      dataRoot,
+      jobs,
+      runExternalTools: false,
+      toolCommands: { ffmpeg: "ffmpeg", mediainfo: "mediainfo", oxipng: "oxipng" }
+    });
+
+    await service.runJob(job.id);
+    const prepared = jobs.get(job.id)!;
+
+    expect(prepared.artifacts.screenshots).toBeUndefined();
+    expect(prepared.artifacts.screenshotPreviews).toBeUndefined();
+    expect(prepared.artifacts.reviewBlockers).toContain("Missing screenshot evidence");
   });
 
   it("downloads through an injected torrent client and prepares upload media without PTP submit", async () => {

@@ -131,7 +131,9 @@ function toolCommandMap(config: ApiConfig): Partial<Record<WorkerTool, string>> 
     ffmpeg: config.integrations.ffmpegBin,
     mediainfo: config.integrations.mediainfoBin,
     mkvmerge: config.integrations.mkvmergeBin,
-    oxipng: config.integrations.oxipngBin
+    mpv: config.integrations.mpvBin,
+    oxipng: config.integrations.oxipngBin,
+    "xvfb-run": config.integrations.xvfbRunBin
   };
 }
 
@@ -448,7 +450,9 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
         ffmpeg: config.integrations.ffmpegBin,
         mediainfo: config.integrations.mediainfoBin,
         mkvmerge: config.integrations.mkvmergeBin,
-        oxipng: config.integrations.oxipngBin
+        mpv: config.integrations.mpvBin,
+        oxipng: config.integrations.oxipngBin,
+        "xvfb-run": config.integrations.xvfbRunBin
       }
     }
   }));

@@ -17,7 +17,7 @@ export interface PrepareUploadMediaOptions {
   uploadDirectory: string;
   intermediateDirectory: string;
   runExternalTools: boolean;
-  ffmpegCommand: string;
+  mkvmergeCommand: string;
   commandExecutor: CommandExecutor;
 }
 
@@ -63,13 +63,13 @@ export async function prepareUploadMedia(options: PrepareUploadMediaOptions): Pr
     await rm(stagedOutputPath, { force: true });
     const result = await runCommand(
       options.commandExecutor,
-      options.ffmpegCommand,
-      ["-hide_banner", "-loglevel", "error", "-y", "-i", options.sourcePath, "-c", "copy", stagedOutputPath],
+      options.mkvmergeCommand,
+      ["-o", stagedOutputPath, options.sourcePath],
       {
         timeoutMs: 120_000
       }
     );
-    if (result.exitCode !== 0) throw new Error(result.stderr || `ffmpeg remux failed with exit code ${result.exitCode}`);
+    if (result.exitCode !== 0) throw new Error(result.stderr || result.stdout || `mkvmerge remux failed with exit code ${result.exitCode}`);
     await rm(outputPath, { force: true });
     await rename(stagedOutputPath, outputPath);
     return { inputPath: options.sourcePath, outputPath, mode: "remux", remuxed: true };

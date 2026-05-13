@@ -222,6 +222,14 @@ function buildJobReviewDraft(job: Pick<Job, "candidate" | "uploadPlan" | "artifa
   return buildReviewDraft(input);
 }
 
+function reviewDraftFieldWasEdited(job: Job, field: keyof ReviewDraft): boolean {
+  return job.events.some((event) => {
+    if (event.message !== "Review draft updated.") return false;
+    const fields = (event.payload as { fields?: unknown } | undefined)?.fields;
+    return Array.isArray(fields) && fields.includes(field);
+  });
+}
+
 function ensureReviewDraft(job: Job): void {
   const draft = buildJobReviewDraft(job);
   if (!draft) return;
@@ -231,11 +239,12 @@ function ensureReviewDraft(job: Job): void {
   }
   const draftWasEdited = job.events.some((event) => event.message === "Review draft updated.");
   const shouldMergeEditionSuggestions = !draftWasEdited || job.reviewDraft.remaster || Boolean(job.reviewDraft.remasterTitle);
+  const shouldRefreshGeneratedDescription = !reviewDraftFieldWasEdited(job, "description") && Boolean(draft.description);
   job.reviewDraft = {
     ...draft,
     ...job.reviewDraft,
     releaseName: job.reviewDraft.releaseName || draft.releaseName,
-    description: job.reviewDraft.description || draft.description,
+    description: shouldRefreshGeneratedDescription ? draft.description : job.reviewDraft.description || draft.description,
     groupId: job.reviewDraft.groupId ?? draft.groupId,
     type: job.reviewDraft.type || draft.type,
     codec: job.reviewDraft.codec || draft.codec,
@@ -541,7 +550,7 @@ export class JobRepository {
     const current = job.reviewDraft ?? buildJobReviewDraft(job);
     if (!current) return this.record(job, "warn", "Review draft is not available yet.");
     job.reviewDraft = mergeReviewDraft(current, patch);
-    return this.record(job, "info", "Review draft updated.");
+    return this.record(job, "info", "Review draft updated.", { fields: Object.keys(patch).sort() });
   }
 
   markUploadResult(id: string, result: PtpUploadResult, phases?: PhaseRun[]): Job | null {

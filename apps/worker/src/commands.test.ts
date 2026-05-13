@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { checkToolAvailability, nodeCommandExecutor, type CommandExecutor, type CommandInvocation, type CommandResult } from "./commands.js";
+import { checkToolAvailability, checkWorkerTools, nodeCommandExecutor, type CommandExecutor, type CommandInvocation, type CommandResult } from "./commands.js";
 
 function result(invocation: CommandInvocation, overrides: Partial<CommandResult> = {}): CommandResult {
   return {
@@ -58,6 +58,29 @@ describe("worker command wrappers", () => {
       expect.objectContaining({ command: "mkvmerge", args: ["--version"] }),
       expect.objectContaining({ command: "which", args: ["mkvmerge"] })
     ]);
+  });
+
+  it("checks mpv and xvfb-run as worker screenshot tools", async () => {
+    const calls: CommandInvocation[] = [];
+    const executor: CommandExecutor = async (invocation) => {
+      calls.push(invocation);
+      if (invocation.command === "which") return result(invocation, { stdout: `/usr/bin/${invocation.args[0] ?? "tool"}\n` });
+      return result(invocation, { stdout: `${invocation.command} version test\n` });
+    };
+
+    const tools = await checkWorkerTools(executor, {
+      mpv: "/opt/bin/mpv",
+      "xvfb-run": "/opt/bin/xvfb-run"
+    });
+
+    expect(tools.mpv).toMatchObject({ tool: "mpv", command: "/opt/bin/mpv", available: true });
+    expect(tools["xvfb-run"]).toMatchObject({ tool: "xvfb-run", command: "/opt/bin/xvfb-run", available: true });
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ command: "/opt/bin/mpv", args: ["--version"] }),
+        expect.objectContaining({ command: "/opt/bin/xvfb-run", args: ["--help"] })
+      ])
+    );
   });
 
   it("uses the MediaInfoLib line when mediainfo prints a heading before the version", async () => {

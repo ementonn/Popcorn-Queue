@@ -89,7 +89,9 @@ function testConfig(): ApiConfig {
       ffmpegBin: "ffmpeg",
       mediainfoBin: "mediainfo",
       mkvmergeBin: "mkvmerge",
+      mpvBin: "mpv",
       oxipngBin: "oxipng",
+      xvfbRunBin: "xvfb-run",
       workDir: "./data/work",
       outputDir: "./data/output"
     },
@@ -240,7 +242,9 @@ describe("API cache contract", () => {
           ffmpeg: { available: true, version: "ffmpeg version test", location: "/usr/bin/ffmpeg" },
           mediainfo: { available: true, version: "mediainfo version test", location: "/usr/bin/mediainfo" },
           mkvmerge: { available: true, version: "mkvmerge version test", location: "/usr/bin/mkvmerge" },
-          oxipng: { available: true, version: "oxipng version test", location: "/usr/bin/oxipng" }
+          mpv: { available: true, version: "mpv version test", location: "/usr/bin/mpv" },
+          oxipng: { available: true, version: "oxipng version test", location: "/usr/bin/oxipng" },
+          "xvfb-run": { available: true, version: "xvfb-run version test", location: "/usr/bin/xvfb-run" }
         },
         logs: {
           api: []
@@ -304,6 +308,8 @@ describe("API cache contract", () => {
         expect(keys).toContain("PTP_API_KEY");
         expect(keys).toContain("QBITTORRENT_URL");
         expect(keys).toContain("POPCORN_QUEUE_RUN_EXTERNAL_TOOLS");
+        expect(keys).toContain("MPV_BIN");
+        expect(keys).toContain("XVFB_RUN_BIN");
         expect(keys).not.toContain("DATABASE_URL");
         expect(keys).not.toContain("POPCORN_QUEUE_PORT");
         expect(settings.fields.find((field) => field.key === "PTP_API_KEY")).toMatchObject({

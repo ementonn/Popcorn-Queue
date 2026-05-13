@@ -17,9 +17,9 @@ describe("prepareUploadMedia", () => {
       uploadDirectory: path.join(root, "job", "media", "upload"),
       intermediateDirectory: path.join(root, "job", "media", "intermediates"),
       runExternalTools: false,
-      ffmpegCommand: "ffmpeg",
+      mkvmergeCommand: "mkvmerge",
       commandExecutor: async () => {
-        throw new Error("ffmpeg must not run for MKV hardlink/copy");
+        throw new Error("remux tools must not run for MKV hardlink/copy");
       }
     });
 
@@ -43,9 +43,9 @@ describe("prepareUploadMedia", () => {
       uploadDirectory: path.join(root, "job", "media", "upload"),
       intermediateDirectory: path.join(root, "job", "media", "intermediates"),
       runExternalTools: false,
-      ffmpegCommand: "ffmpeg",
+      mkvmergeCommand: "mkvmerge",
       commandExecutor: async () => {
-        throw new Error("ffmpeg must not run for MKV hardlink/copy");
+        throw new Error("remux tools must not run for MKV hardlink/copy");
       }
     });
 
@@ -70,7 +70,7 @@ describe("prepareUploadMedia", () => {
     expect(await readFile(unsafePath, "utf8")).toBe("mkv");
   });
 
-  it("remuxes MP4 to MKV through the injected executor", async () => {
+  it("remuxes MP4 to MKV with mkvmerge through the injected executor", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "popcorn-remux-"));
     const source = path.join(root, "download", "Movie.mp4");
     await mkdir(path.dirname(source), { recursive: true });
@@ -78,7 +78,8 @@ describe("prepareUploadMedia", () => {
     const calls: string[] = [];
     const executor: CommandExecutor = async (invocation) => {
       calls.push(`${invocation.command} ${invocation.args.join(" ")}`);
-      const outputPath = invocation.args.at(-1);
+      const outputIndex = invocation.args.indexOf("-o");
+      const outputPath = outputIndex >= 0 ? invocation.args[outputIndex + 1] : invocation.args.at(-1);
       if (typeof outputPath === "string") await writeFile(outputPath, "mkv");
       return {
         command: invocation.command,
@@ -96,14 +97,16 @@ describe("prepareUploadMedia", () => {
       uploadDirectory: path.join(root, "job", "media", "upload"),
       intermediateDirectory: path.join(root, "job", "media", "intermediates"),
       runExternalTools: true,
-      ffmpegCommand: "ffmpeg",
+      mkvmergeCommand: "mkvmerge",
       commandExecutor: executor
     });
 
     expect(result.mode).toBe("remux");
     expect(result.outputPath.endsWith("Movie.mkv")).toBe(true);
     expect(await readFile(result.outputPath, "utf8")).toBe("mkv");
-    expect(calls[0]).toContain("-c copy");
+    expect(calls[0]).toContain("mkvmerge -o ");
+    expect(calls[0]).toContain(source);
+    expect(calls[0]).not.toContain("ffmpeg");
   });
 
   it("copies MP4 to an MKV output path without ffmpeg when external tools are disabled", async () => {
@@ -118,10 +121,10 @@ describe("prepareUploadMedia", () => {
       uploadDirectory: path.join(root, "job", "media", "upload"),
       intermediateDirectory: path.join(root, "job", "media", "intermediates"),
       runExternalTools: false,
-      ffmpegCommand: "ffmpeg",
+      mkvmergeCommand: "mkvmerge",
       commandExecutor: async () => {
         called = true;
-        throw new Error("ffmpeg must not run when external tools are disabled");
+        throw new Error("remux tools must not run when external tools are disabled");
       }
     });
 
@@ -151,7 +154,8 @@ describe("prepareUploadMedia", () => {
     const calls: string[] = [];
     const executor: CommandExecutor = async (invocation) => {
       calls.push(`${invocation.command} ${invocation.args.join(" ")}`);
-      const outputPath = invocation.args.at(-1);
+      const outputIndex = invocation.args.indexOf("-o");
+      const outputPath = outputIndex >= 0 ? invocation.args[outputIndex + 1] : invocation.args.at(-1);
       if (typeof outputPath === "string") await writeFile(outputPath, "fresh-remux");
       return {
         command: invocation.command,
@@ -169,7 +173,7 @@ describe("prepareUploadMedia", () => {
       uploadDirectory,
       intermediateDirectory,
       runExternalTools: true,
-      ffmpegCommand: "ffmpeg",
+      mkvmergeCommand: "mkvmerge",
       commandExecutor: executor
     });
 
@@ -178,8 +182,9 @@ describe("prepareUploadMedia", () => {
       mode: "remux",
       remuxed: true
     });
-    expect(calls[0]).toContain("-y");
+    expect(calls[0]).toContain("mkvmerge -o");
     expect(calls[0]).toContain(tempOutput);
+    expect(calls[0]).toContain(source);
     expect(calls[0]).not.toContain(finalOutput);
     expect(await readFile(finalOutput, "utf8")).toBe("fresh-remux");
   });
