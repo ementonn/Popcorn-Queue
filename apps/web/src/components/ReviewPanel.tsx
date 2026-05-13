@@ -139,6 +139,7 @@ export function ReviewPanel({ job, jobLogs, onSaveReviewDraft, onRegisterDraftFl
 
   const warnings = allWarnings(job);
   const screenshots = job.artifacts?.screenshots ?? [];
+  const screenshotPreviews = job.artifacts?.screenshotPreviews ?? [];
   const draftLines = linesFromText(job.artifacts?.description);
   const recentLogs = jobLogs.lines.length ? jobLogs.lines.slice(-8) : (job.events ?? []).slice(-8).map((event) => event.message);
   const phases = job.phases ?? [];
@@ -224,7 +225,7 @@ export function ReviewPanel({ job, jobLogs, onSaveReviewDraft, onRegisterDraftFl
           <div className="screenshot-grid">
             {screenshots.slice(0, 6).map((screenshot, index) => (
               <a href={screenshot} key={screenshot} target="_blank" rel="noreferrer">
-                <img src={screenshot} alt={`Shot ${index + 1}`} loading="lazy" />
+                <img src={screenshotPreviews[index] ?? screenshot} alt={`Shot ${index + 1}`} loading="lazy" />
                 <span>Shot {index + 1}</span>
               </a>
             ))}

@@ -493,7 +493,8 @@ export class PreparationService {
 
     const screenshots = job.artifacts.screenshots ?? [];
     if (screenshots.length) {
-      const uploads = screenshots.map((screenshot) => {
+      const uploads = screenshots.map((screenshot, index) => {
+        const mediumUrl = job.artifacts.screenshotPreviews?.[index] ?? null;
         const filePath = resolveJobArtifact(jobRoot, screenshot) ?? screenshot;
         if (/^https?:\/\//i.test(screenshot)) {
           return {
@@ -504,6 +505,7 @@ export class PreparationService {
               url: screenshot,
               viewerUrl: screenshot,
               deleteUrl: null,
+              mediumUrl,
               width: null,
               height: null
             }
@@ -563,8 +565,10 @@ export class PreparationService {
 
     const imageHost = outputs["image-host-upload"];
     const hostedUrls = imageHost?.uploads.flatMap((attempt) => (attempt.result?.url ? [attempt.result.url] : [])) ?? [];
+    const hostedPreviews = imageHost?.uploads.flatMap((attempt) => (attempt.result?.url ? [attempt.result.mediumUrl ?? attempt.result.url] : [])) ?? [];
     if (hostedUrls.length) {
       artifacts.screenshots = hostedUrls;
+      artifacts.screenshotPreviews = hostedPreviews;
     } else {
       const screenshotFiles = outputs.screenshots?.files
         .map((file) => relativeToJob(jobRoot, file))

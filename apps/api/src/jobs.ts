@@ -70,6 +70,7 @@ export interface Job {
   artifacts: {
     mediaFiles?: string[];
     screenshots?: string[];
+    screenshotPreviews?: string[];
     mediainfo?: string;
     mediaInfoText?: string;
     mediaInfoJson?: string;

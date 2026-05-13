@@ -718,7 +718,7 @@ test.describe("Popcorn Queue UI", () => {
     expect(timelineTop).toBeLessThan(logTop);
     const screenshotLink = page.getByTestId("review-panel").getByRole("link", { name: "Shot 1" });
     await expect(screenshotLink).toHaveAttribute("href", "https://example.test/shot1.png");
-    await expect(screenshotLink.getByRole("img", { name: "Shot 1" })).toHaveAttribute("src", "https://example.test/shot1.png");
+    await expect(screenshotLink.getByRole("img", { name: "Shot 1" })).toHaveAttribute("src", "https://example.test/medium/shot1.png");
   });
 
   test("autosaves upload draft fields and shows source torrent display names", async ({ page }, testInfo) => {
@@ -1069,6 +1069,7 @@ const apiJobs = [
     artifacts: {
       mediaFiles: ["media/upload/ATHENA.2022.1080p.WEB.x265-SMURF.mkv"],
       screenshots: ["https://example.test/shot1.png", "https://example.test/shot2.png"],
+      screenshotPreviews: ["https://example.test/medium/shot1.png", "https://example.test/medium/shot2.png"],
       mediainfo: longMediaInfo,
       releaseName: "ATHENA.2022.1080p.WEB.x265-SMURF",
       description: `${longMediaInfo}\n\n[img]https://example.test/shot1.png[/img]`,

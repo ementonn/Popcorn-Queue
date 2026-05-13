@@ -18,6 +18,7 @@ describe("ImgBbUploader", () => {
             url: "https://i.ibb.co/image.png",
             display_url: "https://ibb.co/view",
             delete_url: "https://ibb.co/delete",
+            medium: { url: "https://i.ibb.co/medium/image.png" },
             width: "1920",
             height: "1080"
           }
@@ -38,6 +39,7 @@ describe("ImgBbUploader", () => {
         url: "https://i.ibb.co/image.png",
         viewerUrl: "https://ibb.co/view",
         deleteUrl: "https://ibb.co/delete",
+        mediumUrl: "https://i.ibb.co/medium/image.png",
         width: 1920,
         height: 1080
       });

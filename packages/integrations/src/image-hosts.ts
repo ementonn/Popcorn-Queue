@@ -6,6 +6,7 @@ export interface ImageUploadResult {
   url: string;
   viewerUrl: string;
   deleteUrl: string | null;
+  mediumUrl: string | null;
   width: number | null;
   height: number | null;
 }
@@ -41,6 +42,9 @@ interface ImgBbResponse {
     delete_url?: string;
     width?: number | string;
     height?: number | string;
+    medium?: {
+      url?: string;
+    };
   };
   error?: {
     message?: string;
@@ -97,6 +101,7 @@ export class ImgBbUploader implements ImageHostUploader {
       url: body.data.url,
       viewerUrl: body.data.display_url ?? body.data.url,
       deleteUrl: body.data.delete_url ?? null,
+      mediumUrl: body.data.medium?.url ?? null,
       width: numeric(body.data.width),
       height: numeric(body.data.height)
     };

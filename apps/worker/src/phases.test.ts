@@ -225,6 +225,7 @@ describe("worker phase scaffold", () => {
               url: "https://img.example/1.png",
               viewerUrl: "https://img.example/1",
               deleteUrl: null,
+              mediumUrl: null,
               width: 1920,
               height: 1080
             }
@@ -323,6 +324,7 @@ describe("worker phase scaffold", () => {
               url: `https://i.ibb.co/${path.basename(filePath)}`,
               viewerUrl: `https://ibb.co/${path.basename(filePath)}`,
               deleteUrl: null,
+              mediumUrl: null,
               width: 1920,
               height: 1080
             };
@@ -378,6 +380,7 @@ describe("worker phase scaffold", () => {
                 url: `https://i.ibb.co/${path.basename(filePath)}`,
                 viewerUrl: `https://ibb.co/${path.basename(filePath)}`,
                 deleteUrl: null,
+                mediumUrl: null,
                 width: 1920,
                 height: 1080
               };

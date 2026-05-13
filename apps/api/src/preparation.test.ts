@@ -513,6 +513,7 @@ describe("PreparationService", () => {
             url: `https://imgbb.test/${path.basename(filePath)}`,
             viewerUrl: `https://imgbb.test/view/${path.basename(filePath)}`,
             deleteUrl: null,
+            mediumUrl: `https://imgbb.test/medium/${path.basename(filePath)}`,
             width: 320,
             height: 180
           };
@@ -568,6 +569,7 @@ describe("PreparationService", () => {
     expect(prepared.artifacts.mediainfo).toContain("Matroska");
     expect(prepared.artifacts.screenshots).toHaveLength(4);
     expect(prepared.artifacts.screenshots?.every((url) => url.startsWith("https://imgbb.test/"))).toBe(true);
+    expect(prepared.artifacts.screenshotPreviews).toEqual(prepared.artifacts.screenshots?.map((url) => url.replace("https://imgbb.test/", "https://imgbb.test/medium/")));
     expect(uploadedImages).toHaveLength(4);
     expect(prepared.artifacts.uploadTorrent).toBe("torrent/upload.torrent");
     expect(prepared.artifacts.qbReady).toBe(true);

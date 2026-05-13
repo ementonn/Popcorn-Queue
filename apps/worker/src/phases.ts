@@ -102,6 +102,7 @@ export interface ImageUploadResult {
   url: string;
   viewerUrl: string;
   deleteUrl: string | null;
+  mediumUrl: string | null;
   width: number | null;
   height: number | null;
 }
