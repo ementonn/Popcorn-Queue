@@ -118,6 +118,26 @@ export interface PtpSubmitter {
   submit(input: { draft: ReviewDraft; torrentPath: string; nfoText?: string | null }): Promise<PtpUploadResult>;
 }
 
+export interface PtpCacheSyncInput {
+  candidate: TorrentCandidate;
+  checkResult?: BrowserCheckResult;
+  parsed: UploadPlan["parsed"];
+  releaseName: string;
+  reviewDraft?: ReviewDraft;
+  uploadResult: PtpUploadResult;
+}
+
+export interface PtpCacheSyncResult {
+  cacheKey: string;
+  groupId: string;
+  torrentId: string;
+  torrentCount: number;
+}
+
+export interface PtpCacheSyncer {
+  syncUpload(input: PtpCacheSyncInput): Promise<PtpCacheSyncResult>;
+}
+
 export interface ImageUploadAttempt {
   filePath: string;
   host: string | null;
@@ -213,6 +233,12 @@ export interface PhaseOutputMap {
     draftOnly: boolean;
     result?: PtpUploadResult;
   };
+  "sync-ptp-cache": PhaseOutputBase & {
+    cacheKey: string | null;
+    groupId: string | null;
+    torrentId: string | null;
+    torrentCount: number | null;
+  };
   "post-hook": PhaseOutputBase & {
     hooksRun: string[];
   };
@@ -237,6 +263,7 @@ export interface PhaseContext {
   toolCommands: Partial<Record<WorkerTool, string>>;
   imageUploader: ImageHostUploader | undefined;
   ptpSubmitter: PtpSubmitter | undefined;
+  ptpCacheSyncer: PtpCacheSyncer | undefined;
   ptpAnnounceUrl: string | undefined;
   torrentClient: TorrentDownloadClient | undefined;
   torrentClientOptions: {
@@ -267,6 +294,7 @@ export interface CreatePhaseContextOptions {
   toolCommands?: Partial<Record<WorkerTool, string>>;
   imageUploader?: ImageHostUploader;
   ptpSubmitter?: PtpSubmitter;
+  ptpCacheSyncer?: PtpCacheSyncer;
   ptpAnnounceUrl?: string;
   torrentClient?: TorrentDownloadClient;
   torrentClientOptions?: {
@@ -324,6 +352,7 @@ export function createPhaseContext(jobId: string, job: WorkerJobInput, options: 
     toolCommands: options.toolCommands ?? {},
     imageUploader: options.imageUploader,
     ptpSubmitter: options.ptpSubmitter,
+    ptpCacheSyncer: options.ptpCacheSyncer,
     ptpAnnounceUrl: options.ptpAnnounceUrl,
     torrentClient: options.torrentClient,
     torrentClientOptions: {
@@ -1310,6 +1339,58 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
             ...base("failed", message),
             ptpUrl: null,
             draftOnly: false
+          };
+        }
+      }
+    },
+    {
+      phase: "sync-ptp-cache",
+      async run(context) {
+        const upload = await context.getOutput("upload");
+        if (upload?.status !== "completed" || !upload.result) {
+          return {
+            ...base("skipped", "PTP upload did not complete; cache sync was skipped."),
+            cacheKey: null,
+            groupId: null,
+            torrentId: null,
+            torrentCount: null
+          };
+        }
+        if (!context.ptpCacheSyncer) {
+          return {
+            ...base("skipped", "PTP cache sync is not configured."),
+            cacheKey: null,
+            groupId: upload.result.groupId,
+            torrentId: upload.result.torrentId,
+            torrentCount: null
+          };
+        }
+
+        try {
+          const plan = await uploadPlan(context);
+          const result = await context.ptpCacheSyncer.syncUpload({
+            candidate: context.job.candidate,
+            ...(context.job.checkResult ? { checkResult: context.job.checkResult } : {}),
+            parsed: plan.parsed,
+            releaseName: context.job.reviewDraft?.releaseName ?? plan.releaseName.generated,
+            ...(context.job.reviewDraft ? { reviewDraft: context.job.reviewDraft } : {}),
+            uploadResult: upload.result
+          });
+          return {
+            ...base("completed", "PTP duplicate cache synced with uploaded torrent."),
+            cacheKey: result.cacheKey,
+            groupId: result.groupId,
+            torrentId: result.torrentId,
+            torrentCount: result.torrentCount
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            ...base("failed", `PTP cache sync failed: ${message}`),
+            cacheKey: null,
+            groupId: upload.result.groupId,
+            torrentId: upload.result.torrentId,
+            torrentCount: null
           };
         }
       }

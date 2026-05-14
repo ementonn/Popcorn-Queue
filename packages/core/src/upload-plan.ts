@@ -22,6 +22,7 @@ export const UPLOAD_PHASES = [
   "preflight",
   "review",
   "upload",
+  "sync-ptp-cache",
   "post-hook",
   "done"
 ] as const;

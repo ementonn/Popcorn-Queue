@@ -14,6 +14,7 @@ const PHASE_LABELS: Record<string, string> = {
   preflight: "Preflight",
   review: "Review",
   upload: "Upload",
+  "sync-ptp-cache": "Sync PTP cache",
   "post-hook": "Post hook",
   done: "Done"
 };

@@ -5,9 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PtpClient } from "@popcorn-queue/integrations";
 import { buildServer } from "./server.js";
 import type { ApiConfig } from "./config.js";
-import type { BrowserCheckResult } from "@popcorn-queue/core";
+import type { BrowserCheckResult, TorrentCandidate } from "@popcorn-queue/core";
 import type { CommandExecutor } from "@popcorn-queue/worker";
-import type { Job } from "./jobs.js";
+import { JobRepository, type Job } from "./jobs.js";
 
 const persistenceState = vi.hoisted(() => ({
   initialJobs: [] as Job[]
@@ -1024,6 +1024,112 @@ describe("API jobs", () => {
         ptpSubmitter: {
           async submit(input) {
             submitted.push({ torrentPath: input.torrentPath, description: input.draft.description, groupId: input.draft.groupId });
+            return {
+              groupId: "123",
+              torrentId: "456",
+              ptpUrl: "https://passthepopcorn.me/torrents.php?id=123&torrentid=456"
+            };
+          }
+        }
+      }
+    );
+  });
+
+  it("syncs the uploaded torrent into the PTP browser check cache before post-hook", async () => {
+    const jobPath = await mkdtemp(path.join(os.tmpdir(), "popcorn-upload-cache-sync-"));
+    const mediaPath = path.join(jobPath, "media", "upload", "Upload.Movie.2024.1080p.BluRay.x264-GROUP.mkv");
+    const torrentPath = path.join(jobPath, "torrent", "upload.torrent");
+    await mkdir(path.dirname(mediaPath), { recursive: true });
+    await mkdir(path.dirname(torrentPath), { recursive: true });
+    await writeFile(mediaPath, "mkv");
+    await writeFile(torrentPath, "torrent");
+
+    const candidate: TorrentCandidate = {
+      site: "mteam",
+      title: "Upload.Movie.2024.1080p.BluRay.x264-GROUP",
+      imdbId: "tt1234567",
+      resolution: "1080p"
+    };
+    const checkResult: BrowserCheckResult = {
+      candidate,
+      parsed: null,
+      decision: {
+        status: "no_torrents",
+        movieFound: true,
+        movie: {
+          GroupId: "123",
+          Title: "Upload Movie",
+          Year: "2024",
+          ImdbId: "tt1234567",
+          Torrents: []
+        },
+        reason: "Movie exists on PTP but has no torrents.",
+        confidence: "high",
+        ptpUrl: "https://passthepopcorn.me/torrents.php?id=123"
+      },
+      cache: {
+        key: "ptp:imdb:tt1234567",
+        hit: false,
+        policy: "permanent"
+      }
+    };
+    const seedRepo = new JobRepository();
+    let job = seedRepo.create({ candidate, checkResult });
+    job = seedRepo.markPreparedForReview(job.id, {
+      uploadReadiness: "ready",
+      artifacts: {
+        mediaFiles: ["media/upload/Upload.Movie.2024.1080p.BluRay.x264-GROUP.mkv"],
+        uploadTorrent: "torrent/upload.torrent"
+      }
+    })!;
+    job = seedRepo.attachWorkspace(job.id, {
+      workspace: {
+        dataRoot: "",
+        jobRoot: jobPath,
+        manifest: path.join(jobPath, "manifest.json")
+      }
+    })!;
+    persistenceState.initialJobs = [job];
+
+    const search = vi.spyOn(PtpClient.prototype, "searchByCandidate").mockResolvedValue({
+      movies: [
+        {
+          GroupId: "123",
+          Title: "Upload Movie",
+          Name: "Upload Movie",
+          Year: "2024",
+          ImdbId: "tt1234567",
+          Torrents: []
+        }
+      ]
+    });
+
+    await withServer(
+      async (app) => {
+        const before = await app.inject({ method: "POST", url: "/api/browser/check", headers: authHeaders, payload: candidate });
+        expect(before.statusCode).toBe(200);
+        expect(before.json<{ result: BrowserCheckResult }>().result.decision.status).toBe("no_torrents");
+
+        const start = await app.inject({ method: "POST", url: `/api/jobs/${job.id}/start-upload` });
+        expect(start.statusCode).toBe(200);
+        const uploaded = start.json<{ job: Job }>().job;
+        const phaseNames = uploaded.phases.map((phase) => phase.phase);
+        expect(phaseNames.indexOf("sync-ptp-cache")).toBeGreaterThan(phaseNames.indexOf("upload"));
+        expect(phaseNames.indexOf("sync-ptp-cache")).toBeLessThan(phaseNames.indexOf("post-hook"));
+        expect(uploaded.phases.find((phase) => phase.phase === "sync-ptp-cache")).toMatchObject({ state: "done" });
+
+        const after = await app.inject({ method: "POST", url: "/api/browser/check", headers: authHeaders, payload: candidate });
+        expect(after.statusCode).toBe(200);
+        const result = after.json<{ result: BrowserCheckResult }>().result;
+        expect(result.cache.hit).toBe(true);
+        expect(result.decision.status).toBe("full");
+        expect(result.decision.existing?.map((torrent) => torrent.releaseName)).toContain("Upload.Movie.2024.1080p.BluRay.x264-GROUP");
+        expect(search).toHaveBeenCalledTimes(1);
+      },
+      {
+        autoPrepare: false,
+        ptpSubmitter: {
+          async submit() {
             return {
               groupId: "123",
               torrentId: "456",

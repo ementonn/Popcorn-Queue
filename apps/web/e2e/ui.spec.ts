@@ -843,6 +843,7 @@ test.describe("Popcorn Queue UI", () => {
       phases: [
         ...apiJobs[0].phases,
         { phase: "upload", state: "done", retryCount: 0, message: "PTP upload submitted." },
+        { phase: "sync-ptp-cache", state: "done", retryCount: 0, message: "PTP duplicate cache synced with uploaded torrent." },
         { phase: "post-hook", state: "done", retryCount: 0, message: "PTP upload torrent handed to qBittorrent for seeding." },
         { phase: "done", state: "done", retryCount: 0, message: "Complete." }
       ]

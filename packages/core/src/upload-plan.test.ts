@@ -46,6 +46,7 @@ describe("upload plan review gates", () => {
       "preflight",
       "review",
       "upload",
+      "sync-ptp-cache",
       "post-hook",
       "done"
     ]);

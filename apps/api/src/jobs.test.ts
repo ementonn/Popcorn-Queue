@@ -106,6 +106,19 @@ describe("JobRepository pre-upload state machine", () => {
     expect(repaired.phases.find((phase) => phase.phase === "done")).toMatchObject({ state: "pending" });
   });
 
+  it("adds newly introduced phases to legacy job phase lists", () => {
+    const seedRepo = new JobRepository();
+    const legacy = seedRepo.create({ candidate });
+    legacy.phases = legacy.phases.filter((phase) => phase.phase !== "sync-ptp-cache");
+
+    const repaired = new JobRepository([legacy]).get(legacy.id)!;
+    const phaseNames = repaired.phases.map((phase) => phase.phase);
+
+    expect(phaseNames).toContain("sync-ptp-cache");
+    expect(phaseNames.indexOf("sync-ptp-cache")).toBeGreaterThan(phaseNames.indexOf("upload"));
+    expect(phaseNames.indexOf("sync-ptp-cache")).toBeLessThan(phaseNames.indexOf("post-hook"));
+  });
+
   it("blocks Start Upload when readiness is blocked", () => {
     const repo = new JobRepository();
     let job = repo.create({

@@ -194,6 +194,16 @@ function phaseIndex(phase: JobPhase): number {
   return JOB_PHASES.findIndex((item) => item === phase);
 }
 
+function repairPhaseList(phases: PhaseRun[]): PhaseRun[] {
+  const existing = new Map(phases.map((phase) => [phase.phase, phase]));
+  return JOB_PHASES.map((phase) => existing.get(phase) ?? {
+    phase,
+    state: "pending",
+    retryCount: 0,
+    message: "Waiting."
+  });
+}
+
 function mergeGateStatus(nextPlan: UploadPlan, previous?: UploadPlan): UploadPlan {
   if (!previous) return nextPlan;
   const previousStatus = new Map(previous.reviewGates.map((gate) => [gate.id, gate.status]));
@@ -263,6 +273,7 @@ function ensureReviewDraft(job: Job): void {
 }
 
 export function repairJobRuntimeState(job: Job): Job {
+  job.phases = repairPhaseList(job.phases);
   const postHook = job.phases.find((phase) => phase.phase === "post-hook");
   if (postHook?.state === "failed" && (job.state === "done" || job.phase === "done")) {
     job.state = "needs_reseed";
