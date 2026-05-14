@@ -286,6 +286,24 @@
     return ["not_found", "open", "no_torrents", "trumpable", "coexist", "review"].includes(status);
   }
 
+  function torrentReleaseName(torrent) {
+    return String((torrent && (torrent.title || torrent.name || torrent.releaseName)) || "");
+  }
+
+  function hasUnsupportedFrameRate(name) {
+    const text = String(name || "");
+    const pattern = /\b(\d+(?:\.\d+)?)\s*f\s*p\s*s\b/gi;
+    let match;
+    while ((match = pattern.exec(text))) {
+      if (Number(match[1]) > 50) return true;
+    }
+    return false;
+  }
+
+  function shouldOfferUpload(torrent, status) {
+    return isUploadable(status) && !hasUnsupportedFrameRate(torrentReleaseName(torrent));
+  }
+
   function downloadTorrent(torrent) {
     return apiDownload(absolutize(torrent.downloadUrl), fallbackTorrentFilename(torrent));
   }
@@ -617,13 +635,15 @@
   }
 
   function renderCheckResult(site, status, torrent, result) {
+    const skipHighFrameRate = hasUnsupportedFrameRate(torrentReleaseName(torrent));
     const tooltip = [
+      skipHighFrameRate ? "Skipped: release name declares more than 50 fps." : "",
       result.decision.reason,
       result.decision.slotType ? "Slot: " + result.decision.slotType : "",
       result.cache.hit ? "Cache hit: " + (result.cache.cachedAt || "") : "Checked live",
       "Right-click to recheck this page without using the saved cache"
     ].filter(Boolean).join("\n");
-    const badge = makeBadge(result.decision.status, tooltip);
+    const badge = makeBadge(skipHighFrameRate ? "skip" : result.decision.status, tooltip);
     removeUploadButton(torrent);
     torrent.badge.replaceWith(badge);
     torrent.badge = badge;
@@ -635,7 +655,7 @@
       event.preventDefault();
       await recheckTorrent(site, status, torrent);
     });
-    if (isUploadable(result.decision.status)) addUploadButton(torrent, result, badge);
+    if (shouldOfferUpload(torrent, result.decision.status)) addUploadButton(torrent, result, badge);
   }
 
   registerSettings();
