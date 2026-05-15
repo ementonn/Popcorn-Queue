@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, rm, stat, statfs, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import fastify from "fastify";
 import cors from "@fastify/cors";
@@ -19,17 +19,14 @@ import {
 import { BrowserCheckService, ImgBbUploader, PtpClient, PtpFormSubmitter, QBittorrentClient } from "@popcorn-queue/integrations";
 import {
   PhaseRunner,
-  checkWorkerTools,
   createPhaseContext,
-  type CommandExecutor,
   type CreatePhaseContextOptions,
   type PhaseLogLevel,
   type PhaseOutputMap,
   type PtpCacheSyncInput,
   type PtpCacheSyncer,
   type PtpSubmitter,
-  type TorrentDownloadClient,
-  type WorkerTool
+  type TorrentDownloadClient
 } from "@popcorn-queue/worker";
 import type { ApiRouteContext, BuildServerOptions } from "./api-context.js";
 import { WebSessionAuth, makeBrowserAuthHook } from "./auth.js";
@@ -41,7 +38,8 @@ import { createApiLogger } from "./logger.js";
 import { PrismaPersistence } from "./persistence.js";
 import { PreparationService } from "./preparation.js";
 import { registerApiRoutes } from "./routes/index.js";
-import { defaultSettingsEnvPath, loadConfigFromEnvPath, saveSettingsEnv, settingsResponse, type SaveSettingsInput } from "./settings.js";
+import { toolCommandMap } from "./services/diagnostics.js";
+import { defaultSettingsEnvPath } from "./settings.js";
 import { JOB_PHASES, RETRYABLE_COMPLETED_PHASES, type Job, type PhaseRun, type PhaseState } from "./jobs.js";
 
 interface CreateManualJobBody extends Partial<TorrentCandidate> {
@@ -60,9 +58,6 @@ interface DeleteJobBody {
   confirm?: boolean;
 }
 
-type DiagnosticCheckStatus = "not_checked" | "ok" | "configured" | "missing" | "failed" | "disabled";
-type DiagnosticCheckTarget = "qbittorrent" | "ptp" | "image-host" | "tools";
-
 async function pathExists(filePath: string): Promise<boolean> {
   try {
     await access(filePath);
@@ -70,89 +65,6 @@ async function pathExists(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-function sqliteDatabasePath(): string | null {
-  const databaseUrl = process.env.DATABASE_URL ?? "file:./popcorn-queue.db";
-  if (!databaseUrl.startsWith("file:")) return null;
-  const filePath = databaseUrl.slice("file:".length);
-  if (!filePath || filePath.startsWith(":")) return null;
-  return path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath);
-}
-
-async function fileSize(filePath: string | null): Promise<number | null> {
-  if (!filePath) return null;
-  try {
-    return (await stat(filePath)).size;
-  } catch {
-    return null;
-  }
-}
-
-async function freeBytes(filePath: string): Promise<number | null> {
-  try {
-    const info = await statfs(filePath);
-    return info.bavail * info.bsize;
-  } catch {
-    return null;
-  }
-}
-
-async function cacheEntryCount(cache: unknown): Promise<number | null> {
-  const maybeCount = (cache as { count?: () => Promise<number> }).count;
-  if (!maybeCount) return null;
-  try {
-    return await maybeCount.call(cache);
-  } catch {
-    return null;
-  }
-}
-
-function integrationSummary(config: ApiConfig, target: DiagnosticCheckTarget): { configured: boolean; status: DiagnosticCheckStatus; detail: string } {
-  if (target === "qbittorrent") {
-    const configured = Boolean(config.integrations.qbittorrentUrl);
-    return {
-      configured,
-      status: "not_checked",
-      detail: configured ? "qBittorrent is configured." : "qBittorrent URL is not configured."
-    };
-  }
-  if (target === "ptp") {
-    const configured = Boolean(config.ptp.apiUser && config.ptp.apiKey);
-    return {
-      configured,
-      status: "not_checked",
-      detail: configured ? "PTP API credentials are configured." : "PTP API user/key are not configured."
-    };
-  }
-  if (target === "image-host") {
-    const configured = (config.integrations.imageHost === "imgbb" && Boolean(config.integrations.imgbbApiKey)) || Boolean(config.integrations.ptpImgApiKey);
-    return {
-      configured,
-      status: "not_checked",
-      detail: configured ? `${config.integrations.imageHost || "image host"} is configured.` : "No image host API key is configured."
-    };
-  }
-  return {
-    configured: config.integrations.runExternalTools,
-    status: "not_checked",
-    detail: config.integrations.runExternalTools ? "External media tools are enabled." : "External tools are disabled."
-  };
-}
-
-function toolCommandMap(config: ApiConfig): Partial<Record<WorkerTool, string>> {
-  return {
-    ffmpeg: config.integrations.ffmpegBin,
-    mediainfo: config.integrations.mediainfoBin,
-    mkvmerge: config.integrations.mkvmergeBin,
-    mpv: config.integrations.mpvBin,
-    oxipng: config.integrations.oxipngBin,
-    "xvfb-run": config.integrations.xvfbRunBin
-  };
-}
-
-function toolCheckStatus(tools: Awaited<ReturnType<typeof checkWorkerTools>>): DiagnosticCheckStatus {
-  return Object.values(tools).every((tool) => tool.available) ? "ok" : "failed";
 }
 
 function optionalString(value: string | null | undefined): string | undefined {
@@ -249,52 +161,6 @@ function createPtpCacheSyncer(cache: CacheStore<NormalizedPtpResponse>): PtpCach
         torrentCount: synced.torrentCount
       };
     }
-  };
-}
-
-async function collectToolDiagnostics(config: ApiConfig, commandExecutor?: CommandExecutor) {
-  return checkWorkerTools(commandExecutor, toolCommandMap(config));
-}
-
-function queueDiagnostics(jobs: Job[]) {
-  const counts = {
-    total: jobs.length,
-    preparing: 0,
-    review: 0,
-    failed: 0,
-    done: 0,
-    paused: 0,
-    uploading: 0,
-    seeding: 0,
-    needsReseed: 0
-  };
-  const staleCutoff = Date.now() - 30 * 60 * 1000;
-  const stuck: Array<{ id: string; state: string; phase: string; updatedAt: string; title: string }> = [];
-  const recentFailures: Array<{ id: string; message: string; title: string }> = [];
-
-  for (const job of jobs) {
-    if (job.state === "preparing") counts.preparing += 1;
-    else if (job.state === "review") counts.review += 1;
-    else if (job.state === "failed") counts.failed += 1;
-    else if (job.state === "done") counts.done += 1;
-    else if (job.state === "paused") counts.paused += 1;
-    else if (job.state === "uploading") counts.uploading += 1;
-    else if (job.state === "seeding") counts.seeding += 1;
-    else if (job.state === "needs_reseed") counts.needsReseed += 1;
-
-    const updatedAt = Date.parse(job.updatedAt);
-    if ((job.state === "preparing" || job.state === "uploading") && Number.isFinite(updatedAt) && updatedAt < staleCutoff) {
-      stuck.push({ id: job.id, state: job.state, phase: job.phase, updatedAt: job.updatedAt, title: job.artifacts.releaseName ?? job.candidate?.title ?? job.source.title ?? job.id });
-    }
-    if (job.state === "failed") {
-      recentFailures.push({ id: job.id, message: job.events.at(0)?.message ?? job.humanStep, title: job.artifacts.releaseName ?? job.candidate?.title ?? job.source.title ?? job.id });
-    }
-  }
-
-  return {
-    ...counts,
-    stuck: stuck.slice(0, 10),
-    recentFailures: recentFailures.slice(0, 10)
   };
 }
 
@@ -640,119 +506,6 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
   });
   app.addHook("preHandler", async (request, reply) => webAuth.hook()(request, reply));
 
-  app.get("/api/auth/session", async (request) => webAuth.info(request));
-
-  app.post<{ Body: { username?: string; password?: string } }>("/api/auth/login", async (request, reply) => {
-    const body = request.body ?? {};
-    return webAuth.login(String(body.username ?? ""), String(body.password ?? ""), reply);
-  });
-
-  app.post("/api/auth/logout", async (request, reply) => webAuth.logout(request, reply));
-
-  app.get("/api/settings", async () => settingsResponse(settingsEnvPath, config));
-
-  app.patch<{ Body: SaveSettingsInput }>("/api/settings", async (request, reply) => {
-    try {
-      await saveSettingsEnv(settingsEnvPath, request.body ?? {});
-      applyRuntimeConfig(loadConfigFromEnvPath(settingsEnvPath));
-      return reply.send({
-        ...settingsResponse(settingsEnvPath, config),
-        saved: true,
-        reloaded: true,
-        restartRequired: false
-      });
-    } catch (error) {
-      return reply.code(400).send({ error: error instanceof Error ? error.message : "settings_save_failed" });
-    }
-  });
-
-  app.get("/api/health", async () => ({
-    ok: true,
-    ptpConfigured: Boolean(config.ptp.apiUser && config.ptp.apiKey),
-    browserTokenConfigured: Boolean(config.browserToken),
-    cachePolicy: "permanent",
-    persistence: "sqlite",
-    publicWebUrl: config.publicWebUrl,
-    publicApiUrl: config.publicApiUrl,
-    external: {
-      tmdbConfigured: Boolean(config.integrations.tmdbApiKey),
-      imageHost: config.integrations.imageHost,
-      imgbbConfigured: Boolean(config.integrations.imgbbApiKey),
-      ptpImgConfigured: Boolean(config.integrations.ptpImgApiKey),
-      torrentClientConfigured: Boolean(config.integrations.qbittorrentUrl),
-      externalToolsEnabled: config.integrations.runExternalTools,
-      tools: {
-        ffmpeg: config.integrations.ffmpegBin,
-        mediainfo: config.integrations.mediainfoBin,
-        mkvmerge: config.integrations.mkvmergeBin,
-        mpv: config.integrations.mpvBin,
-        oxipng: config.integrations.oxipngBin,
-        "xvfb-run": config.integrations.xvfbRunBin
-      }
-    }
-  }));
-
-  app.get("/api/features", async () => ({
-    features: [
-      {
-        id: "ptp-cache",
-        name: "Backend PTP cache",
-        status: "implemented",
-        detail: "PTP lookups are cached permanently in the API until manually refreshed or invalidated."
-      },
-      {
-        id: "upload-plan",
-        name: "Upsies-style upload plan",
-        status: "implemented",
-        detail: "Every job receives metadata, release-name, scene, screenshot, torrent-reuse, media, and review-gate plans."
-      },
-      {
-        id: "phase-runner",
-        name: "Restartable upload phases",
-        status: "implemented",
-        detail: "Jobs can be started, paused, retried, skipped through debug routing, and blocked by review gates."
-      },
-      {
-        id: "ptp-rules",
-        name: "PTP rule gates",
-        status: "implemented",
-        detail: "Banned groups, EVO encode handling, MP4 remux checks, missing IMDb, and parse-confidence warnings are surfaced as review gates."
-      },
-      {
-        id: "external-enrichment",
-        name: "IMDb/TMDb/TVmaze enrichment",
-        status: "planned",
-        detail: config.integrations.tmdbApiKey
-          ? "TMDb is configured for manual integration testing; provider clients still run through the metadata phase contract."
-          : "Provider plans are generated now; add TMDB_API_KEY when live provider clients are wired into the metadata phase."
-      },
-      {
-        id: "image-host-upload",
-        name: "Screenshot host fallback",
-        status: "planned",
-        detail: config.integrations.imgbbApiKey || config.integrations.ptpImgApiKey
-          ? `${configuredImageHosts(config).join(", ")} configured for screenshot hosting plans.`
-          : "Screenshot timestamps and fallback hosts are planned now; add IMGBB_API_KEY or PTPIMG_API_KEY when image-host upload is enabled."
-      },
-      {
-        id: "torrent-client",
-        name: "Torrent client handoff",
-        status: "planned",
-        detail: config.integrations.qbittorrentUrl
-          ? "qBittorrent connection details are configured for manual service wiring."
-          : "Set QBITTORRENT_URL and credentials when seed-start handoff is enabled."
-      },
-      {
-        id: "external-tools",
-        name: "Worker media tools",
-        status: config.integrations.runExternalTools ? "configured" : "disabled",
-        detail: config.integrations.runExternalTools
-          ? `Worker may run ${config.integrations.ffmpegBin}, ${config.integrations.mediainfoBin}, ${config.integrations.mkvmergeBin}, and ${config.integrations.oxipngBin} during manual execution.`
-          : "External tools are disabled; media preparation will skip or mock command execution."
-      }
-    ]
-  }));
-
   app.get("/api/jobs", async () => ({ jobs: await jobRepository.list() }));
   app.get<{ Params: { id: string } }>("/api/jobs/:id", async (request, reply) => {
     const job = await jobRepository.get(request.params.id);
@@ -770,78 +523,6 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
     const job = await jobRepository.get(request.params.id);
     if (!job) return reply.code(404).send({ error: "job_not_found" });
     return { lines: await readLogTail(buildJobWorkspacePaths(config.paths.dataRoot, request.params.id).logs.jobLog, 200) };
-  });
-
-  app.get("/api/logs/global", async () => ({
-    api: await readLogTail(config.paths.apiLogFile, 200)
-  }));
-
-  app.get("/api/diagnostics", async () => {
-    const jobs = await jobRepository.list();
-    const databasePath = sqliteDatabasePath();
-    const tools = await collectToolDiagnostics(config, options.commandExecutor);
-    return {
-      system: {
-        api: "online",
-        persistence: "sqlite",
-        publicWebUrl: config.publicWebUrl,
-        publicApiUrl: config.publicApiUrl,
-        browserBridgeConfigured: Boolean(config.browserToken),
-        ptpApiConfigured: Boolean(config.ptp.apiUser && config.ptp.apiKey),
-        externalToolsEnabled: config.integrations.runExternalTools
-      },
-      integrations: {
-        qbittorrent: integrationSummary(config, "qbittorrent"),
-        ptp: integrationSummary(config, "ptp"),
-        imageHost: integrationSummary(config, "image-host"),
-        tools: integrationSummary(config, "tools")
-      },
-      queue: queueDiagnostics(jobs),
-      tools,
-      storage: {
-        dataRoot: config.paths.dataRoot,
-        databasePath,
-        jobCount: jobs.length,
-        cacheEntries: await cacheEntryCount(cache),
-        databaseBytes: await fileSize(databasePath),
-        dataRootFreeBytes: await freeBytes(config.paths.dataRoot)
-      },
-      logs: {
-        api: await readLogTail(config.paths.apiLogFile, 200)
-      }
-    };
-  });
-
-  app.post<{ Params: { target: DiagnosticCheckTarget } }>("/api/diagnostics/check/:target", async (request, reply) => {
-    const target = request.params.target;
-    if (!["qbittorrent", "ptp", "image-host", "tools"].includes(target)) return reply.code(404).send({ error: "diagnostic_target_not_found" });
-    const checkedAt = new Date().toISOString();
-    const summary = integrationSummary(config, target);
-    if (target === "tools" && !config.integrations.runExternalTools) {
-      return { target, configured: false, status: "disabled" as const, detail: "External tools are disabled.", checkedAt };
-    }
-    if (!summary.configured) return { target, ...summary, status: "missing" as const, checkedAt };
-    if (target === "qbittorrent") {
-      try {
-        if (torrentClient?.ping) await torrentClient.ping();
-        return { target, configured: true, status: torrentClient?.ping ? "ok" : "configured", detail: torrentClient?.ping ? "qBittorrent responded." : "qBittorrent is configured.", checkedAt };
-      } catch (error) {
-        return { target, configured: true, status: "failed" as const, detail: error instanceof Error ? error.message : "qBittorrent check failed.", checkedAt };
-      }
-    }
-    if (target === "tools") {
-      const tools = await collectToolDiagnostics(config, options.commandExecutor);
-      const status = toolCheckStatus(tools);
-      return {
-        target,
-        configured: true,
-        status,
-        detail: status === "ok" ? "External media tools are available." : "One or more external media tools are unavailable.",
-        tools,
-        checkedAt
-      };
-    }
-    return { target, configured: true, status: "configured" as const, detail: summary.detail, checkedAt };
   });
 
   app.post<{ Body: CreateManualJobBody }>("/api/jobs", async (request, reply) => {
