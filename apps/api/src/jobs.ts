@@ -472,6 +472,9 @@ export class JobRepository {
   pause(id: string): Job | null {
     const job = this.jobs.get(id);
     if (!job) return null;
+    if (job.state !== "preparing") {
+      return this.record(job, "warn", "Pause is not available for this job state.", { state: job.state, phase: job.phase });
+    }
     job.state = "paused";
     this.setPhaseState(job, job.phase, "pending", "Paused.");
     return this.record(job, "info", "Job paused.", { phase: job.phase });
@@ -486,9 +489,12 @@ export class JobRepository {
       job.humanStep = "Review upload package";
       this.setPhaseState(job, "review", job.uploadReadiness === "ready" ? "pending" : "warning", "Review upload package.");
     } else if (job.phase === "upload") {
-      job.state = "uploading";
-      job.humanStep = "Uploading to tracker";
-      this.setPhaseState(job, "upload", "running", "Uploading.");
+      job.state = "review";
+      job.phase = "review";
+      job.humanStep = "Review upload package";
+      this.setPhaseState(job, "review", job.uploadReadiness === "ready" ? "pending" : "warning", "Review upload package.");
+      this.setPhaseState(job, "upload", "pending", "Upload requires human confirmation.");
+      ensureReviewDraft(job);
     } else {
       job.state = "preparing";
       job.humanStep = "Preparing upload package";

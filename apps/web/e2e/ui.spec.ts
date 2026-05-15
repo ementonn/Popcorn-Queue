@@ -143,8 +143,8 @@ test.describe("Popcorn Queue UI", () => {
     await expect(page.getByRole("button", { name: "Start Upload" })).toHaveCount(0);
     await expect(page.locator(".toolbar").getByRole("button", { name: "Upload" })).toHaveCount(0);
     await page.getByRole("link", { name: "ATHENA.2022.1080p.WEB.x265-SMURF" }).click();
-    await expect(page.locator(".toolbar").getByRole("button", { name: "Pause" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Retry failed steps" })).toBeVisible();
+    await expect(page.locator(".toolbar").getByRole("button", { name: "Pause" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Retry failed steps" })).toHaveCount(0);
     await expect(page.locator(".toolbar").getByRole("button", { name: "Diagnostics" })).toHaveCount(0);
     await expect(page.getByRole("link", { name: /Diagnostics/i })).toBeVisible();
 
@@ -600,6 +600,7 @@ test.describe("Popcorn Queue UI", () => {
     const failedJob = { ...apiJobs[0], id: "job-failed", state: "failed", phase: "upload", humanStep: "Upload failed", artifacts: { ...apiJobs[0].artifacts, releaseName: "FAILED.2024.1080p.WEB.x265-GROUP" } };
     const preparingJob = { ...apiJobs[1], id: "job-preparing", state: "preparing", humanStep: "Preparing upload media", artifacts: { releaseName: "PREPARING.2024.1080p.WEB.x265-GROUP" } };
     const pausedJob = { ...apiJobs[1], id: "job-paused", state: "paused", humanStep: "Preparing upload media", artifacts: { releaseName: "PAUSED.2024.1080p.WEB.x265-GROUP" } };
+    const uploadingJob = { ...apiJobs[0], id: "job-uploading", state: "uploading", phase: "upload", humanStep: "Uploading to tracker", artifacts: { ...apiJobs[0].artifacts, releaseName: "UPLOADING.2024.1080p.WEB.x265-GROUP" } };
     const doneJob = { ...apiJobs[0], id: "job-done", state: "done", phase: "done", humanStep: "Complete", artifacts: { ...apiJobs[0].artifacts, releaseName: "DONE.2024.1080p.WEB.x265-GROUP" } };
     const needsReseedJob = {
       ...apiJobs[0],
@@ -620,7 +621,7 @@ test.describe("Popcorn Queue UI", () => {
         await route.fallback();
         return;
       }
-      await route.fulfill({ json: { jobs: [reviewJob, failedJob, needsReseedJob, preparingJob, pausedJob, doneJob] } });
+      await route.fulfill({ json: { jobs: [reviewJob, failedJob, needsReseedJob, preparingJob, pausedJob, uploadingJob, doneJob] } });
     });
     await page.route("**/api/jobs/job-review/start-upload", async (route) => {
       reviewStartedUpload = true;
@@ -649,6 +650,7 @@ test.describe("Popcorn Queue UI", () => {
     const needsReseedRow = page.getByRole("row", { name: /NEEDS\.RESEED\.2024/ });
     const preparingRow = page.getByRole("row", { name: /PREPARING\.2024/ });
     const pausedRow = page.getByRole("row", { name: /PAUSED\.2024/ });
+    const uploadingRow = page.getByRole("row", { name: /UPLOADING\.2024/ });
     const doneRow = page.getByRole("row", { name: /DONE\.2024/ });
 
     await expect(reviewRow.getByRole("button", { name: "Upload", exact: true })).toBeVisible();
@@ -656,7 +658,17 @@ test.describe("Popcorn Queue UI", () => {
     await expect(needsReseedRow.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
     await expect(preparingRow.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
     await expect(pausedRow.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
+    await expect(uploadingRow.getByRole("button", { name: "Pause", exact: true })).toHaveCount(0);
     await expect(doneRow.getByRole("button")).toHaveCount(0);
+
+    await failedRow.click();
+    const failedDrawer = page.getByTestId("job-drawer");
+    await expect(failedDrawer).toContainText("FAILED.2024.1080p.WEB.x265-GROUP");
+    await expect(failedDrawer.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+    await expect(failedDrawer.getByRole("button", { name: "Pause", exact: true })).toHaveCount(0);
+    await expect(page.locator(".toolbar").getByRole("button", { name: "Pause", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Close job review" }).click();
+    await expect(page.getByTestId("job-drawer")).toHaveCount(0);
 
     await needsReseedRow.click();
     const reseedDrawer = page.getByTestId("job-drawer");
@@ -1090,15 +1102,29 @@ test.describe("Popcorn Queue UI", () => {
 
   test("surfaces API error details on pause actions", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only interaction assertion.");
-    await page.route("**/api/jobs/job-athena/pause", async (route) => {
+    const preparingJob = {
+      ...apiJobs[1],
+      id: "job-preparing-error",
+      state: "preparing",
+      humanStep: "Preparing upload media",
+      artifacts: { releaseName: "PREPARING.ERROR.2024.1080p.WEB.x265-GROUP" }
+    };
+    await page.route("**/api/jobs", async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.fallback();
+        return;
+      }
+      await route.fulfill({ json: { jobs: [preparingJob] } });
+    });
+    await page.route("**/api/jobs/job-preparing-error/pause", async (route) => {
       await route.fulfill({ status: 409, json: { error: "pause_failed" } });
     });
     await page.goto("/");
-    await page.getByRole("link", { name: "ATHENA.2022.1080p.WEB.x265-SMURF" }).click();
+    await page.getByRole("link", { name: "PREPARING.ERROR.2024.1080p.WEB.x265-GROUP" }).click();
 
     await page.getByTestId("job-drawer").getByRole("button", { name: "Pause" }).click();
     await expect(page.locator(".status-banner.error")).toContainText(
-      "/api/jobs/job-athena/pause failed with HTTP 409: pause_failed"
+      "/api/jobs/job-preparing-error/pause failed with HTTP 409: pause_failed"
     );
   });
 });

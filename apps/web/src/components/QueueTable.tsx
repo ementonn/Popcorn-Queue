@@ -43,7 +43,8 @@ function queueAction(job: ApiJob): QueueAction | null {
   if (job.state === "failed") return "retry";
   if (job.state === "review") return "upload";
   if (job.state === "paused") return "resume";
-  return "pause";
+  if (job.state === "preparing") return "pause";
+  return null;
 }
 
 function actionLabel(action: QueueAction): string {

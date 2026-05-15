@@ -219,7 +219,8 @@ export function App() {
     [jobs, selectedJobId]
   );
   const selectedJobComplete = selectedJob?.state === "done";
-  const selectedJobCanPause = Boolean(selectedJob && selectedJob.state !== "done" && selectedJob.state !== "needs_reseed");
+  const selectedJobCanPause = Boolean(selectedJob && (selectedJob.state === "preparing" || selectedJob.state === "paused"));
+  const selectedJobCanRetry = Boolean(selectedJob && (selectedJob.state === "failed" || selectedJob.state === "needs_reseed"));
   const selectedPendingAction = pendingJobAction?.jobId === selectedJob?.id ? pendingJobAction : null;
   const deleteDialogJob = useMemo(
     () => jobs.find((job) => job.id === deleteDialogJobId) ?? null,
@@ -626,10 +627,12 @@ export function App() {
                       {selectedJob?.state === "paused" ? "Resume" : "Pause"}
                     </button>
                   ) : null}
-                  <button type="button" onClick={() => runJobAction(retryFailed, "Retry failed steps", { kind: "retry" })} disabled={!selectedJob || Boolean(selectedPendingAction)}>
-                    <RefreshCcw size={15} />
-                    Retry failed steps
-                  </button>
+                  {selectedJobCanRetry ? (
+                    <button type="button" onClick={() => runJobAction(retryFailed, "Retry failed steps", { kind: "retry" })} disabled={!selectedJob || Boolean(selectedPendingAction)}>
+                      <RefreshCcw size={15} />
+                      Retry failed steps
+                    </button>
+                  ) : null}
                 </>
               ) : null}
             </>
@@ -698,10 +701,12 @@ export function App() {
                         {selectedJob.state === "paused" ? "Resume" : "Pause"}
                       </button>
                     ) : null}
-                    <button type="button" onClick={() => runJobAction(retryFailed, "Retry failed steps", { kind: "retry" })} disabled={Boolean(selectedPendingAction)}>
-                      <RefreshCcw size={15} />
-                      Retry
-                    </button>
+                    {selectedJobCanRetry ? (
+                      <button type="button" onClick={() => runJobAction(retryFailed, "Retry failed steps", { kind: "retry" })} disabled={Boolean(selectedPendingAction)}>
+                        <RefreshCcw size={15} />
+                        Retry
+                      </button>
+                    ) : null}
                   </>
                 ) : null}
                 <button type="button" className="danger" onClick={() => setDeleteDialogJobId(selectedJob.id)} disabled={Boolean(selectedPendingAction)}>

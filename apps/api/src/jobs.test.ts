@@ -383,14 +383,49 @@ describe("JobRepository pre-upload state machine", () => {
     expect(preparing.phase).toBe("intake");
     expect(preparing.humanStep).toBe("Preparing upload package");
     expect(preparing.events.at(0)?.message).toBe("Job resumed.");
+  });
 
-    let review = repo.markPreparedForReview(repo.create({ candidate }).id, { uploadReadiness: "ready", artifacts: {} })!;
-    review = repo.pause(review.id)!;
-    review = repo.resume(review.id)!;
+  it("does not let pause or resume hide failed upload jobs", () => {
+    const repo = new JobRepository();
+    let job = repo.markPreparedForReview(repo.create({ candidate }).id, { uploadReadiness: "ready", artifacts: {} })!;
 
-    expect(review.state).toBe("review");
-    expect(review.phase).toBe("review");
-    expect(review.humanStep).toBe("Review upload package");
+    job = repo.startUpload(job.id)!;
+    job = repo.markUploadFailed(job.id, "Upload to PTP failed: missing tags")!;
+    job = repo.pause(job.id)!;
+
+    expect(job.state).toBe("failed");
+    expect(job.phase).toBe("upload");
+    expect(job.humanStep).toBe("Upload failed");
+    expect(job.phases.find((phase) => phase.phase === "upload")).toMatchObject({
+      state: "failed",
+      message: "Upload to PTP failed: missing tags"
+    });
+    expect(job.events.at(0)?.message).toBe("Pause is not available for this job state.");
+
+    job = repo.resume(job.id)!;
+
+    expect(job.state).toBe("failed");
+    expect(job.phase).toBe("upload");
+    expect(job.humanStep).toBe("Upload failed");
+    expect(job.events.at(0)?.message).toBe("Resume is only available for paused jobs.");
+  });
+
+  it("returns paused upload jobs to review instead of faking an active upload", () => {
+    const repo = new JobRepository();
+    let job = repo.markPreparedForReview(repo.create({ candidate }).id, { uploadReadiness: "ready", artifacts: {} })!;
+    job = repo.startUpload(job.id)!;
+    job.state = "paused";
+    job.humanStep = "Paused";
+
+    job = repo.resume(job.id)!;
+
+    expect(job.state).toBe("review");
+    expect(job.phase).toBe("review");
+    expect(job.humanStep).toBe("Review upload package");
+    expect(job.phases.find((phase) => phase.phase === "upload")).toMatchObject({
+      state: "pending",
+      message: "Upload requires human confirmation."
+    });
   });
 
   it("stores latest download status without adding noisy job events", () => {
