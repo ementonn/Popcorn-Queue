@@ -64,7 +64,7 @@ describe("review draft contract", () => {
       imdb: "tt1234567",
       title: "Movie",
       year: "2024",
-      scene: true,
+      scene: false,
       personalRip: false,
       internal: false
     });

@@ -19,6 +19,7 @@
     "userscript:local": "tsx scripts/generate-userscript.ts",
     "ptp:login": "tsx scripts/ptp-login.ts",
     "screenshots": "tsx scripts/generate-release-assets.ts",
+    "scene-groups:update": "tsx scripts/update-scene-groups.ts",
     "audit:public": "tsx scripts/public-release-audit.ts",
     "test:e2e": "playwright test",
     "pretest": "npm --workspace @popcorn-queue/api run prisma:generate",

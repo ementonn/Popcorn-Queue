@@ -15,4 +15,10 @@ describe("development scripts", () => {
 
     expect(apiPackage.scripts?.dev).toBe("npm run prisma:generate && tsx watch --conditions development src/index.ts");
   });
+
+  it("exposes a command for refreshing the known scene group cache", () => {
+    const rootPackage = readPackage("package.json");
+
+    expect(rootPackage.scripts?.["scene-groups:update"]).toBe("tsx scripts/update-scene-groups.ts");
+  });
 });
