@@ -35,7 +35,19 @@ The project is designed so automated tests run against mocks. Real PTP, image ho
 - `apps/userscript/popcorn-queue-bridge.user.js` is the browser-side bridge userscript.
 - `packages/core` contains shared types, release parsing, cache keys, and upload planning.
 - `packages/integrations` contains PTP, image host, and qBittorrent integration clients.
-- `docs` contains architecture, API, browser bridge, migration, and manual testing notes.
+- `docs` contains architecture, API, configuration, operations, troubleshooting, and manual testing notes.
+
+## Documentation
+
+- [Documentation index](docs/README.md)
+- [Configuration reference](docs/configuration.md)
+- [Jobs and phases](docs/jobs-and-phases.md)
+- [Integrations](docs/integrations.md)
+- [Operations](docs/operations.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Development](docs/development.md)
+- [Security](docs/security.md)
+- [Contributing](CONTRIBUTING.md)
 
 ## Quick Start and Configuration
 
@@ -69,6 +81,9 @@ Important settings:
 - `IMGBB_API_KEY` or `PTPIMG_API_KEY`: optional image hosting
 - `QBITTORRENT_URL`, `QBITTORRENT_USERNAME`, `QBITTORRENT_PASSWORD`: qBittorrent integration
 - `POPCORN_QUEUE_RUN_EXTERNAL_TOOLS`: enables ffmpeg, MediaInfo, mkvmerge, and oxipng execution
+
+See [docs/configuration.md](docs/configuration.md) for the full environment
+reference.
 
 Keep your real `.env` local; it is ignored by Git.
 
