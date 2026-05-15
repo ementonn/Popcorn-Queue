@@ -13,4 +13,5 @@ apps/userscript/*.local.user.js
 logs/*
 !logs/.gitkeep
 docs/superpowers/
+.worktrees/
 .DS_Store
