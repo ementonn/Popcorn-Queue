@@ -1015,8 +1015,8 @@ test.describe("Popcorn Queue UI", () => {
     await expect(page.getByTestId("diagnostic-system-external-tools")).toHaveText("Disabled");
     await expect(page.getByTestId("diagnostic-system-external-tools")).toHaveCSS("color", "rgb(186, 59, 54)");
     await expect(page.getByText("qB", { exact: true })).toBeVisible();
-    await expect(page.getByTestId("diagnostic-check-image-host-status")).toHaveText("OK");
-    await expect(page.getByText("imgbb is configured.")).toHaveCount(0);
+    await expect(page.getByTestId("diagnostic-check-image-host-status")).toHaveText("Not checked");
+    await expect(page.getByText("imgbb is configured.")).toBeVisible();
     await expect(page.getByText("Tool Versions")).toBeVisible();
     await expect(page.getByTestId("diagnostic-tool-ffmpeg")).toContainText("ffmpeg version 6.1");
     await expect(page.getByTestId("diagnostic-tool-mediainfo")).toContainText("/usr/bin/mediainfo");

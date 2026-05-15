@@ -37,7 +37,8 @@ function checkDisplay(base: Omit<DiagnosticCheckResult, "target"> | undefined, r
 }
 
 function statusLabel(display: Omit<DiagnosticCheckResult, "target">): string {
-  if (display.status === "ok" || display.status === "configured" || (display.status === "not_checked" && display.configured)) return "OK";
+  if (display.status === "ok") return "OK";
+  if (display.status === "configured") return "Configured";
   if (display.status === "missing") return "Missing";
   if (display.status === "failed") return "Failed";
   if (display.status === "disabled") return "Disabled";
@@ -61,8 +62,8 @@ type DiagnosticTone = "positive" | "negative" | "neutral";
 function diagnosticTone(value: ReactNode): DiagnosticTone {
   if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") return "neutral";
   const normalized = String(value).trim().toLowerCase();
-  if (!normalized || normalized === "unknown" || normalized === "not_checked") return "neutral";
-  if (["ok", "yes", "enabled", "online", "configured", "ready", "complete", "completed", "true"].includes(normalized)) return "positive";
+  if (!normalized || normalized === "unknown" || normalized === "not_checked" || normalized === "not checked" || normalized === "configured") return "neutral";
+  if (["ok", "yes", "enabled", "online", "ready", "complete", "completed", "true"].includes(normalized)) return "positive";
   if (["no", "disabled", "failed", "missing", "unavailable", "offline", "error", "not set", "false"].includes(normalized)) return "negative";
   return "neutral";
 }
