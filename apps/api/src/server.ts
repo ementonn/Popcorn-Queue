@@ -31,6 +31,7 @@ import {
   type TorrentDownloadClient,
   type WorkerTool
 } from "@popcorn-queue/worker";
+import type { ApiRouteContext, BuildServerOptions } from "./api-context.js";
 import { WebSessionAuth, makeBrowserAuthHook } from "./auth.js";
 import type { ApiConfig } from "./config.js";
 import { normalizeUploadedFilename } from "./filenames.js";
@@ -39,6 +40,7 @@ import { appendJobEvent, readLogTail } from "./job-logs.js";
 import { createApiLogger } from "./logger.js";
 import { PrismaPersistence } from "./persistence.js";
 import { PreparationService } from "./preparation.js";
+import { registerApiRoutes } from "./routes/index.js";
 import { defaultSettingsEnvPath, loadConfigFromEnvPath, saveSettingsEnv, settingsResponse, type SaveSettingsInput } from "./settings.js";
 import { JOB_PHASES, RETRYABLE_COMPLETED_PHASES, type Job, type PhaseRun, type PhaseState } from "./jobs.js";
 
@@ -60,15 +62,6 @@ interface DeleteJobBody {
 
 type DiagnosticCheckStatus = "not_checked" | "ok" | "configured" | "missing" | "failed" | "disabled";
 type DiagnosticCheckTarget = "qbittorrent" | "ptp" | "image-host" | "tools";
-
-export interface BuildServerOptions {
-  autoPrepare?: boolean;
-  ptpSubmitter?: PtpSubmitter;
-  torrentClient?: TorrentDownloadClient;
-  commandExecutor?: CommandExecutor;
-  fetchImpl?: typeof fetch;
-  settingsEnvPath?: string;
-}
 
 async function pathExists(filePath: string): Promise<boolean> {
   try {
@@ -605,6 +598,23 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
       enqueuePreparation(job.id);
     }
   }
+
+  const routeContext: ApiRouteContext = {
+    config: () => config,
+    jobRepository,
+    cache,
+    options,
+    settingsEnvPath,
+    getPtpClient: () => ptpClient,
+    getBrowserChecks: () => browserChecks,
+    getTorrentClient: () => torrentClient,
+    getPtpSubmitter: () => ptpSubmitter,
+    getPreparation: () => preparation,
+    getWebAuth: () => webAuth,
+    getBrowserAuthHook: () => browserAuthHook,
+    enqueuePreparation,
+    applyRuntimeConfig
+  };
 
   app.addHook("onClose", async () => {
     await persistence.disconnect();
@@ -1253,6 +1263,8 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
     enqueuePreparation(job.id);
     return reply.code(201).send({ job });
   });
+
+  registerApiRoutes(app, routeContext);
 
   return app;
 }
