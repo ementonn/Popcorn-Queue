@@ -1302,6 +1302,109 @@ describe("API jobs", () => {
     await rm(dataRoot, { recursive: true, force: true });
   });
 
+  it("falls back to download status info hash when deleting download files", async () => {
+    const dataRoot = await mkdtemp(path.join(os.tmpdir(), "popcorn-delete-download-status-"));
+    const jobRoot = path.join(dataRoot, "jobs", "delete-download-status-job");
+    const downloadDir = path.join(jobRoot, "download");
+    const downloadFile = path.join(downloadDir, "Source.Movie.mkv");
+    await mkdir(downloadDir, { recursive: true });
+    await writeFile(downloadFile, "source");
+
+    const seedRepo = new JobRepository();
+    let job = seedRepo.create({
+      candidate: {
+        site: "unknown",
+        title: "Delete.Download.Status.2024.1080p.WEB-DL.x265-GROUP"
+      }
+    });
+    job = seedRepo.updateDownloadStatus(job.id, {
+      client: "mock-qb",
+      infoHash: "STATUSHASH",
+      state: "stalledDL",
+      progress: 0.25,
+      downloaded: 1,
+      size: 4,
+      amountLeft: 3,
+      downloadSpeed: 0,
+      uploadSpeed: 0,
+      eta: 0,
+      seeds: 1,
+      peers: 0,
+      savePath: downloadDir,
+      contentPath: downloadFile,
+      lastUpdatedAt: "2026-05-15T00:00:00.000Z",
+      error: null
+    })!;
+    job = seedRepo.attachWorkspace(job.id, {
+      workspace: {
+        dataRoot,
+        jobRoot,
+        manifest: path.join(jobRoot, "manifest.json")
+      }
+    })!;
+    persistenceState.initialJobs = [job];
+    const removed: Array<{ infoHash: string; deleteData?: boolean }> = [];
+
+    await withConfiguredServer(
+      { ...testConfig(), paths: { ...testConfig().paths, dataRoot } },
+      {
+        autoPrepare: false,
+        torrentClient: {
+          name: "mock-qb",
+          async addTorrent() {
+            throw new Error("addTorrent should not run during delete.");
+          },
+          async getStatus(infoHash) {
+            return {
+              client: "mock-qb",
+              infoHash,
+              state: "stalledDL",
+              progress: 0.25,
+              downloaded: 1,
+              size: 4,
+              amountLeft: 3,
+              downloadSpeed: 0,
+              uploadSpeed: 0,
+              eta: 0,
+              seeds: 1,
+              peers: 0,
+              savePath: downloadDir,
+              contentPath: downloadFile,
+              lastUpdatedAt: "2026-05-15T00:00:00.000Z",
+              error: null
+            };
+          },
+          async isComplete() {
+            return false;
+          },
+          async listFiles() {
+            return [];
+          },
+          async removeTorrent(infoHash, options) {
+            const entry: { infoHash: string; deleteData?: boolean } = { infoHash };
+            if (options?.deleteData !== undefined) entry.deleteData = options.deleteData;
+            removed.push(entry);
+          }
+        }
+      },
+      async (app) => {
+        const response = await app.inject({
+          method: "POST",
+          url: `/api/jobs/${job.id}/delete`,
+          payload: { mode: "downloads", confirm: true }
+        });
+
+        expect(response.statusCode).toBe(200);
+        const updated = response.json<{ job: Job }>().job;
+        expect(updated.artifacts.downloadFilesDeletedAt).toEqual(expect.any(String));
+        expect(await pathExists(downloadFile)).toBe(false);
+        expect(removed).toEqual([{ infoHash: "STATUSHASH", deleteData: true }]);
+      }
+    );
+
+    await rm(dataRoot, { recursive: true, force: true });
+  });
+
   it("deletes the local job and cleans up download and seed torrents", async () => {
     const dataRoot = await mkdtemp(path.join(os.tmpdir(), "popcorn-delete-everything-"));
     const jobRoot = path.join(dataRoot, "jobs", "delete-everything-job");

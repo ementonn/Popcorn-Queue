@@ -419,11 +419,15 @@ async function removeJobTorrent(
   }
 }
 
+function jobDownloadInfoHash(job: Job): string | null {
+  return job.artifacts.qbDownloadInfoHash?.trim() || job.downloadStatus?.infoHash?.trim() || null;
+}
+
 async function deleteJobDownloads(config: ApiConfig, job: Job, client: TorrentDownloadClient | null): Promise<JobDeleteCleanupResult> {
   const jobRoot = jobRootPath(config, job);
   const downloadDirectory = path.join(jobRoot, "download");
   const torrents = [
-    await removeJobTorrent(client, job.artifacts.qbDownloadInfoHash, "download", downloadDirectory)
+    await removeJobTorrent(client, jobDownloadInfoHash(job), "download", downloadDirectory)
   ].filter((item): item is TorrentCleanupResult => Boolean(item));
   return {
     localPaths: [await removeLocalPath(downloadDirectory)],
@@ -435,7 +439,7 @@ async function deleteEntireJob(config: ApiConfig, job: Job, client: TorrentDownl
   const jobRoot = jobRootPath(config, job);
   const downloadDirectory = path.join(jobRoot, "download");
   const torrents = [
-    await removeJobTorrent(client, job.artifacts.qbDownloadInfoHash, "download", downloadDirectory),
+    await removeJobTorrent(client, jobDownloadInfoHash(job), "download", downloadDirectory),
     await removeJobTorrent(client, job.artifacts.qbSeedInfoHash, "seed", jobRoot)
   ].filter((item): item is TorrentCleanupResult => Boolean(item));
   return {
