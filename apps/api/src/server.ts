@@ -1,15 +1,11 @@
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
 import fastify from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 import {
   buildJobWorkspacePaths,
   type BrowserCheckResult,
-  type JobManifest,
-  type ReviewDraftPatch,
-  type TorrentCandidate,
-  type UploadPhase
+  type TorrentCandidate
 } from "@popcorn-queue/core";
 import { BrowserCheckService, ImgBbUploader, PtpClient, PtpFormSubmitter, QBittorrentClient } from "@popcorn-queue/integrations";
 import {
@@ -21,165 +17,12 @@ import { WebSessionAuth, makeBrowserAuthHook } from "./auth.js";
 import type { ApiConfig } from "./config.js";
 import { normalizeUploadedFilename } from "./filenames.js";
 import { createManualIntakeJob, IntakeError, readManualIntakeRequest, resolveManualPtpTarget, searchPtpMovies, validateMediaPath } from "./intake.js";
-import { readLogTail } from "./job-logs.js";
 import { createApiLogger } from "./logger.js";
 import { PrismaPersistence } from "./persistence.js";
 import { PreparationService } from "./preparation.js";
 import { registerApiRoutes } from "./routes/index.js";
 import { toolCommandMap } from "./services/diagnostics.js";
-import {
-  reseedJob,
-  resumeJob,
-  retryCompletedPhaseJob,
-  retryFailedJob,
-  skipJob,
-  startUploadJob,
-  type JobActionContext
-} from "./services/job-upload.js";
 import { defaultSettingsEnvPath } from "./settings.js";
-import { JOB_PHASES, RETRYABLE_COMPLETED_PHASES, type Job } from "./jobs.js";
-
-interface CreateManualJobBody extends Partial<TorrentCandidate> {
-  title: string;
-}
-
-interface ImportJobBody {
-  jobPath: string;
-  manifest?: JobManifest;
-}
-
-type DeleteJobMode = "queue" | "downloads" | "everything";
-
-interface DeleteJobBody {
-  mode?: DeleteJobMode;
-  confirm?: boolean;
-}
-
-async function pathExists(filePath: string): Promise<boolean> {
-  try {
-    await access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function missingRestoredFiles(jobPath: string, manifest: JobManifest): Promise<string[]> {
-  const relativePaths = [...manifest.uploadFiles];
-  if (manifest.torrentFile) relativePaths.push(manifest.torrentFile);
-  const missing: string[] = [];
-  for (const relativePath of relativePaths) {
-    if (!(await pathExists(path.join(jobPath, relativePath)))) missing.push(relativePath);
-  }
-  return missing;
-}
-
-function jobRootPath(config: ApiConfig, job: Job): string {
-  return job.workspace?.jobRoot ?? buildJobWorkspacePaths(config.paths.dataRoot, job.id).jobRoot;
-}
-
-function isInsideOrEqual(parentPath: string, childPath: string | null | undefined): boolean {
-  if (!childPath) return false;
-  const parent = path.resolve(parentPath);
-  const child = path.resolve(childPath);
-  return child === parent || child.startsWith(`${parent}${path.sep}`);
-}
-
-interface TorrentCleanupResult {
-  infoHash: string;
-  role: "download" | "seed";
-  status: "removed" | "skipped" | "failed";
-  deleteData: boolean;
-  message: string;
-}
-
-interface JobDeleteCleanupResult {
-  localPaths: Array<{ path: string; status: "deleted" | "skipped" | "failed"; message: string }>;
-  torrents: TorrentCleanupResult[];
-}
-
-async function removeLocalPath(targetPath: string): Promise<JobDeleteCleanupResult["localPaths"][number]> {
-  try {
-    await rm(targetPath, { recursive: true, force: true });
-    return { path: targetPath, status: "deleted", message: "Deleted." };
-  } catch (error) {
-    return { path: targetPath, status: "failed", message: error instanceof Error ? error.message : String(error) };
-  }
-}
-
-async function removeJobTorrent(
-  client: TorrentDownloadClient | null,
-  infoHash: string | null | undefined,
-  role: "download" | "seed",
-  deleteDataRoot: string
-): Promise<TorrentCleanupResult | null> {
-  if (!infoHash) return null;
-  if (!client?.removeTorrent) {
-    return {
-      infoHash,
-      role,
-      status: "skipped",
-      deleteData: false,
-      message: "Torrent client removal is not configured."
-    };
-  }
-
-  let deleteData = false;
-  try {
-    const status = await client.getStatus(infoHash);
-    deleteData = isInsideOrEqual(deleteDataRoot, status.contentPath) || isInsideOrEqual(deleteDataRoot, status.savePath);
-  } catch {
-    deleteData = false;
-  }
-
-  try {
-    await client.removeTorrent(infoHash, { deleteData });
-    return {
-      infoHash,
-      role,
-      status: "removed",
-      deleteData,
-      message: deleteData ? "Torrent and managed data removed." : "Torrent removed without deleting external data."
-    };
-  } catch (error) {
-    return {
-      infoHash,
-      role,
-      status: "failed",
-      deleteData,
-      message: error instanceof Error ? error.message : String(error)
-    };
-  }
-}
-
-function jobDownloadInfoHash(job: Job): string | null {
-  return job.artifacts.qbDownloadInfoHash?.trim() || job.downloadStatus?.infoHash?.trim() || null;
-}
-
-async function deleteJobDownloads(config: ApiConfig, job: Job, client: TorrentDownloadClient | null): Promise<JobDeleteCleanupResult> {
-  const jobRoot = jobRootPath(config, job);
-  const downloadDirectory = path.join(jobRoot, "download");
-  const torrents = [
-    await removeJobTorrent(client, jobDownloadInfoHash(job), "download", downloadDirectory)
-  ].filter((item): item is TorrentCleanupResult => Boolean(item));
-  return {
-    localPaths: [await removeLocalPath(downloadDirectory)],
-    torrents
-  };
-}
-
-async function deleteEntireJob(config: ApiConfig, job: Job, client: TorrentDownloadClient | null): Promise<JobDeleteCleanupResult> {
-  const jobRoot = jobRootPath(config, job);
-  const downloadDirectory = path.join(jobRoot, "download");
-  const torrents = [
-    await removeJobTorrent(client, jobDownloadInfoHash(job), "download", downloadDirectory),
-    await removeJobTorrent(client, job.artifacts.qbSeedInfoHash, "seed", jobRoot)
-  ].filter((item): item is TorrentCleanupResult => Boolean(item));
-  return {
-    localPaths: [await removeLocalPath(jobRoot)],
-    torrents
-  };
-}
 
 function configuredPtpSubmitter(config: ApiConfig, override?: PtpSubmitter): PtpSubmitter | undefined {
   if (override) return override;
@@ -356,16 +199,6 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
     applyRuntimeConfig
   };
 
-  const jobActionContext: JobActionContext = {
-    config: () => config,
-    jobs: jobRepository,
-    cache,
-    getTorrentClient: () => torrentClient,
-    getPtpSubmitter: () => ptpSubmitter,
-    getPreparation: () => preparation,
-    enqueuePreparation
-  };
-
   app.addHook("onClose", async () => {
     await persistence.disconnect();
   });
@@ -389,186 +222,6 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
     }
   });
   app.addHook("preHandler", async (request, reply) => webAuth.hook()(request, reply));
-
-  app.get("/api/jobs", async () => ({ jobs: await jobRepository.list() }));
-  app.get<{ Params: { id: string } }>("/api/jobs/:id", async (request, reply) => {
-    const job = await jobRepository.get(request.params.id);
-    if (!job) return reply.code(404).send({ error: "job_not_found" });
-    return { job };
-  });
-
-  app.get<{ Params: { id: string } }>("/api/jobs/:id/download-status", async (request, reply) => {
-    const job = await jobRepository.get(request.params.id);
-    if (!job) return reply.code(404).send({ error: "job_not_found" });
-    return { downloadStatus: job.downloadStatus ?? null };
-  });
-
-  app.get<{ Params: { id: string } }>("/api/jobs/:id/logs", async (request, reply) => {
-    const job = await jobRepository.get(request.params.id);
-    if (!job) return reply.code(404).send({ error: "job_not_found" });
-    return { lines: await readLogTail(buildJobWorkspacePaths(config.paths.dataRoot, request.params.id).logs.jobLog, 200) };
-  });
-
-  app.post<{ Body: CreateManualJobBody }>("/api/jobs", async (request, reply) => {
-    const body = request.body;
-    if (!body?.title) return reply.code(400).send({ error: "title_required" });
-
-    const candidate: TorrentCandidate = {
-      site: body.site ?? "unknown",
-      title: body.title
-    };
-    if (body.imdbId !== undefined) candidate.imdbId = body.imdbId;
-    if (body.resolution !== undefined) candidate.resolution = body.resolution;
-    if (body.sourceUrl !== undefined) candidate.sourceUrl = body.sourceUrl;
-    if (body.downloadUrl !== undefined) candidate.downloadUrl = body.downloadUrl;
-    if (body.sourceTorrentId !== undefined) candidate.sourceTorrentId = body.sourceTorrentId;
-
-    const job = await jobRepository.create({ candidate });
-    enqueuePreparation(job.id);
-    return reply.code(201).send({ job });
-  });
-
-  app.post<{ Body: ImportJobBody }>("/api/jobs/import", async (request, reply) => {
-    const body = request.body;
-    if (!body?.jobPath) return reply.code(400).send({ error: "job_path_required" });
-    const manifest =
-      body.manifest ??
-      (JSON.parse(await readFile(path.join(body.jobPath, "manifest.json"), "utf8")) as JobManifest);
-
-    const imported = await jobRepository.importRestored({ jobPath: body.jobPath, manifest });
-    const missingFiles = await missingRestoredFiles(body.jobPath, manifest);
-    if (missingFiles.length > 0) {
-      const job =
-        (await jobRepository.markRestoreBlocked(imported.id, {
-          message: "Restored job is missing upload files.",
-          missingFiles
-        })) ?? imported;
-      return reply.code(201).send({ job });
-    }
-    let job = imported;
-    if (manifest.state === "done") {
-      job =
-        (await jobRepository.markNeedsReseed(
-          imported.id,
-          torrentClient ? "Restored done job needs qBittorrent reseed verification." : "qBittorrent is not configured for automatic reseed."
-        )) ?? imported;
-    }
-    return reply.code(201).send({ job });
-  });
-
-  async function deleteJob(id: string, body: DeleteJobBody | undefined) {
-    const mode = body?.mode;
-    if (!mode || !["queue", "downloads", "everything"].includes(mode)) {
-      return { status: 400 as const, body: { error: "unknown_delete_mode" } };
-    }
-    if (body?.confirm !== true) {
-      return { status: 400 as const, body: { error: "delete_confirmation_required" } };
-    }
-
-    const job = await jobRepository.get(id);
-    if (!job) return { status: 404 as const, body: { error: "job_not_found" } };
-
-    if (mode === "queue") {
-      const removed = await jobRepository.removeFromQueue(id);
-      return removed
-        ? { status: 200 as const, body: { job: removed, cleanup: { localPaths: [], torrents: [] } } }
-        : { status: 404 as const, body: { error: "job_not_found" } };
-    }
-
-    if (mode === "downloads") {
-      const cleanup = await deleteJobDownloads(config, job, torrentClient);
-      const updated = await jobRepository.markDownloadFilesDeleted(id);
-      return updated
-        ? { status: 200 as const, body: { job: updated, cleanup } }
-        : { status: 404 as const, body: { error: "job_not_found" } };
-    }
-
-    const cleanup = await deleteEntireJob(config, job, torrentClient);
-    const deleted = await jobRepository.delete(id);
-    return deleted
-      ? { status: 200 as const, body: { deleted: true, jobId: id, cleanup } }
-      : { status: 404 as const, body: { error: "job_not_found" } };
-  }
-
-  app.post<{ Params: { id: string } }>("/api/jobs/:id/start-upload", async (request, reply) => {
-    const job = await startUploadJob(jobActionContext, request.params.id);
-    if (!job) return reply.code(404).send({ error: "job_not_found" });
-    return { job };
-  });
-
-  app.post<{ Params: { id: string } }>("/api/jobs/:id/start", async (request, reply) => {
-    const job = await startUploadJob(jobActionContext, request.params.id);
-    if (!job) return reply.code(404).send({ error: "job_not_found" });
-    return { job };
-  });
-
-  app.patch<{ Params: { id: string }; Body: ReviewDraftPatch }>("/api/jobs/:id/review-draft", async (request, reply) => {
-    const job = await jobRepository.updateReviewDraft(request.params.id, request.body ?? {});
-    if (!job) return reply.code(404).send({ error: "job_not_found" });
-    return { job };
-  });
-
-  app.post<{ Params: { id: string } }>("/api/jobs/:id/pause", async (request, reply) => {
-    const job = await jobRepository.pause(request.params.id);
-    if (!job) return reply.code(404).send({ error: "job_not_found" });
-    return { job };
-  });
-
-  app.post<{ Params: { id: string } }>("/api/jobs/:id/resume", async (request, reply) => {
-    const job = await resumeJob(jobActionContext, request.params.id);
-    if (!job) return reply.code(404).send({ error: "job_not_found" });
-    return { job };
-  });
-
-  app.post<{ Params: { id: string } }>("/api/jobs/:id/retry-failed", async (request, reply) => {
-    const job = await retryFailedJob(jobActionContext, request.params.id);
-    if (!job) return reply.code(404).send({ error: "job_not_found" });
-    return { job };
-  });
-
-  app.post<{ Params: { id: string; phase: string } }>("/api/jobs/:id/phases/:phase/retry", async (request, reply) => {
-    const phase = request.params.phase as UploadPhase;
-    if (!JOB_PHASES.includes(phase)) return reply.code(400).send({ error: "unknown_phase" });
-    if (!RETRYABLE_COMPLETED_PHASES.has(phase)) return reply.code(400).send({ error: "phase_retry_not_available" });
-    const job = await retryCompletedPhaseJob(jobActionContext, request.params.id, phase);
-    if (!job) return reply.code(404).send({ error: "job_not_found" });
-    return { job };
-  });
-
-  app.post<{ Params: { id: string } }>("/api/jobs/:id/retry", async (request, reply) => {
-    const job = await retryFailedJob(jobActionContext, request.params.id);
-    if (!job) return reply.code(404).send({ error: "job_not_found" });
-    return { job };
-  });
-
-  app.post<{ Params: { id: string } }>("/api/jobs/:id/reseed", async (request, reply) => {
-    const job = await reseedJob(jobActionContext, request.params.id);
-    if (!job) return reply.code(404).send({ error: "job_not_found" });
-    return { job };
-  });
-
-  app.post<{ Params: { id: string } }>("/api/jobs/:id/debug/skip", async (request, reply) => {
-    const job = await skipJob(jobActionContext, request.params.id);
-    if (!job) return reply.code(404).send({ error: "job_not_found" });
-    return { job };
-  });
-
-  app.post<{ Params: { id: string }; Body: DeleteJobBody }>("/api/jobs/:id/delete", async (request, reply) => {
-    const result = await deleteJob(request.params.id, request.body);
-    return reply.code(result.status).send(result.body);
-  });
-
-  app.post<{ Params: { id: string } }>("/api/jobs/:id/plan/refresh", async (request, reply) => {
-    const job = await jobRepository.refreshPlan(request.params.id);
-    if (!job) return reply.code(404).send({ error: "job_not_found" });
-    return { job };
-  });
-
-  app.post<{ Params: { id: string; gateId: string } }>("/api/jobs/:id/review-gates/:gateId/resolve", async (request, reply) => {
-    const job = await jobRepository.resolveGate(request.params.id, request.params.gateId);
-    if (!job) return reply.code(404).send({ error: "job_not_found" });
-    return { job };
-  });
 
   app.post<{ Body: { mediaPath?: string } }>("/api/intake/media-path/validate", async (request) => {
     return validateMediaPath(request.body?.mediaPath ?? "");
