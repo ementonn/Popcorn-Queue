@@ -5,26 +5,14 @@ import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 import {
   buildJobWorkspacePaths,
-  makePtpCacheKey,
   type BrowserCheckResult,
-  type CacheStore,
   type JobManifest,
-  type NormalizedPtpResponse,
-  type PtpMovie,
-  type PtpTorrent,
   type ReviewDraftPatch,
   type TorrentCandidate,
   type UploadPhase
 } from "@popcorn-queue/core";
 import { BrowserCheckService, ImgBbUploader, PtpClient, PtpFormSubmitter, QBittorrentClient } from "@popcorn-queue/integrations";
 import {
-  PhaseRunner,
-  createPhaseContext,
-  type CreatePhaseContextOptions,
-  type PhaseLogLevel,
-  type PhaseOutputMap,
-  type PtpCacheSyncInput,
-  type PtpCacheSyncer,
   type PtpSubmitter,
   type TorrentDownloadClient
 } from "@popcorn-queue/worker";
@@ -33,14 +21,23 @@ import { WebSessionAuth, makeBrowserAuthHook } from "./auth.js";
 import type { ApiConfig } from "./config.js";
 import { normalizeUploadedFilename } from "./filenames.js";
 import { createManualIntakeJob, IntakeError, readManualIntakeRequest, resolveManualPtpTarget, searchPtpMovies, validateMediaPath } from "./intake.js";
-import { appendJobEvent, readLogTail } from "./job-logs.js";
+import { readLogTail } from "./job-logs.js";
 import { createApiLogger } from "./logger.js";
 import { PrismaPersistence } from "./persistence.js";
 import { PreparationService } from "./preparation.js";
 import { registerApiRoutes } from "./routes/index.js";
 import { toolCommandMap } from "./services/diagnostics.js";
+import {
+  reseedJob,
+  resumeJob,
+  retryCompletedPhaseJob,
+  retryFailedJob,
+  skipJob,
+  startUploadJob,
+  type JobActionContext
+} from "./services/job-upload.js";
 import { defaultSettingsEnvPath } from "./settings.js";
-import { JOB_PHASES, RETRYABLE_COMPLETED_PHASES, type Job, type PhaseRun, type PhaseState } from "./jobs.js";
+import { JOB_PHASES, RETRYABLE_COMPLETED_PHASES, type Job } from "./jobs.js";
 
 interface CreateManualJobBody extends Partial<TorrentCandidate> {
   title: string;
@@ -67,103 +64,6 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
-function optionalString(value: string | null | undefined): string | undefined {
-  const next = value?.trim();
-  return next ? next : undefined;
-}
-
-function uploadedPtpTorrent(input: PtpCacheSyncInput): PtpTorrent {
-  const torrent: PtpTorrent = {
-    Id: input.uploadResult.torrentId,
-    Quality: input.parsed.qualityType,
-    ReleaseName: input.releaseName,
-    Trumpable: false,
-    Seeders: 1
-  };
-  const source = optionalString(input.reviewDraft?.source) ?? optionalString(input.parsed.source);
-  const codec = optionalString(input.reviewDraft?.codec) ?? optionalString(input.parsed.codec);
-  const resolution = optionalString(input.reviewDraft?.resolution) ?? optionalString(input.parsed.resolution);
-  const remasterTitle = optionalString(input.reviewDraft?.remasterTitle);
-  if (source) torrent.Source = source;
-  if (codec) torrent.Codec = codec;
-  if (resolution) torrent.Resolution = resolution;
-  if (remasterTitle) torrent.RemasterTitle = remasterTitle;
-  return torrent;
-}
-
-function fallbackPtpMovie(input: PtpCacheSyncInput): PtpMovie {
-  const movie = input.checkResult?.decision.movie;
-  const fallback: PtpMovie = {
-    ...(movie ?? {}),
-    GroupId: input.uploadResult.groupId,
-    Title: movie?.Title ?? input.parsed.searchName,
-    Name: movie?.Name ?? movie?.Title ?? input.parsed.searchName,
-    Torrents: movie?.Torrents ?? []
-  };
-  const year = movie?.Year ?? input.parsed.year;
-  const imdbId = movie?.ImdbId ?? input.candidate.imdbId ?? null;
-  if (year) fallback.Year = year;
-  if (imdbId) fallback.ImdbId = imdbId;
-  return fallback;
-}
-
-function withUploadedTorrent(movie: PtpMovie, torrent: PtpTorrent): PtpMovie {
-  const torrents = (movie.Torrents ?? []).filter((item) => item.Id !== torrent.Id && item.ReleaseName !== torrent.ReleaseName);
-  return {
-    ...movie,
-    Torrents: [...torrents, torrent]
-  };
-}
-
-function syncUploadedTorrentData(data: NormalizedPtpResponse, input: PtpCacheSyncInput): { data: NormalizedPtpResponse; torrentCount: number } {
-  const torrent = uploadedPtpTorrent(input);
-  const groupId = input.uploadResult.groupId;
-  const fallbackMovie = fallbackPtpMovie(input);
-  let matched = false;
-  let torrentCount = 1;
-  const sourceMovies = data.movies.length ? data.movies : [fallbackMovie];
-  const movies = sourceMovies.map((movie) => {
-    if (movie.GroupId !== groupId) return movie;
-    matched = true;
-    const next = withUploadedTorrent(movie, torrent);
-    torrentCount = next.Torrents?.length ?? 1;
-    return next;
-  });
-
-  if (!matched) {
-    const next = withUploadedTorrent(fallbackMovie, torrent);
-    torrentCount = next.Torrents?.length ?? 1;
-    movies.push(next);
-  }
-
-  return {
-    data: {
-      ...data,
-      totalResults: data.totalResults ?? movies.length,
-      movies
-    },
-    torrentCount
-  };
-}
-
-function createPtpCacheSyncer(cache: CacheStore<NormalizedPtpResponse>): PtpCacheSyncer {
-  return {
-    async syncUpload(input) {
-      const cacheKey = input.checkResult?.cache.key ?? makePtpCacheKey(input.candidate);
-      const entry = await cache.get(cacheKey);
-      const baseData = entry?.data ?? { movies: [] };
-      const synced = syncUploadedTorrentData(baseData, input);
-      await cache.set(cacheKey, synced.data);
-      return {
-        cacheKey,
-        groupId: input.uploadResult.groupId,
-        torrentId: input.uploadResult.torrentId,
-        torrentCount: synced.torrentCount
-      };
-    }
-  };
-}
-
 async function missingRestoredFiles(jobPath: string, manifest: JobManifest): Promise<string[]> {
   const relativePaths = [...manifest.uploadFiles];
   if (manifest.torrentFile) relativePaths.push(manifest.torrentFile);
@@ -172,32 +72,6 @@ async function missingRestoredFiles(jobPath: string, manifest: JobManifest): Pro
     if (!(await pathExists(path.join(jobPath, relativePath)))) missing.push(relativePath);
   }
   return missing;
-}
-
-function phaseStateFromStatus(status: PhaseOutputMap[UploadPhase]["status"]): PhaseState {
-  if (status === "completed") return "done";
-  if (status === "failed") return "failed";
-  if (status === "skipped") return "skipped";
-  return "warning";
-}
-
-function mergePhaseRuns(job: Job, outputs: Partial<PhaseOutputMap>): PhaseRun[] {
-  return job.phases.map((run) => {
-    const output = outputs[run.phase];
-    if (!output) return run;
-    const next: PhaseRun = {
-      ...run,
-      state: phaseStateFromStatus(output.status),
-      message: output.message,
-      finishedAt: output.producedAt
-    };
-    if (!next.startedAt) next.startedAt = output.producedAt;
-    return next;
-  });
-}
-
-function jobLogPath(config: ApiConfig, job: Job): string {
-  return job.workspace?.jobRoot ? path.join(job.workspace.jobRoot, "logs", "job.log") : buildJobWorkspacePaths(config.paths.dataRoot, job.id).logs.jobLog;
 }
 
 function jobRootPath(config: ApiConfig, job: Job): string {
@@ -482,6 +356,16 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
     applyRuntimeConfig
   };
 
+  const jobActionContext: JobActionContext = {
+    config: () => config,
+    jobs: jobRepository,
+    cache,
+    getTorrentClient: () => torrentClient,
+    getPtpSubmitter: () => ptpSubmitter,
+    getPreparation: () => preparation,
+    enqueuePreparation
+  };
+
   app.addHook("onClose", async () => {
     await persistence.disconnect();
   });
@@ -572,118 +456,6 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
     return reply.code(201).send({ job });
   });
 
-  async function startUploadJob(id: string) {
-    const started = await jobRepository.startUpload(id);
-    if (!started || started.state !== "uploading") return started;
-    if (!started.candidate) {
-      return jobRepository.markUploadFailed(id, "Cannot upload a job without candidate metadata.");
-    }
-
-    const fallbackPaths = buildJobWorkspacePaths(config.paths.dataRoot, id);
-    const jobRoot = started.workspace?.jobRoot ?? fallbackPaths.jobRoot;
-    const logPath = jobLogPath(config, started);
-    const mediaArtifact = started.artifacts.mediaFiles?.[0];
-    const mediaPath = mediaArtifact ? (path.isAbsolute(mediaArtifact) ? mediaArtifact : path.join(jobRoot, mediaArtifact)) : undefined;
-    await mkdir(path.dirname(logPath), { recursive: true });
-    const contextOptions: CreatePhaseContextOptions = {
-      log: async (level: PhaseLogLevel, message: string, payload?: unknown) => {
-        await appendJobEvent(logPath, {
-          at: new Date().toISOString(),
-          level,
-          message,
-          payload
-        });
-      }
-    };
-    if (ptpSubmitter) contextOptions.ptpSubmitter = ptpSubmitter;
-    contextOptions.ptpCacheSyncer = createPtpCacheSyncer(cache);
-    if (config.ptp.announceUrl) contextOptions.ptpAnnounceUrl = config.ptp.announceUrl;
-    if (torrentClient) {
-      contextOptions.torrentClient = torrentClient;
-      contextOptions.torrentClientOptions = {
-        ...(config.integrations.qbittorrentCategory ? { category: config.integrations.qbittorrentCategory } : {}),
-        ...(config.integrations.qbittorrentTags.length ? { tags: config.integrations.qbittorrentTags } : {}),
-        waitTimeoutMs: config.integrations.qbittorrentDownloadWaitMs,
-        waitIntervalMs: config.integrations.qbittorrentDownloadPollMs
-      };
-    }
-    const context = createPhaseContext(
-      id,
-      {
-        candidate: started.candidate,
-        ...(started.checkResult ? { checkResult: started.checkResult } : {}),
-        ...(started.torrent ? { torrent: started.torrent } : {}),
-        ...(started.torrent?.filePath ? { sourceTorrentPath: started.torrent.filePath } : {}),
-        ...(started.reviewDraft ? { reviewDraft: started.reviewDraft } : {}),
-        ...(mediaPath ? { mediaPath } : {}),
-        workingDirectory: jobRoot
-      },
-      contextOptions
-    );
-
-    const outputs = await new PhaseRunner().runUploadTail(context);
-    const phaseRuns = mergePhaseRuns(started, outputs);
-    const upload = outputs.upload;
-    if (upload?.status === "completed" && upload.result) {
-      const uploadArtifacts: Partial<Job["artifacts"]> = {};
-      const seedInfoHash = outputs["post-hook"]?.infoHash;
-      if (seedInfoHash) uploadArtifacts.qbSeedInfoHash = seedInfoHash;
-      return jobRepository.markUploadResult(id, upload.result, phaseRuns, uploadArtifacts);
-    }
-    return jobRepository.markUploadFailed(id, upload?.message ?? "PTP upload did not complete.", phaseRuns);
-  }
-
-  async function retryFailedJob(id: string) {
-    const existing = await jobRepository.get(id);
-    if (!existing) return null;
-    if (existing.state === "needs_reseed") return reseedJob(id);
-    return jobRepository.retryFailed(id);
-  }
-
-  async function retryCompletedPhaseJob(id: string, phase: UploadPhase) {
-    if (phase === "post-hook") {
-      const queued = await jobRepository.retryCompletedPhase(id, phase);
-      if (!queued) return null;
-      return reseedJob(id);
-    }
-    return preparation.retryCompletedPhase(id, phase);
-  }
-
-  async function reseedJob(id: string) {
-    const existing = await jobRepository.get(id);
-    if (!existing) return null;
-    if (!torrentClient) {
-      return jobRepository.markNeedsReseed(existing.id, "qBittorrent is not configured for automatic reseed.");
-    }
-
-    const jobRoot = existing.workspace?.jobRoot ?? buildJobWorkspacePaths(config.paths.dataRoot, existing.id).jobRoot;
-    const torrentPath = path.join(jobRoot, existing.artifacts.uploadTorrent ?? "torrent/upload.torrent");
-    const downloadPath = path.join(jobRoot, "media", "upload");
-    try {
-      const addOptions: Parameters<TorrentDownloadClient["addTorrent"]>[0] = {
-        torrentPath,
-        downloadPath,
-        skipHashCheck: true
-      };
-      if (config.integrations.qbittorrentCategory) addOptions.category = config.integrations.qbittorrentCategory;
-      if (config.integrations.qbittorrentTags.length) addOptions.tags = config.integrations.qbittorrentTags;
-      const result = await torrentClient.addTorrent(addOptions);
-      return jobRepository.markReseeded(existing.id, result.infoHash);
-    } catch {
-      return jobRepository.markNeedsReseed(existing.id, "reseed failed");
-    }
-  }
-
-  async function resumeJob(id: string) {
-    const job = await jobRepository.resume(id);
-    if (job?.state === "preparing") enqueuePreparation(id);
-    return job;
-  }
-
-  async function skipJob(id: string) {
-    return jobRepository.skip(id);
-  }
-
   async function deleteJob(id: string, body: DeleteJobBody | undefined) {
     const mode = body?.mode;
     if (!mode || !["queue", "downloads", "everything"].includes(mode)) {
@@ -719,13 +491,13 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
   }
 
   app.post<{ Params: { id: string } }>("/api/jobs/:id/start-upload", async (request, reply) => {
-    const job = await startUploadJob(request.params.id);
+    const job = await startUploadJob(jobActionContext, request.params.id);
     if (!job) return reply.code(404).send({ error: "job_not_found" });
     return { job };
   });
 
   app.post<{ Params: { id: string } }>("/api/jobs/:id/start", async (request, reply) => {
-    const job = await startUploadJob(request.params.id);
+    const job = await startUploadJob(jobActionContext, request.params.id);
     if (!job) return reply.code(404).send({ error: "job_not_found" });
     return { job };
   });
@@ -743,13 +515,13 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
   });
 
   app.post<{ Params: { id: string } }>("/api/jobs/:id/resume", async (request, reply) => {
-    const job = await resumeJob(request.params.id);
+    const job = await resumeJob(jobActionContext, request.params.id);
     if (!job) return reply.code(404).send({ error: "job_not_found" });
     return { job };
   });
 
   app.post<{ Params: { id: string } }>("/api/jobs/:id/retry-failed", async (request, reply) => {
-    const job = await retryFailedJob(request.params.id);
+    const job = await retryFailedJob(jobActionContext, request.params.id);
     if (!job) return reply.code(404).send({ error: "job_not_found" });
     return { job };
   });
@@ -758,25 +530,25 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
     const phase = request.params.phase as UploadPhase;
     if (!JOB_PHASES.includes(phase)) return reply.code(400).send({ error: "unknown_phase" });
     if (!RETRYABLE_COMPLETED_PHASES.has(phase)) return reply.code(400).send({ error: "phase_retry_not_available" });
-    const job = await retryCompletedPhaseJob(request.params.id, phase);
+    const job = await retryCompletedPhaseJob(jobActionContext, request.params.id, phase);
     if (!job) return reply.code(404).send({ error: "job_not_found" });
     return { job };
   });
 
   app.post<{ Params: { id: string } }>("/api/jobs/:id/retry", async (request, reply) => {
-    const job = await retryFailedJob(request.params.id);
+    const job = await retryFailedJob(jobActionContext, request.params.id);
     if (!job) return reply.code(404).send({ error: "job_not_found" });
     return { job };
   });
 
   app.post<{ Params: { id: string } }>("/api/jobs/:id/reseed", async (request, reply) => {
-    const job = await reseedJob(request.params.id);
+    const job = await reseedJob(jobActionContext, request.params.id);
     if (!job) return reply.code(404).send({ error: "job_not_found" });
     return { job };
   });
 
   app.post<{ Params: { id: string } }>("/api/jobs/:id/debug/skip", async (request, reply) => {
-    const job = await skipJob(request.params.id);
+    const job = await skipJob(jobActionContext, request.params.id);
     if (!job) return reply.code(404).send({ error: "job_not_found" });
     return { job };
   });
