@@ -168,6 +168,11 @@ export interface ApiJob {
     contentType?: string;
     filePath?: string;
   };
+  workspace?: {
+    dataRoot: string;
+    jobRoot: string;
+    manifest: string;
+  };
   downloadStatus?: DownloadStatus;
   uploadPlan?: {
     releaseName?: {

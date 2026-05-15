@@ -160,11 +160,21 @@ function safeFilename(value: string | null | undefined, fallback = "source.torre
   return normalizeUploadedFilename(value, fallback);
 }
 
+function decodePercentFilename(value: string): string {
+  if (!/%[0-9a-f]{2}/i.test(value)) return value;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 function filenameFromContentDisposition(value: string | null): string | null {
   if (!value) return null;
   const encoded = value.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
   if (encoded) return decodeURIComponent(encoded.replace(/^"|"$/g, ""));
-  return value.match(/filename="([^"]+)"/i)?.[1] ?? value.match(/filename=([^;]+)/i)?.[1]?.trim() ?? null;
+  const filename = value.match(/filename="([^"]+)"/i)?.[1] ?? value.match(/filename=([^;]+)/i)?.[1]?.trim() ?? null;
+  return filename ? decodePercentFilename(filename) : null;
 }
 
 function filenameFromTorrentUrl(torrentUrl: string, response: Response): string {

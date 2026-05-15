@@ -798,9 +798,13 @@ test.describe("Popcorn Queue UI", () => {
 
     const reviewPanel = page.getByTestId("review-panel");
     await expect(reviewPanel).toContainText("Source torrent");
-    await expect(reviewPanel).toContainText("ATHENA.2022.PTer.source.torrent");
+    await expect(reviewPanel).toContainText("/var/lib/popcorn-queue/data/jobs/job-athena/torrent/source.torrent");
     await expect(reviewPanel).toContainText("PTP upload torrent");
-    await expect(reviewPanel).toContainText("torrent/upload.torrent");
+    await expect(reviewPanel).toContainText("/var/lib/popcorn-queue/data/jobs/job-athena/torrent/upload.torrent");
+    await expect(reviewPanel).toContainText("Download media");
+    await expect(reviewPanel).toContainText("/downloads/ATHENA.mkv");
+    await expect(reviewPanel).toContainText("Upload media");
+    await expect(reviewPanel).toContainText("/var/lib/popcorn-queue/data/jobs/job-athena/media/upload/ATHENA.2022.1080p.WEB.x265-SMURF.mkv");
     await expect(page.getByTestId("job-drawer").getByRole("button", { name: "Upload", exact: true })).toBeVisible();
     await expect(page.getByTestId("job-drawer").getByRole("button", { name: "Start Upload" })).toHaveCount(0);
 
@@ -818,6 +822,7 @@ test.describe("Popcorn Queue UI", () => {
     test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only review assertion.");
     const ptpUrl = "https://passthepopcorn.me/torrents.php?id=322761&torrentid=1515743";
     const sourceTorrentPath = "/var/lib/popcorn-queue/data/jobs/job-white/torrent/source.torrent";
+    const jobRoot = "/var/lib/popcorn-queue/data/jobs/job-white";
     await page.route("**/api/jobs", async (route) => {
       if (route.request().method() !== "GET") {
         await route.fallback();
@@ -830,6 +835,7 @@ test.describe("Popcorn Queue UI", () => {
               ...apiJobs[0],
               source: { ...apiJobs[0].source, title: "White.Fox.2023.1080p.WEB.x265.HDR-PTerWEB" },
               candidate: { ...apiJobs[0].candidate!, title: "White.Fox.2023.1080p.WEB.x265.HDR-PTerWEB" },
+              workspace: { dataRoot: "/var/lib/popcorn-queue/data", jobRoot, manifest: `${jobRoot}/manifest.json` },
               torrent: { ...apiJobs[0].torrent!, filename: "source.torrent", filePath: sourceTorrentPath },
               artifacts: {
                 ...apiJobs[0].artifacts,
@@ -848,6 +854,9 @@ test.describe("Popcorn Queue UI", () => {
     const reviewPanel = page.getByTestId("review-panel");
 
     await expect(reviewPanel).toContainText(sourceTorrentPath);
+    await expect(reviewPanel).toContainText(`${jobRoot}/torrent/upload.torrent`);
+    await expect(reviewPanel).toContainText("/downloads/ATHENA.mkv");
+    await expect(reviewPanel).toContainText(`${jobRoot}/media/upload/ATHENA.2022.1080p.WEB.x265-SMURF.mkv`);
     await expect(reviewPanel).toContainText("qBittorrent seeding");
     await expect(reviewPanel).toContainText("Ready to seed");
     await expect(reviewPanel).not.toContainText("qB handoff");
@@ -1104,6 +1113,11 @@ const apiJobs = [
     updatedAt: "2026-05-08T00:00:00.000Z",
     source: { site: "M-Team", title: "ATHENA.2022.FRENCH.1080p.NF.WEB-DL.x265-SMURF" },
     candidate: { site: "mteam", title: "ATHENA.2022.FRENCH.1080p.NF.WEB-DL.x265-SMURF", imdbId: "tt1234567" },
+    workspace: {
+      dataRoot: "/var/lib/popcorn-queue/data",
+      jobRoot: "/var/lib/popcorn-queue/data/jobs/job-athena",
+      manifest: "/var/lib/popcorn-queue/data/jobs/job-athena/manifest.json"
+    },
     checkResult: {
       decision: {
         status: "review",
@@ -1112,7 +1126,11 @@ const apiJobs = [
         movie: { GroupId: "123", Title: "Athena", Name: "Athene", Year: "2022", ImdbId: "tt1234567" }
       }
     },
-    torrent: { filename: "ATHENA.2022.PTer.source.torrent", bytes: 6871947673 },
+    torrent: {
+      filename: "ATHENA.2022.PTer.source.torrent",
+      bytes: 6871947673,
+      filePath: "/var/lib/popcorn-queue/data/jobs/job-athena/torrent/source.torrent"
+    },
     downloadStatus: {
       client: "qbittorrent",
       infoHash: "ATHENAHASH",

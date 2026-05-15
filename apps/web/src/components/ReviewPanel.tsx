@@ -98,10 +98,34 @@ function fallbackReviewDraft(job: ApiJob): ReviewDraft {
   };
 }
 
-function sourceTorrentLabel(job: ApiJob): string {
-  const filename = job.torrent?.filename;
-  if (filename && filename !== "source.torrent") return filename;
-  return job.torrent?.filePath ?? filename ?? "pending";
+function isAbsoluteFilePath(value: string): boolean {
+  return value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value);
+}
+
+function jobWorkspacePath(job: ApiJob, value: string | null | undefined): string | null {
+  if (!value) return null;
+  if (isAbsoluteFilePath(value)) return value;
+  const jobRoot = job.workspace?.jobRoot;
+  if (!jobRoot) return value;
+  return `${jobRoot.replace(/[\\/]+$/, "")}/${value.replace(/^[\\/]+/, "")}`;
+}
+
+function sourceTorrentPath(job: ApiJob): string {
+  if (job.torrent?.filePath) return job.torrent.filePath;
+  if (job.torrent && job.workspace?.jobRoot) return jobWorkspacePath(job, "torrent/source.torrent") ?? "pending";
+  return job.torrent?.filename ?? "pending";
+}
+
+function uploadTorrentPath(job: ApiJob): string {
+  return jobWorkspacePath(job, job.artifacts?.uploadTorrent) ?? "pending";
+}
+
+function downloadMediaPath(job: ApiJob): string {
+  return job.downloadStatus?.contentPath ?? job.source.mediaPath ?? "pending";
+}
+
+function uploadMediaPath(job: ApiJob): string {
+  return jobWorkspacePath(job, job.artifacts?.mediaFiles?.[0]) ?? "pending";
 }
 
 function formatPtpMovieTitle(movie: PtpMovieSummary): string {
@@ -284,9 +308,13 @@ export function ReviewPanel({ job, jobLogs, onSaveReviewDraft, onRegisterDraftFl
         <h3>Torrent / qB Readiness</h3>
         <div className="key-value">
           <span>Source torrent</span>
-          <strong>{sourceTorrentLabel(job)}</strong>
+          <strong>{sourceTorrentPath(job)}</strong>
           <span>PTP upload torrent</span>
-          <strong>{job.artifacts?.uploadTorrent ?? "pending"}</strong>
+          <strong>{uploadTorrentPath(job)}</strong>
+          <span>Download media</span>
+          <strong>{downloadMediaPath(job)}</strong>
+          <span>Upload media</span>
+          <strong>{uploadMediaPath(job)}</strong>
           <span>qBittorrent seeding</span>
           <strong>{qbittorrentSeedStatus(job)}</strong>
           {job.artifacts?.ptpUrl ? (

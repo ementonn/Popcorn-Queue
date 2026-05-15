@@ -1826,6 +1826,38 @@ describe("API jobs", () => {
     });
   });
 
+  it("decodes percent-encoded torrent URL filenames from content disposition", async () => {
+    const config = testConfig();
+    const encodedFilename = "%5BHHC%5D.%E5%AE%87%E5%AE%99%E6%8A%A4%E5%8D%AB%E9%98%9F%EF%BC%9A%E7%99%BE%E5%8F%98%E6%B5%81%E6%98%9F.Cosmicrew.Ice.torrent";
+    const fetchImpl: typeof fetch = async () =>
+      new Response("d4:infod6:lengthi1eee", {
+        status: 200,
+        headers: { "content-type": "application/x-bittorrent", "content-disposition": `attachment; filename="${encodedFilename}"` }
+      });
+
+    await withConfiguredServer(config, { autoPrepare: false, fetchImpl }, async (app) => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/intake/jobs",
+        payload: {
+          torrentUrl: `https://tracker.example/download/${encodedFilename}`,
+          ptpTarget: {
+            groupId: "302",
+            displayTitle: "Cosmicrew Ice [2024]",
+            year: "2024",
+            imdbId: "tt7654323",
+            ptpUrl: "https://passthepopcorn.me/torrents.php?id=302"
+          }
+        }
+      });
+
+      expect(response.statusCode).toBe(201);
+      const job = response.json<{ job: Job }>().job;
+      expect(job.torrent?.filename).toBe("[HHC].宇宙护卫队：百变流星.Cosmicrew.Ice.torrent");
+      expect(job.source.title).toBe("[HHC].宇宙护卫队：百变流星.Cosmicrew.Ice");
+    });
+  });
+
   it("creates manual intake jobs from a torrent URL without a server media path", async () => {
     const config = testConfig();
     const fetchImpl: typeof fetch = async () =>
