@@ -591,6 +591,8 @@ export class PreparationService {
     const torrentCreate = outputs["torrent-create"];
     const uploadTorrent = relativeToJob(jobRoot, torrentCreate?.uploadTorrentPath);
     if (uploadTorrent) artifacts.uploadTorrent = uploadTorrent;
+    const download = outputs["download-or-locate"];
+    if (download?.infoHash) artifacts.qbDownloadInfoHash = download.infoHash;
     if (outputs["seed-prepare"]) artifacts.qbReady = outputs["seed-prepare"]?.status === "completed";
     if (outputs.preflight?.uploadDraft.description) artifacts.description = outputs.preflight.uploadDraft.description;
     return artifacts;

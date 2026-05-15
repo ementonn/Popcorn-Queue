@@ -611,7 +611,8 @@ describe("worker phase scaffold", () => {
     expect(outputs.upload?.status).toBe("completed");
     expect(outputs["post-hook"]).toMatchObject({
       status: "completed",
-      hooksRun: ["qbittorrent-seed-handoff"]
+      hooksRun: ["qbittorrent-seed-handoff"],
+      infoHash: "ABC123"
     });
     expect(addCalls).toEqual([
       {

@@ -225,7 +225,7 @@ export class PrismaJobRepository {
   async list(): Promise<Job[]> {
     await this.persistence.ensure();
     const rows = await this.persistence.prisma.job.findMany({ orderBy: { createdAt: "desc" } });
-    return rows.map((row) => deserializeJob(row));
+    return rows.map((row) => deserializeJob(row)).filter((job) => !job.artifacts.removedFromQueueAt);
   }
 
   async get(id: string): Promise<Job | null> {
@@ -300,8 +300,13 @@ export class PrismaJobRepository {
     return this.withJob(id, (repo) => repo.updateReviewDraft(id, patch));
   }
 
-  async markUploadResult(id: string, result: Parameters<JobRepository["markUploadResult"]>[1], phases?: Parameters<JobRepository["markUploadResult"]>[2]): Promise<Job | null> {
-    return this.withJob(id, (repo) => repo.markUploadResult(id, result, phases));
+  async markUploadResult(
+    id: string,
+    result: Parameters<JobRepository["markUploadResult"]>[1],
+    phases?: Parameters<JobRepository["markUploadResult"]>[2],
+    artifacts?: Parameters<JobRepository["markUploadResult"]>[3]
+  ): Promise<Job | null> {
+    return this.withJob(id, (repo) => repo.markUploadResult(id, result, phases, artifacts));
   }
 
   async markUploadFailed(id: string, message: string, phases?: Parameters<JobRepository["markUploadFailed"]>[2]): Promise<Job | null> {
@@ -318,6 +323,22 @@ export class PrismaJobRepository {
 
   async markReseeded(id: string, infoHash: string): Promise<Job | null> {
     return this.withJob(id, (repo) => repo.markReseeded(id, infoHash));
+  }
+
+  async removeFromQueue(id: string): Promise<Job | null> {
+    return this.withJob(id, (repo) => repo.removeFromQueue(id));
+  }
+
+  async markDownloadFilesDeleted(id: string): Promise<Job | null> {
+    return this.withJob(id, (repo) => repo.markDownloadFilesDeleted(id));
+  }
+
+  async delete(id: string): Promise<Job | null> {
+    await this.persistence.ensure();
+    const job = await this.get(id);
+    if (!job) return null;
+    await this.persistence.prisma.job.deleteMany({ where: { id } });
+    return job;
   }
 
   async skip(id: string): Promise<Job | null> {

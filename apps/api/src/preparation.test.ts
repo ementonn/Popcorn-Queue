@@ -439,6 +439,7 @@ describe("PreparationService", () => {
     const downloadLines = jobLog.split(/\r?\n/).filter((line) => line.includes("Download "));
 
     expect(prepared.downloadStatus).toMatchObject({ infoHash: "PROGRESS", progress: 1, state: "uploading" });
+    expect(prepared.artifacts.qbDownloadInfoHash).toBe("PROGRESS");
     expect(jobLog).toContain("Download progress: 0%.");
     expect(jobLog).toContain("Download progress: 5%.");
     expect(jobLog).toContain("Download progress: 10%.");
@@ -604,6 +605,7 @@ describe("PreparationService", () => {
     expect(prepared.artifacts.screenshotPreviews).toEqual(prepared.artifacts.screenshots?.map((url) => url.replace("https://imgbb.test/", "https://imgbb.test/medium/")));
     expect(uploadedImages).toHaveLength(4);
     expect(prepared.artifacts.uploadTorrent).toBe("torrent/upload.torrent");
+    expect(prepared.artifacts.qbDownloadInfoHash).toBe("FIXTURE");
     expect(prepared.artifacts.qbReady).toBe(true);
     expect(uploadTorrentText).toContain("https://please.passthepopcorn.me/passkey/announce");
     expect(uploadTorrentText).toContain("shock-wave-2-sample.mkv");

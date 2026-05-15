@@ -689,6 +689,39 @@ test.describe("Popcorn Queue UI", () => {
     await expect.poll(() => resumeCalled).toBe(true);
   });
 
+  test("requires a delete mode confirmation before deleting a job", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only delete assertion.");
+    let deleteRequest: Record<string, unknown> | null = null;
+    await page.route("**/api/jobs/job-athena/delete", async (route) => {
+      deleteRequest = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        json: {
+          job: {
+            ...apiJobs[0],
+            artifacts: {
+              ...apiJobs[0].artifacts,
+              downloadFilesDeletedAt: "2026-05-15T00:00:00.000Z"
+            }
+          },
+          cleanup: { localPaths: [], torrents: [] }
+        }
+      });
+    });
+
+    await page.goto("/");
+    await page.getByRole("link", { name: "ATHENA.2022.1080p.WEB.x265-SMURF" }).click();
+    await page.getByTestId("job-drawer").getByRole("button", { name: "Delete..." }).click();
+
+    const dialog = page.getByRole("dialog", { name: "Delete Job" });
+    await expect(dialog).toBeVisible();
+    await expect(deleteRequest).toBeNull();
+    await dialog.getByLabel("Delete Download Files").check();
+    await dialog.getByRole("button", { name: "Delete Download Files" }).click();
+
+    await expect.poll(() => deleteRequest).toMatchObject({ mode: "downloads", confirm: true });
+    await expect(page.getByText("Delete Download Files: job-athena")).toBeVisible();
+  });
+
   test("keeps review sections in upload decision order", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only review assertion.");
     await page.goto("/");

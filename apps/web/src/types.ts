@@ -1,5 +1,6 @@
 export type JobState = "created" | "preparing" | "review" | "uploading" | "paused" | "failed" | "done" | "needs_reseed" | "seeding";
 export type UploadReadiness = "blocked" | "missing_evidence" | "ready";
+export type DeleteJobMode = "queue" | "downloads" | "everything";
 
 export interface AuthSessionInfo {
   authRequired: boolean;
@@ -150,6 +151,10 @@ export interface ApiJob {
     duplicateResult?: string;
     uploadTorrent?: string;
     qbReady?: boolean;
+    qbDownloadInfoHash?: string;
+    qbSeedInfoHash?: string;
+    removedFromQueueAt?: string;
+    downloadFilesDeletedAt?: string;
     reviewWarnings?: string[];
     mediaFeatureSuggestions?: string[];
     ptpUrl?: string;
@@ -286,6 +291,16 @@ export interface DiagnosticsInfo {
   };
   logs: {
     api: string[];
+  };
+}
+
+export interface DeleteJobResponse {
+  job?: ApiJob;
+  deleted?: boolean;
+  jobId?: string;
+  cleanup?: {
+    localPaths: Array<{ path: string; status: string; message: string }>;
+    torrents: Array<{ infoHash: string; role: string; status: string; deleteData: boolean; message: string }>;
   };
 }
 

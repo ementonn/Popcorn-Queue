@@ -1,6 +1,8 @@
 import type {
   ApiJob,
   AuthSessionInfo,
+  DeleteJobMode,
+  DeleteJobResponse,
   DiagnosticCheckResult,
   DiagnosticCheckTarget,
   DiagnosticsInfo,
@@ -191,4 +193,11 @@ export function saveReviewDraft(jobId: string, patch: ReviewDraftPatch): Promise
 
 export function debugSkip(jobId: string): Promise<{ job: ApiJob }> {
   return fetchJson<{ job: ApiJob }>(`/api/jobs/${jobId}/debug/skip`, { method: "POST", body: "{}" });
+}
+
+export function deleteJob(jobId: string, mode: DeleteJobMode): Promise<DeleteJobResponse> {
+  return fetchJson<DeleteJobResponse>(`/api/jobs/${jobId}/delete`, {
+    method: "POST",
+    body: JSON.stringify({ mode, confirm: true })
+  });
 }

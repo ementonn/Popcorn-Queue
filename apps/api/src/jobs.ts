@@ -80,6 +80,10 @@ export interface Job {
     duplicateResult?: string;
     uploadTorrent?: string;
     qbReady?: boolean;
+    qbDownloadInfoHash?: string;
+    qbSeedInfoHash?: string;
+    removedFromQueueAt?: string;
+    downloadFilesDeletedAt?: string;
     reviewBlockers?: string[];
     reviewWarnings?: string[];
     mediaFeatureSuggestions?: string[];
@@ -378,7 +382,9 @@ export class JobRepository {
   }
 
   list(): Job[] {
-    return Array.from(this.jobs.values()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return Array.from(this.jobs.values())
+      .filter((job) => !job.artifacts.removedFromQueueAt)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
   get(id: string): Job | null {
@@ -564,14 +570,15 @@ export class JobRepository {
     return this.record(job, "info", "Review draft updated.", { fields: Object.keys(patch).sort() });
   }
 
-  markUploadResult(id: string, result: PtpUploadResult, phases?: PhaseRun[]): Job | null {
+  markUploadResult(id: string, result: PtpUploadResult, phases?: PhaseRun[], artifacts: Partial<Job["artifacts"]> = {}): Job | null {
     const job = this.jobs.get(id);
     if (!job) return null;
     job.artifacts = {
       ...job.artifacts,
       ptpUrl: result.ptpUrl,
       ptpGroupId: result.groupId,
-      ptpTorrentId: result.torrentId
+      ptpTorrentId: result.torrentId,
+      ...artifacts
     };
     if (phases) job.phases = phases;
     this.setPhaseState(job, "upload", "done", "PTP upload submitted.");
@@ -690,12 +697,43 @@ export class JobRepository {
   markReseeded(id: string, infoHash: string): Job | null {
     const job = this.jobs.get(id);
     if (!job) return null;
+    job.artifacts = {
+      ...job.artifacts,
+      qbSeedInfoHash: infoHash
+    };
     job.state = "seeding";
     job.phase = "done";
     job.humanStep = "Seeding";
     this.setPhaseState(job, "post-hook", "done", "PTP upload torrent handed to qBittorrent for seeding.");
     this.setPhaseState(job, "done", "done", "Complete.");
     return this.record(job, "info", "Reseed complete.", { infoHash });
+  }
+
+  removeFromQueue(id: string): Job | null {
+    const job = this.jobs.get(id);
+    if (!job) return null;
+    job.artifacts = {
+      ...job.artifacts,
+      removedFromQueueAt: nowIso()
+    };
+    return this.record(job, "info", "Job removed from queue.");
+  }
+
+  markDownloadFilesDeleted(id: string): Job | null {
+    const job = this.jobs.get(id);
+    if (!job) return null;
+    job.artifacts = {
+      ...job.artifacts,
+      downloadFilesDeletedAt: nowIso()
+    };
+    return this.record(job, "info", "Download files deleted.");
+  }
+
+  delete(id: string): Job | null {
+    const job = this.jobs.get(id);
+    if (!job) return null;
+    this.jobs.delete(id);
+    return job;
   }
 
   skip(id: string): Job | null {

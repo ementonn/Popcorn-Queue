@@ -79,6 +79,7 @@ export interface TorrentDownloadClient {
   getStatus(infoHash: string): Promise<DownloadStatus>;
   isComplete(infoHash: string): Promise<boolean>;
   listFiles(infoHash: string): Promise<TorrentClientFile[]>;
+  removeTorrent?(infoHash: string, options?: { deleteData?: boolean }): Promise<void>;
 }
 
 export interface CommandAttempt {
@@ -241,6 +242,7 @@ export interface PhaseOutputMap {
   };
   "post-hook": PhaseOutputBase & {
     hooksRun: string[];
+    infoHash: string | null;
   };
   done: PhaseOutputBase & {
     completed: true;
@@ -1402,13 +1404,15 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
         if (upload?.status !== "completed" || !upload.result) {
           return {
             ...base("skipped", "PTP upload did not complete; post-upload hooks were skipped."),
-            hooksRun: []
+            hooksRun: [],
+            infoHash: null
           };
         }
         if (!context.torrentClient) {
           return {
             ...base("skipped", "Torrent client integration is not configured for seed handoff."),
-            hooksRun: []
+            hooksRun: [],
+            infoHash: null
           };
         }
 
@@ -1418,13 +1422,15 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
         if (!torrentPath || !(await pathExists(torrentPath))) {
           return {
             ...base("failed", "PTP upload torrent is missing for seed handoff."),
-            hooksRun: []
+            hooksRun: [],
+            infoHash: null
           };
         }
         if (!downloadPath) {
           return {
             ...base("failed", "Upload media directory is missing for seed handoff."),
-            hooksRun: []
+            hooksRun: [],
+            infoHash: null
           };
         }
 
@@ -1447,13 +1453,15 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
           });
           return {
             ...base("completed", "PTP upload torrent handed to qBittorrent for seeding."),
-            hooksRun: ["qbittorrent-seed-handoff"]
+            hooksRun: ["qbittorrent-seed-handoff"],
+            infoHash: result.infoHash
           };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           return {
             ...base("failed", message),
-            hooksRun: []
+            hooksRun: [],
+            infoHash: null
           };
         }
       }

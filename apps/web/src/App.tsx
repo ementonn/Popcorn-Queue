@@ -1,9 +1,10 @@
-import { Activity, FilePlus2, LoaderCircle, LockKeyhole, LogOut, Pause, Play, RefreshCcw, Search, Settings as SettingsIcon, SlidersHorizontal } from "lucide-react";
+import { Activity, FilePlus2, LoaderCircle, LockKeyhole, LogOut, Pause, Play, RefreshCcw, Search, Settings as SettingsIcon, SlidersHorizontal, Trash2 } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   loadDashboard,
   loadAuthSession,
   authSessionAfterCheckFailure,
+  deleteJob,
   loadGlobalLogs,
   loadJobLogs,
   login,
@@ -25,6 +26,7 @@ import { SettingsPage } from "./components/SettingsPage.js";
 import type {
   ApiJob,
   AuthSessionInfo,
+  DeleteJobMode,
   DiagnosticCheckResult,
   DiagnosticCheckTarget,
   DiagnosticsInfo,
@@ -35,7 +37,7 @@ import type {
 } from "./types.js";
 
 type ActiveView = "jobs" | "new-job" | "diagnostics" | "settings";
-type PendingJobAction = { jobId: string; label: string; kind: "upload" | "pause" | "resume" | "retry" };
+type PendingJobAction = { jobId: string; label: string; kind: "upload" | "pause" | "resume" | "retry" | "delete" };
 
 function updateJob(jobs: ApiJob[], updated: ApiJob): ApiJob[] {
   return jobs.map((job) => (job.id === updated.id ? updated : job));
@@ -43,6 +45,66 @@ function updateJob(jobs: ApiJob[], updated: ApiJob): ApiJob[] {
 
 function jobDisplayTitle(job: ApiJob): string {
   return job.artifacts?.releaseName ?? job.uploadPlan?.releaseName?.generated ?? job.candidate?.title ?? job.source.title ?? job.id;
+}
+
+const DELETE_MODE_LABELS: Record<DeleteJobMode, string> = {
+  queue: "Remove from Queue",
+  downloads: "Delete Download Files",
+  everything: "Delete Everything"
+};
+
+const DELETE_MODE_DETAILS: Record<DeleteJobMode, string> = {
+  queue: "Hide this job from the queue. The database record, workspace files, and qBittorrent tasks stay in place.",
+  downloads: "Delete the job download directory and remove the download torrent. Prepared upload files, logs, screenshots, and job history stay in place.",
+  everything: "Delete the local job record, workspace files, and tracked qBittorrent download and seed torrents. PTP uploads are not removed."
+};
+
+function DeleteJobDialog({
+  job,
+  pending,
+  onCancel,
+  onConfirm
+}: {
+  job: ApiJob;
+  pending: boolean;
+  onCancel: () => void;
+  onConfirm: (mode: DeleteJobMode) => void;
+}) {
+  const [mode, setMode] = useState<DeleteJobMode>("queue");
+  const title = jobDisplayTitle(job);
+
+  useEffect(() => {
+    setMode("queue");
+  }, [job.id]);
+
+  return (
+    <div className="modal-backdrop">
+      <section className="delete-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-job-title">
+        <h2 id="delete-job-title">Delete Job</h2>
+        <p className="delete-dialog__title">{title}</p>
+        <div className="delete-options">
+          {(Object.keys(DELETE_MODE_LABELS) as DeleteJobMode[]).map((item) => (
+            <label key={item} className={mode === item ? "selected" : undefined}>
+              <input type="radio" name="delete-mode" checked={mode === item} onChange={() => setMode(item)} />
+              <span>
+                <strong>{DELETE_MODE_LABELS[item]}</strong>
+                <small>{DELETE_MODE_DETAILS[item]}</small>
+              </span>
+            </label>
+          ))}
+        </div>
+        <div className="delete-dialog__actions">
+          <button type="button" onClick={onCancel} disabled={pending}>
+            Cancel
+          </button>
+          <button type="button" className="danger" onClick={() => onConfirm(mode)} disabled={pending}>
+            {pending ? <LoaderCircle className="spin-icon" size={15} /> : <Trash2 size={15} />}
+            {pending ? "Deleting..." : DELETE_MODE_LABELS[mode]}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function LoginView({
@@ -143,6 +205,7 @@ export function App() {
   const [status, setStatus] = useState<{ tone: "success" | "error" | "info"; text: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [pendingJobAction, setPendingJobAction] = useState<PendingJobAction | null>(null);
+  const [deleteDialogJobId, setDeleteDialogJobId] = useState<string | null>(null);
   const localDraftsRef = useRef(new Map<string, ReviewDraft>());
   const draftFlushersRef = useRef(new Map<string, () => Promise<void>>());
 
@@ -158,6 +221,10 @@ export function App() {
   const selectedJobComplete = selectedJob?.state === "done";
   const selectedJobCanPause = Boolean(selectedJob && selectedJob.state !== "done" && selectedJob.state !== "needs_reseed");
   const selectedPendingAction = pendingJobAction?.jobId === selectedJob?.id ? pendingJobAction : null;
+  const deleteDialogJob = useMemo(
+    () => jobs.find((job) => job.id === deleteDialogJobId) ?? null,
+    [deleteDialogJobId, jobs]
+  );
 
   const visibleJobs = useMemo(() => {
     const needle = searchTerm.trim().toLowerCase();
@@ -310,6 +377,39 @@ export function App() {
       setPendingJobAction((current) => (current?.jobId === pending.jobId && current.kind === pending.kind ? null : current));
     }
   }, [pendingJobAction, withLocalDraft]);
+
+  const handleDeleteJob = useCallback(async (mode: DeleteJobMode) => {
+    const job = deleteDialogJob;
+    if (!job || pendingJobAction) return;
+    const label = DELETE_MODE_LABELS[mode];
+    const pending: PendingJobAction = {
+      jobId: job.id,
+      label: `${label}...`,
+      kind: "delete"
+    };
+    setPendingJobAction(pending);
+    try {
+      const result = await deleteJob(job.id, mode);
+      if (mode === "downloads" && result.job) {
+        setJobs((current) => updateJob(current, withLocalDraft(result.job!)));
+        setSelectedJobId(result.job.id);
+        setJobLogs(await loadJobLogs(result.job.id));
+      } else {
+        setJobs((current) => current.filter((item) => item.id !== job.id));
+        localDraftsRef.current.delete(job.id);
+        draftFlushersRef.current.delete(job.id);
+        setSelectedJobId((current) => (current === job.id ? null : current));
+        setJobLogs({ lines: [] });
+      }
+      setDeleteDialogJobId(null);
+      setStatus({ tone: "success", text: `${label}: ${job.id}` });
+      setGlobalLogs(await loadGlobalLogs());
+    } catch (error) {
+      setStatus({ tone: "error", text: error instanceof Error ? error.message : `${label} failed` });
+    } finally {
+      setPendingJobAction((current) => (current?.jobId === pending.jobId && current.kind === "delete" ? null : current));
+    }
+  }, [deleteDialogJob, pendingJobAction, withLocalDraft]);
 
   const handleSaveReviewDraft = useCallback(async (jobId: string, patch: Parameters<typeof saveReviewDraft>[1]) => {
     const result = await saveReviewDraft(jobId, patch);
@@ -568,37 +668,45 @@ export function App() {
           job={selectedJob}
           onClose={() => setSelectedJobId(null)}
           actions={
-            selectedJob && selectedJob.state !== "done" ? (
+            selectedJob ? (
               <>
-                {selectedPendingAction?.kind === "upload" || (selectedJob.state === "review" && selectedJob.uploadReadiness === "ready") ? (
-                  <button
-                    type="button"
-                    className="primary"
-                    onClick={() => runJobAction(startUpload, "Upload", { flushDraft: true, pendingLabel: "Uploading...", kind: "upload" })}
-                    disabled={Boolean(selectedPendingAction)}
-                    aria-busy={selectedPendingAction?.kind === "upload" ? "true" : undefined}
-                  >
-                    {selectedPendingAction?.kind === "upload" ? <LoaderCircle className="spin-icon" size={15} /> : <Play size={15} />}
-                    {selectedPendingAction?.kind === "upload" ? "Uploading..." : "Upload"}
-                  </button>
+                {selectedJob.state !== "done" ? (
+                  <>
+                    {selectedPendingAction?.kind === "upload" || (selectedJob.state === "review" && selectedJob.uploadReadiness === "ready") ? (
+                      <button
+                        type="button"
+                        className="primary"
+                        onClick={() => runJobAction(startUpload, "Upload", { flushDraft: true, pendingLabel: "Uploading...", kind: "upload" })}
+                        disabled={Boolean(selectedPendingAction)}
+                        aria-busy={selectedPendingAction?.kind === "upload" ? "true" : undefined}
+                      >
+                        {selectedPendingAction?.kind === "upload" ? <LoaderCircle className="spin-icon" size={15} /> : <Play size={15} />}
+                        {selectedPendingAction?.kind === "upload" ? "Uploading..." : "Upload"}
+                      </button>
+                    ) : null}
+                    {selectedJobCanPause ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          runJobAction(selectedJob.state === "paused" ? resumeJob : pauseJob, selectedJob.state === "paused" ? "Resume" : "Pause", {
+                            kind: selectedJob.state === "paused" ? "resume" : "pause"
+                          })
+                        }
+                        disabled={Boolean(selectedPendingAction)}
+                      >
+                        {selectedJob.state === "paused" ? <Play size={15} /> : <Pause size={15} />}
+                        {selectedJob.state === "paused" ? "Resume" : "Pause"}
+                      </button>
+                    ) : null}
+                    <button type="button" onClick={() => runJobAction(retryFailed, "Retry failed steps", { kind: "retry" })} disabled={Boolean(selectedPendingAction)}>
+                      <RefreshCcw size={15} />
+                      Retry
+                    </button>
+                  </>
                 ) : null}
-                {selectedJobCanPause ? (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      runJobAction(selectedJob.state === "paused" ? resumeJob : pauseJob, selectedJob.state === "paused" ? "Resume" : "Pause", {
-                        kind: selectedJob.state === "paused" ? "resume" : "pause"
-                      })
-                    }
-                    disabled={Boolean(selectedPendingAction)}
-                  >
-                    {selectedJob.state === "paused" ? <Play size={15} /> : <Pause size={15} />}
-                    {selectedJob.state === "paused" ? "Resume" : "Pause"}
-                  </button>
-                ) : null}
-                <button type="button" onClick={() => runJobAction(retryFailed, "Retry failed steps", { kind: "retry" })} disabled={Boolean(selectedPendingAction)}>
-                  <RefreshCcw size={15} />
-                  Retry
+                <button type="button" className="danger" onClick={() => setDeleteDialogJobId(selectedJob.id)} disabled={Boolean(selectedPendingAction)}>
+                  <Trash2 size={15} />
+                  Delete...
                 </button>
               </>
             ) : null
@@ -612,6 +720,14 @@ export function App() {
             onRetryPhase={handleRetryPhase}
           />
         </JobDrawer>
+      ) : null}
+      {deleteDialogJob ? (
+        <DeleteJobDialog
+          job={deleteDialogJob}
+          pending={pendingJobAction?.jobId === deleteDialogJob.id && pendingJobAction.kind === "delete"}
+          onCancel={() => setDeleteDialogJobId(null)}
+          onConfirm={(mode) => void handleDeleteJob(mode)}
+        />
       ) : null}
     </div>
   );
