@@ -118,7 +118,7 @@ describe("review draft contract", () => {
     const { fields, missing } = ptpFormFieldsFromDraft({
       releaseName: "Movie.2025.1080p.WEB-DL.x265-GROUP",
       description: "Description",
-      groupId: "123",
+      groupId: null,
       type: "Feature Film",
       source: "WEB",
       codec: "H.265",
@@ -155,5 +155,55 @@ describe("review draft contract", () => {
     expect(fields).toContainEqual(["importance[]", "1"]);
     expect(fields).toContainEqual(["subtitles[]", "3"]);
     expect(fields).toContainEqual(["trumpable[]", "14"]);
+  });
+
+  it("omits new-movie metadata when adding a format to an existing PTP group", () => {
+    const { fields, missing } = ptpFormFieldsFromDraft({
+      releaseName: "Movie.2025.1080p.WEB-DL.x265-GROUP",
+      description: "Description",
+      groupId: "123",
+      type: "Feature Film",
+      source: "WEB",
+      codec: "H.265",
+      container: "MKV",
+      resolution: "1080p",
+      imdb: "tt1234567",
+      title: "Movie",
+      year: "2025",
+      image: "https://img.example/poster.jpg",
+      trailer: "https://youtube.com/watch?v=abc123",
+      tags: "drama",
+      synopsis: "Synopsis",
+      remaster: false,
+      remasterYear: "",
+      remasterTitle: "",
+      special: "1",
+      subtitles: ["3"],
+      trumpable: ["14"],
+      scene: false,
+      personalRip: false,
+      internal: false,
+      uploadToken: "token",
+      artists: [{ name: "Director Name", importance: "1" }]
+    });
+
+    const fieldKeys = fields.map(([key]) => key);
+    expect(missing).toEqual([]);
+    expect(fields).toContainEqual(["groupid", "123"]);
+    expect(fields).toContainEqual(["type", "Feature Film"]);
+    expect(fields).toContainEqual(["release_desc", "Description"]);
+    expect(fields).toContainEqual(["subtitles[]", "3"]);
+    expect(fields).toContainEqual(["trumpable[]", "14"]);
+    expect(fieldKeys).not.toContain("imdb");
+    expect(fieldKeys).not.toContain("title");
+    expect(fieldKeys).not.toContain("year");
+    expect(fieldKeys).not.toContain("image");
+    expect(fieldKeys).not.toContain("trailer");
+    expect(fieldKeys).not.toContain("tags");
+    expect(fieldKeys).not.toContain("album_desc");
+    expect(fieldKeys).not.toContain("special");
+    expect(fieldKeys).not.toContain("uploadtoken");
+    expect(fieldKeys).not.toContain("artist[]");
+    expect(fieldKeys).not.toContain("importance[]");
   });
 });

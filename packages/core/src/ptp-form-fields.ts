@@ -66,24 +66,27 @@ export function ptpFormFieldsFromDraft(draft: ReviewDraft): PtpFieldResult {
 
   append("release_desc", draft.description);
   append("groupid", draft.groupId);
-  append("imdb", draft.imdb);
-  append("title", draft.title);
-  append("year", draft.year);
-  append("image", draft.image);
-  append("trailer", draft.trailer);
-  append("tags", draft.tags);
-  append("album_desc", draft.synopsis);
-  append("special", draft.special);
-  append("uploadtoken", draft.uploadToken);
   append("remaster_year", draft.remasterYear);
   append("remaster_title", draft.remasterTitle);
   if (draft.scene) append("scene", "on");
   if (draft.personalRip || draft.internal) append("internalrip", "on");
   if (draft.remaster || draft.remasterYear || draft.remasterTitle) append("remaster", "on");
 
-  for (const artist of draft.artists ?? []) {
-    append("artist[]", artist.name);
-    append("importance[]", artist.importance);
+  if (!draft.groupId) {
+    append("imdb", draft.imdb);
+    append("title", draft.title);
+    append("year", draft.year);
+    append("image", draft.image);
+    append("trailer", draft.trailer);
+    append("tags", draft.tags);
+    append("album_desc", draft.synopsis);
+    append("special", draft.special);
+    append("uploadtoken", draft.uploadToken);
+
+    for (const artist of draft.artists ?? []) {
+      append("artist[]", artist.name);
+      append("importance[]", artist.importance);
+    }
   }
   for (const subtitle of draft.subtitles) append("subtitles[]", subtitle);
   for (const trumpable of draft.trumpable) append("trumpable[]", trumpable);
