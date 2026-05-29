@@ -76,6 +76,7 @@ describe("API browser routes", () => {
       const candidate = {
         site: "mteam",
         title: "Test.Movie.2024.1080p.BluRay.x264-GROUP",
+        subtitle: "NexusPHP subtitle from source tracker",
         imdbId: "tt1234567",
         resolution: "1080p",
         sourceUrl: "https://tracker.example/torrent/1"
@@ -120,7 +121,8 @@ describe("API browser routes", () => {
 
       expect(response.statusCode).toBe(201);
       const job = response.json<{ job: Job }>().job;
-      expect(job.source).toMatchObject({ site: "mteam", url: "https://tracker.example/torrent/1", title: candidate.title });
+      expect(job.source).toMatchObject({ site: "mteam", url: "https://tracker.example/torrent/1", title: candidate.title, subtitle: candidate.subtitle });
+      expect(job.candidate).toMatchObject({ subtitle: candidate.subtitle });
       expect(job.torrent).toMatchObject({ filename: "source.torrent", bytes: 21, contentType: "application/x-bittorrent" });
       expect(job.torrent?.filePath).toMatch(/torrent[/\\]source\.torrent$/);
       expect(job.workspace?.jobRoot).toContain(job.id);

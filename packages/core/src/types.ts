@@ -20,6 +20,7 @@ export interface TorrentCandidate {
   id?: string;
   site: SourceSite;
   title: string;
+  subtitle?: string | null;
   imdbId?: string | null;
   resolution?: string | null;
   sourceUrl?: string | null;

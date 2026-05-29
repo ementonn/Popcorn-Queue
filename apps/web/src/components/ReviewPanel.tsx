@@ -147,6 +147,12 @@ function matchedPtpMovie(job: ApiJob): { url: string; label: string } | null {
   return { url, label };
 }
 
+function sourceSubtitle(job: ApiJob): string | null {
+  const subtitle = job.source.subtitle ?? job.candidate?.subtitle ?? null;
+  const trimmed = subtitle?.trim();
+  return trimmed || null;
+}
+
 function qbittorrentSeedStatus(job: ApiJob): string {
   const qbState = job.downloadStatus?.state;
   const postHookDone = job.phases?.some((phase) => phase.phase === "post-hook" && phase.state === "done");
@@ -184,6 +190,7 @@ export function ReviewPanel({ job, jobLogs, onSaveReviewDraft, onRegisterDraftFl
   const matchedMovie = matchedPtpMovie(job);
   const download = job.downloadStatus;
   const downloadProgressValue = downloadProgress(download);
+  const subtitle = sourceSubtitle(job);
 
   return (
     <aside className="review-pane" data-testid="review-panel">
@@ -250,6 +257,12 @@ export function ReviewPanel({ job, jobLogs, onSaveReviewDraft, onRegisterDraftFl
               <strong>{download.state}</strong>
               <span>Hash</span>
               <strong>{download.infoHash ?? "pending"}</strong>
+              {subtitle ? (
+                <>
+                  <span>Subtitle</span>
+                  <strong>{subtitle}</strong>
+                </>
+              ) : null}
             </div>
           </div>
         ) : (

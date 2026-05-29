@@ -416,6 +416,7 @@ export class PreparationService {
       phases: phaseRuns,
       eventLevel,
       eventMessage,
+      forceReviewDescriptionRefresh: phase === "preflight",
       workspace: {
         dataRoot: paths.dataRoot,
         jobRoot: paths.jobRoot,

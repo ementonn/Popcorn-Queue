@@ -120,6 +120,7 @@ export interface ApiJob {
     site?: string;
     url?: string;
     title?: string;
+    subtitle?: string;
     mediaPath?: string;
     torrentUrl?: string;
     ptpTarget?: ManualIntakePtpTarget;
@@ -127,6 +128,7 @@ export interface ApiJob {
   candidate?: {
     site: string;
     title: string;
+    subtitle?: string | null;
     imdbId?: string | null;
     sourceTorrentId?: string | null;
   };

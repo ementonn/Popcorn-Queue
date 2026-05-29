@@ -22,7 +22,7 @@ function userscriptText(): string {
 function userscriptInternals(overrides: Record<string, unknown> = {}) {
   const text = userscriptText().replace(
     "  registerSettings();",
-    "  globalThis.__pqTest = { LOCAL_CACHE_TTL_MS, hasUnsupportedFrameRate, shouldOfferUpload, localCacheKey, localCacheStorageKey, localCacheSet };\n  registerSettings();"
+    "  globalThis.__pqTest = { LOCAL_CACHE_TTL_MS, hasUnsupportedFrameRate, shouldOfferUpload, localCacheKey, localCacheStorageKey, localCacheSet, extractSourceSubtitle };\n  registerSettings();"
   );
   const sandbox = {
     GM_registerMenuCommand: () => undefined,
@@ -42,6 +42,11 @@ function userscriptInternals(overrides: Record<string, unknown> = {}) {
       localCacheKey(torrent: { title: string; imdbId?: string | null }): string;
       localCacheStorageKey(cacheKey: string): string;
       localCacheSet(torrent: { title: string; imdbId?: string | null }, result: { decision?: { status?: string }; cache?: { hit?: boolean; key?: string } }): void;
+      extractSourceSubtitle(
+        link: { closest(selector: string): unknown; textContent?: string | null },
+        scope: { querySelector(selector: string): { textContent?: string | null } | null },
+        title: string
+      ): string | null;
     };
   }).__pqTest;
 }
@@ -105,6 +110,55 @@ describe("Popcorn Queue userscript checks", () => {
 
     expect(writes).toHaveLength(1);
     expect(writes[0]?.key).toBe("pq:browser-check:ptp:imdb:tt0816692");
+  });
+
+  it("extracts PTerClub subtitles from the sibling line span without including the release title", () => {
+    const internals = userscriptInternals();
+    const title = "Space Mutation 2026 1080p WEB-DL H264 AAC 2.0-ADWeb";
+    const subtitle = "国语中字 太空异种 / 深空异客 | 类型：科幻 惊悚 冒险 | 主演：魏璐 林妍柔 柳扬 王铭 安泽豪 *银河奇异果";
+    const subtitleSpan = { tagName: "SPAN", textContent: subtitle };
+    const subtitleLine = {
+      children: [{ tagName: "A", textContent: "国语" }, { tagName: "A", textContent: "中字" }, subtitleSpan],
+      querySelector: (selector: string) => (selector === "span" ? subtitleSpan : null)
+    };
+    const titleLine = { nextElementSibling: subtitleLine };
+    const link = {
+      textContent: title,
+      closest: (selector: string) => (selector === "div" ? titleLine : null)
+    };
+
+    expect(internals.extractSourceSubtitle(link, { querySelector: () => null }, title)).toBe(subtitle);
+  });
+
+  it("extracts TJUPT subtitles from text after the title break", () => {
+    const internals = userscriptInternals();
+    const title = "[大陆][遇见喵星人][The.Battle.of.Math.2021.1080p.WEB-DL.HEVC.HDR.AAC-SewageWeb]";
+    const subtitle = "遇见喵星人 / The Battle of Math | 导演：王佳伟 / 主演：艾伦 / 王智 / 程旭 | 类型：剧情 / 喜剧 / 奇幻 | 汉语普通话";
+    const link = { textContent: title, closest: (selector: string) => (selector === "td" ? titleCell : null) };
+    const titleCell = {
+      childNodes: [
+        link,
+        { nodeType: 1, tagName: "B", textContent: " (新)" },
+        { nodeType: 1, tagName: "BR", textContent: "" },
+        { nodeType: 3, textContent: subtitle }
+      ]
+    };
+
+    expect(internals.extractSourceSubtitle(link, { querySelector: () => null }, title)).toBe(subtitle);
+  });
+
+  it("extracts HHClub subtitles from the explicit small-name field", () => {
+    const internals = userscriptInternals();
+    const title = "No Other Love 2026 2160p WEB-DL H265 HQ DTS5.1 3Audios-HHWEB";
+    const subtitle = "蜂蜜的针 / 没有别的爱 | 4K 高码+多规格音轨 | 类型: 爱情/悬疑/犯罪 | 导演: 袁梅 | 主演: 袁泉/耿乐/宁静/俞飞鸿/齐溪";
+
+    expect(
+      internals.extractSourceSubtitle(
+        { textContent: title, closest: () => null },
+        { querySelector: (selector: string) => (selector.includes("torrent-info-text-small_name") ? { textContent: subtitle } : null) },
+        title
+      )
+    ).toBe(subtitle);
   });
 });
 

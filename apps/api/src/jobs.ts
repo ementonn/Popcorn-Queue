@@ -53,6 +53,7 @@ export interface Job {
     site?: string;
     url?: string;
     title?: string;
+    subtitle?: string;
     mediaPath?: string;
     torrentUrl?: string;
     ptpTarget?: ManualIntakePtpTarget;
@@ -138,6 +139,7 @@ export interface PreparationResultInput {
   eventLevel: JobEvent["level"];
   eventMessage: string;
   workspace?: Job["workspace"];
+  forceReviewDescriptionRefresh?: boolean;
 }
 
 export interface PreparationPhaseFinishedInput {
@@ -244,7 +246,7 @@ function reviewDraftFieldWasEdited(job: Job, field: keyof ReviewDraft): boolean 
   });
 }
 
-function ensureReviewDraft(job: Job): void {
+function ensureReviewDraft(job: Job, options: { forceDescriptionRefresh?: boolean } = {}): void {
   const draft = buildJobReviewDraft(job);
   if (!draft) return;
   if (!job.reviewDraft) {
@@ -253,7 +255,7 @@ function ensureReviewDraft(job: Job): void {
   }
   const draftWasEdited = job.events.some((event) => event.message === "Review draft updated.");
   const shouldMergeEditionSuggestions = !draftWasEdited || job.reviewDraft.remaster || Boolean(job.reviewDraft.remasterTitle);
-  const shouldRefreshGeneratedDescription = !reviewDraftFieldWasEdited(job, "description") && Boolean(draft.description);
+  const shouldRefreshGeneratedDescription = (options.forceDescriptionRefresh || !reviewDraftFieldWasEdited(job, "description")) && Boolean(draft.description);
   job.reviewDraft = {
     ...draft,
     ...job.reviewDraft,
@@ -342,6 +344,8 @@ export class JobRepository {
     if (input.sourceSite) source.site = input.sourceSite;
     if (input.sourceUrl) source.url = input.sourceUrl;
     if (input.title ?? input.candidate.title) source.title = input.title ?? input.candidate.title;
+    const sourceSubtitle = input.candidate.subtitle?.trim();
+    if (sourceSubtitle) source.subtitle = sourceSubtitle;
 
     const planInput: Parameters<typeof buildUploadPlan>[0] = { candidate: input.candidate };
     if (input.checkResult) planInput.checkResult = input.checkResult;
@@ -549,7 +553,9 @@ export class JobRepository {
     job.artifacts = input.artifacts;
     job.phases = input.phases;
     if (input.workspace) job.workspace = input.workspace;
-    if (job.state === "review" || job.phase === "review") ensureReviewDraft(job);
+    if (job.state === "review" || job.phase === "review") {
+      ensureReviewDraft(job, { forceDescriptionRefresh: Boolean(input.forceReviewDescriptionRefresh) });
+    }
     return this.record(job, input.eventLevel, input.eventMessage, {
       phase: input.phase,
       uploadReadiness: input.uploadReadiness

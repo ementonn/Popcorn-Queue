@@ -135,6 +135,101 @@
     return match ? match[1] : "";
   }
 
+  function cleanSourceSubtitle(value) {
+    return String(value || "").replace(/\s+/g, " ").trim();
+  }
+
+  function normalizeSourceSubtitle(value) {
+    return cleanSourceSubtitle(value).toLowerCase();
+  }
+
+  function stripSourceSubtitleTitlePrefix(value, title) {
+    const text = cleanSourceSubtitle(value);
+    const cleanTitle = cleanSourceSubtitle(title);
+    if (!cleanTitle || !text.toLowerCase().startsWith(cleanTitle.toLowerCase())) return text;
+    return cleanSourceSubtitle(text.slice(cleanTitle.length).replace(/^[-:|/\\()[\]\s]+/, ""));
+  }
+
+  function isSourceSubtitleNoise(value, title) {
+    const text = normalizeSourceSubtitle(value);
+    if (!text) return true;
+    if (text === normalizeSourceSubtitle(title)) return true;
+    if (/^https?:\/\//i.test(text)) return true;
+    return /^(imdb|douban|\u8c46\u74e3|details|download|comments?|nfo|new|\u65b0|\u70ed\u95e8|\u514d\u8d39)$/i.test(text);
+  }
+
+  function sourceSubtitleCandidate(value, title) {
+    const text = stripSourceSubtitleTitlePrefix(value, title);
+    return isSourceSubtitleNoise(text, title) ? null : text;
+  }
+
+  function explicitSourceSubtitle(scope, title) {
+    if (!scope || !scope.querySelector) return null;
+    const selectors = [
+      ".torrent-info-text-small_name",
+      ".small_descr",
+      ".small-descr",
+      ".torrent-small-description",
+      ".torrent-small-descr",
+      ".torrent-description",
+      ".torrent-desc",
+      "[class*='small_descr']",
+      "[class*='small-descr']"
+    ];
+    for (const selector of selectors) {
+      const text = sourceSubtitleCandidate(scope.querySelector(selector)?.textContent, title);
+      if (text) return text;
+    }
+    return null;
+  }
+
+  function sourceSubtitleFromSiblingLine(link, title) {
+    const titleLine = link && link.closest && link.closest("div");
+    const subtitleLine = titleLine && titleLine.nextElementSibling;
+    if (!subtitleLine) return null;
+    const children = Array.from(subtitleLine.children || []);
+    for (const child of children) {
+      if (String(child.tagName || "").toUpperCase() !== "SPAN") continue;
+      const text = sourceSubtitleCandidate(child.textContent, title);
+      if (text) return text;
+    }
+    const fallbackSpan = subtitleLine.querySelector && subtitleLine.querySelector("span");
+    return sourceSubtitleCandidate(fallbackSpan && fallbackSpan.textContent, title);
+  }
+
+  function sourceSubtitleFromTitleCellBreak(link, title) {
+    const titleCell = link && link.closest && link.closest("td");
+    if (!titleCell || !titleCell.childNodes) return null;
+    const parts = [];
+    let sawLink = false;
+    let sawBreak = false;
+    for (const node of Array.from(titleCell.childNodes)) {
+      if (node === link || (node.contains && node.contains(link))) {
+        sawLink = true;
+        continue;
+      }
+      if (!sawLink) continue;
+      const tagName = String(node.tagName || "").toUpperCase();
+      if (tagName === "BR") {
+        sawBreak = true;
+        continue;
+      }
+      if (!sawBreak) continue;
+      if (["A", "BUTTON", "INPUT", "IMG", "SCRIPT", "STYLE", "TABLE"].includes(tagName)) continue;
+      const text = cleanSourceSubtitle(node.textContent);
+      if (text) parts.push(text);
+    }
+    return sourceSubtitleCandidate(parts.join(" "), title);
+  }
+
+  function extractSourceSubtitle(link, scope, title) {
+    return explicitSourceSubtitle(scope, title) || sourceSubtitleFromSiblingLine(link, title) || sourceSubtitleFromTitleCellBreak(link, title);
+  }
+
+  function extractNexusSubtitle(link, nameTable, title) {
+    return extractSourceSubtitle(link, nameTable, title);
+  }
+
   function localCacheKey(torrent) {
     const imdbId = normalizeImdbId(torrent && torrent.imdbId);
     if (imdbId) return "ptp:imdb:" + imdbId;
@@ -208,6 +303,7 @@
       torrents.push({
         site,
         title,
+        subtitle: extractSourceSubtitle(link, nameTable, title),
         imdbId: imdbLink ? extractImdbId(imdbLink.href) : null,
         resolution: (title.match(RESOLUTION_REGEX) || [])[1] || null,
         sourceUrl: link.href,
@@ -232,6 +328,7 @@
       torrents.push({
         site,
         title,
+        subtitle: extractSourceSubtitle(link, nameTable, title),
         imdbId: extractImdbId(rawImdb) || (rawImdb && /^\d+$/.test(rawImdb) ? "tt" + rawImdb : null),
         resolution: (title.match(RESOLUTION_REGEX) || [])[1] || null,
         sourceUrl: link.href,
@@ -308,6 +405,7 @@
       torrents.push({
         site,
         title,
+        subtitle: extractSourceSubtitle(link, row, title),
         imdbId: imdbLink ? extractImdbId(decodeURIComponent(imdbLink.href)) : null,
         resolution: (title.match(RESOLUTION_REGEX) || [])[1] || null,
         sourceUrl: link.href,

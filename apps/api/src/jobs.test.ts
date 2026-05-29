@@ -392,6 +392,40 @@ describe("JobRepository pre-upload state machine", () => {
     expect(job.reviewDraft?.description).toBe("Manual description");
   });
 
+  it("refreshes generated draft descriptions after manual preflight retries even when the draft was edited", () => {
+    const repo = new JobRepository();
+    const generatedDescription = "General\nFormat                                   : Matroska\n";
+    const refreshedDescription = `${generatedDescription}\n[img]https://img.example/screenshot-01.png[/img]`;
+    let job = repo.markPreparedForReview(repo.create({ candidate }).id, {
+      uploadReadiness: "ready",
+      artifacts: {
+        mediaInfoText: generatedDescription,
+        mediainfo: generatedDescription,
+        description: generatedDescription
+      }
+    })!;
+
+    job = repo.updateReviewDraft(job.id, { description: "Manual description" })!;
+    job = repo.markPreparationResult(job.id, {
+      state: "review",
+      phase: "review",
+      uploadReadiness: "ready",
+      humanStep: "Review upload package",
+      artifacts: {
+        ...job.artifacts,
+        screenshots: ["https://img.example/screenshot-01.png", "https://img.example/screenshot-02.png", "https://img.example/screenshot-03.png"],
+        uploadTorrent: "torrent/upload.torrent",
+        description: refreshedDescription
+      },
+      phases: job.phases,
+      eventLevel: "info",
+      eventMessage: "Phase retry ready for review.",
+      forceReviewDescriptionRefresh: true
+    })!;
+
+    expect(job.reviewDraft?.description).toBe(refreshedDescription);
+  });
+
   it("rejects completed-phase retry for unsafe phases", () => {
     const repo = new JobRepository();
     let job = repo.markPreparedForReview(repo.create({ candidate }).id, { uploadReadiness: "ready", artifacts: {} })!;
