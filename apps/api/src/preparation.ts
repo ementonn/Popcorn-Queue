@@ -205,6 +205,10 @@ function storedTool(tool: WorkerTool) {
   };
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export class PreparationService {
   constructor(private readonly options: PreparationServiceOptions) {}
 
@@ -255,7 +259,22 @@ export class PreparationService {
         });
       },
       reportDownloadStatus: async (status) => {
-        await this.options.jobs.updateDownloadStatus(job.id, status);
+        try {
+          await this.options.jobs.updateDownloadStatus(job.id, status);
+        } catch (error) {
+          await appendJobEvent(paths.logs.jobLog, {
+            at: nowIso(),
+            level: "warn",
+            message: "Download status persistence failed.",
+            payload: {
+              error: errorMessage(error),
+              client: status.client,
+              infoHash: status.infoHash,
+              state: status.state,
+              progress: status.progress
+            }
+          });
+        }
         if (shouldLogDownloadStatus(status, downloadLogState)) {
           await appendJobEvent(paths.logs.jobLog, {
             at: nowIso(),

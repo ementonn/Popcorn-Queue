@@ -441,6 +441,57 @@ describe("worker phase scaffold", () => {
     expect(output.hostedJsonPath).toBe(path.join(tempDir, "hosted.json"));
   });
 
+  it("fails image hosting when no required hosted screenshots are available", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-worker-image-host-fail-"));
+    const screenshotPath = path.join(tempDir, "shot-1.png");
+    await writeFile(screenshotPath, "png");
+    const imageHostUpload = createDefaultPhaseHandlers().find((handler): handler is PhaseHandler<"image-host-upload"> => handler.phase === "image-host-upload");
+    if (!imageHostUpload) throw new Error("Missing image-host-upload handler");
+    const store = new MemoryPhaseOutputStore({
+      screenshots: {
+        status: "completed",
+        message: "Stored screenshots reused.",
+        producedAt: "2026-05-08T00:00:00.000Z",
+        mediaPath: null,
+        outputDirectory: tempDir,
+        plan: buildUploadPlan({ candidate }).screenshots,
+        tools: {
+          ffmpeg: { tool: "ffmpeg", command: "ffmpeg", available: true, version: null, location: null, error: null },
+          mpv: { tool: "mpv", command: "mpv", available: true, version: null, location: null, error: null },
+          oxipng: { tool: "oxipng", command: "oxipng", available: true, version: null, location: null, error: null },
+          "xvfb-run": { tool: "xvfb-run", command: "xvfb-run", available: true, version: null, location: null, error: null }
+        },
+        requiredTools: ["ffmpeg", "oxipng"],
+        ffmpeg: [],
+        optimizer: [],
+        uploads: [{ filePath: screenshotPath, host: null, skippedReason: "Stored local screenshot is pending image host upload." }],
+        files: [screenshotPath]
+      }
+    });
+
+    const output = await imageHostUpload.run(
+      createPhaseContext(
+        "job-image-host-fail",
+        { candidate, workingDirectory: tempDir },
+        {
+          outputStore: store,
+          runExternalTools: true,
+          imageUploader: {
+            name: "imgbb",
+            async uploadImage() {
+              throw new Error("Rate limit reached.");
+            }
+          }
+        }
+      )
+    );
+
+    expect(output.status).toBe("failed");
+    expect(output.message).toContain("0 of 1 required hosted PNG screenshot");
+    expect(output.message).toContain("Rate limit reached.");
+    expect(output.hostedJsonPath).toBeNull();
+  });
+
   it("fails the upload phase cleanly when no PTP submitter is configured", async () => {
     const calls: CommandInvocation[] = [];
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-worker-no-submit-"));

@@ -21,6 +21,26 @@ afterEach(() => {
 });
 
 describe("Prisma job persistence", () => {
+  it("retries transient SQLite socket timeouts", async () => {
+    previousDatabaseUrl = process.env.DATABASE_URL;
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-prisma-retry-"));
+    process.env.DATABASE_URL = `file:${path.join(dataDir, "jobs.db")}`;
+    const persistence = new PrismaPersistence();
+    let attempts = 0;
+    try {
+      const result = await persistence.query(async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("Socket timeout (the database failed to respond to a query within the configured timeout).");
+        return "ok";
+      });
+
+      expect(result).toBe("ok");
+      expect(attempts).toBe(2);
+    } finally {
+      await persistence.disconnect();
+    }
+  });
+
   it("persists download status snapshots", async () => {
     previousDatabaseUrl = process.env.DATABASE_URL;
     const dataDir = await mkdtemp(path.join(os.tmpdir(), "popcorn-prisma-status-"));

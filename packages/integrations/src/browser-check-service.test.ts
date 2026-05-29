@@ -70,4 +70,58 @@ describe("BrowserCheckService", () => {
     expect(second.decision.movie?.ImdbId).toBe("tt1234567");
     expect(ptp.getGroup).not.toHaveBeenCalled();
   });
+
+  it("returns cached browser check data when a bypassed live check fails", async () => {
+    const ptp = mockPtpClient();
+    ptp.searchByCandidate.mockRejectedValue(new Error("PTP rate limit"));
+    const cache = new MemoryCacheStore<NormalizedPtpResponse>();
+    await cache.set("ptp:search:little dragon maiden|2022", titleSearchResult);
+    const service = new BrowserCheckService(ptp, cache, { requestDelayMs: 0 });
+
+    const result = await service.check(candidate, { bypassCache: true });
+
+    expect(result.cache).toMatchObject({
+      hit: true,
+      fallback: true,
+      error: "PTP rate limit"
+    });
+    expect(result.decision.status).toBe("no_torrents");
+  });
+
+  it("keeps cached browser check results usable when detail enrichment is rate limited", async () => {
+    const ptp = mockPtpClient();
+    ptp.getGroup.mockRejectedValue(new Error("PTP rate limit"));
+    const cache = new MemoryCacheStore<NormalizedPtpResponse>();
+    await cache.set("ptp:search:little dragon maiden|2022", titleSearchResult);
+    const service = new BrowserCheckService(ptp, cache, { requestDelayMs: 0 });
+
+    const result = await service.check(candidate);
+
+    expect(result.cache).toMatchObject({
+      hit: true,
+      fallback: true,
+      error: "PTP rate limit"
+    });
+    expect(result.decision.status).toBe("no_torrents");
+  });
+
+  it("returns per-candidate errors in batch checks instead of failing the whole batch", async () => {
+    const ptp = mockPtpClient();
+    ptp.searchByCandidate.mockRejectedValue(new Error("PTP rate limit"));
+    const cache = new MemoryCacheStore<NormalizedPtpResponse>();
+    await cache.set("ptp:imdb:tt1234567", titleSearchResult);
+    const service = new BrowserCheckService(ptp, cache, { requestDelayMs: 0 });
+
+    const results = await service.checkBatch([
+      { ...candidate, title: "Uncached.Movie.2024.1080p.WEB-DL.x264-GROUP" },
+      { ...candidate, imdbId: "tt1234567" }
+    ]);
+
+    expect(results).toHaveLength(2);
+    expect(results[0]?.decision).toMatchObject({
+      status: "error",
+      reason: "PTP rate limit"
+    });
+    expect(results[1]?.cache.hit).toBe(true);
+  });
 });

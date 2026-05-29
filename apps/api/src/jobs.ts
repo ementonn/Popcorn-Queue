@@ -656,6 +656,7 @@ export class JobRepository {
       ensureReviewDraft(job);
       return this.record(job, "info", "Retry queued.", { phase: retryPhase });
     }
+    if (retryPhase === "download-or-locate") delete job.downloadStatus;
     job.state = "preparing";
     job.humanStep = "Preparing upload package";
     return this.record(job, "info", "Retry queued.", { phase: retryPhase });

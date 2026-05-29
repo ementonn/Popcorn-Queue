@@ -121,7 +121,9 @@ export async function retryFailedJob(context: JobActionContext, id: string): Pro
   const existing = await context.jobs.get(id);
   if (!existing) return null;
   if (existing.state === "needs_reseed") return reseedJob(context, id);
-  return context.jobs.retryFailed(id);
+  const retried = await context.jobs.retryFailed(id);
+  if (retried?.state === "preparing") context.enqueuePreparation(id);
+  return retried;
 }
 
 export async function retryCompletedPhaseJob(context: JobActionContext, id: string, phase: UploadPhase): Promise<Job | null> {

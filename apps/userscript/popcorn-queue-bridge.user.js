@@ -27,6 +27,8 @@
   const DEFAULT_WEB_URL = "http://localhost:5173";
   const CHECK_BATCH_SIZE = 5;
   const API_TIMEOUT_MS = 120000;
+  const LOCAL_CACHE_TTL_MS = 180 * 24 * 60 * 60 * 1000;
+  const LOCAL_CACHE_PREFIX = "pq:browser-check:";
   let activeCheckRunId = 0;
 
   function getSetting(key, fallback) {
@@ -107,9 +109,75 @@
   }
 
   function extractImdbId(value) {
+    return normalizeImdbId(value);
+  }
+
+  function normalizeImdbId(value) {
     if (!value) return null;
-    const match = String(value).match(/tt(\d{7,})/i);
+    const text = String(value);
+    const match = text.match(/tt(\d{7,})/i) || text.match(/\b(\d{7,})\b/);
     return match ? "tt" + match[1] : null;
+  }
+
+  function extractSearchName(title) {
+    const bracketMatch = String(title || "").match(/\[([A-Za-z][A-Za-z0-9._\s-]+(?:19|20)\d{2}[^\]]*)\]/);
+    let raw = bracketMatch && bracketMatch[1] ? bracketMatch[1] : String(title || "");
+    raw = raw.replace(/\[.*?\]/g, " ").replace(/【.*?】/g, " ");
+    raw = raw.replace(/\b(2160p|1080p|1080i|720p|576p|480p|4K|UHD)\b.*/i, "");
+    raw = raw.replace(/(\b(?:19|20)\d{2}\b).*/, "$1");
+    raw = raw.replace(/[._]/g, " ").replace(/\s+/g, " ").trim();
+    raw = raw.replace(/\s+(19|20)\d{2}$/, "").trim();
+    return raw;
+  }
+
+  function extractYear(title) {
+    const match = String(title || "").match(/\b((?:19|20)\d{2})\b/);
+    return match ? match[1] : "";
+  }
+
+  function localCacheKey(torrent) {
+    const imdbId = normalizeImdbId(torrent && torrent.imdbId);
+    if (imdbId) return "ptp:imdb:" + imdbId;
+    return "ptp:search:" + extractSearchName(torrent && torrent.title).toLowerCase() + "|" + extractYear(torrent && torrent.title);
+  }
+
+  function localCacheStorageKey(cacheKey) {
+    return LOCAL_CACHE_PREFIX + cacheKey;
+  }
+
+  function localCacheGet(torrent) {
+    try {
+      const cacheKey = localCacheKey(torrent);
+      const entry = GM_getValue(localCacheStorageKey(cacheKey));
+      if (!entry) return null;
+      const parsed = typeof entry === "string" ? JSON.parse(entry) : entry;
+      if (!parsed || Date.now() - Number(parsed.ts || 0) > LOCAL_CACHE_TTL_MS) return null;
+      const result = parsed.result;
+      if (!result || !result.decision) return null;
+      return {
+        ...result,
+        cache: {
+          ...(result.cache || {}),
+          key: (result.cache && result.cache.key) || cacheKey,
+          hit: true,
+          cachedAt: new Date(Number(parsed.ts)).toISOString(),
+          localHit: true
+        }
+      };
+    } catch (error) {
+      console.warn("[Popcorn Queue] Local PTP cache read failed:", error);
+      return null;
+    }
+  }
+
+  function localCacheSet(torrent, result) {
+    try {
+      if (result && result.decision && result.decision.status === "error" && !(result.cache && result.cache.hit)) return;
+      const cacheKey = (result && result.cache && result.cache.key) || localCacheKey(torrent);
+      GM_setValue(localCacheStorageKey(cacheKey), JSON.stringify({ ts: Date.now(), result }));
+    } catch (error) {
+      console.warn("[Popcorn Queue] Local PTP cache write failed:", error);
+    }
   }
 
   function detectSite() {
@@ -556,6 +624,7 @@
     recheckButton.addEventListener("click", () => runCheck(site, status, { bypassCache: true }));
     bar.append(button, recheckButton, status);
     document.body.appendChild(bar);
+    return status;
   }
 
   async function runCheck(site, status, options) {
@@ -590,6 +659,7 @@
         response.results.forEach((result, index) => {
           const torrent = chunk[index];
           if (!torrent) return;
+          localCacheSet(torrent, result);
           renderCheckResult(site, status, torrent, result);
         });
         completed += chunk.length;
@@ -623,6 +693,7 @@
       const response = await apiRequest("POST", "/api/browser/check", { ...stripElement(torrent), bypassCache: true });
       if (runId !== activeCheckRunId) return;
       if (!response.result) throw new Error("Unexpected API response: missing result");
+      localCacheSet(torrent, response.result);
       renderCheckResult(site, status, torrent, response.result);
       setBridgeStatus(status, "Recheck complete", "ok");
     } catch (error) {
@@ -640,7 +711,9 @@
       skipHighFrameRate ? "Skipped: release name declares more than 50 fps." : "",
       result.decision.reason,
       result.decision.slotType ? "Slot: " + result.decision.slotType : "",
-      result.cache.hit ? "Cache hit: " + (result.cache.cachedAt || "") : "Checked live",
+      result.cache.localHit ? "Userscript cache hit: " + (result.cache.cachedAt || "") : result.cache.hit ? "API cache hit: " + (result.cache.cachedAt || "") : "Checked live",
+      result.cache.fallback ? "Live PTP check failed; showing saved cache." : "",
+      result.cache.error ? "PTP check note: " + result.cache.error : "",
       "Right-click to recheck this page without using the saved cache"
     ].filter(Boolean).join("\n");
     const badge = makeBadge(skipHighFrameRate ? "skip" : result.decision.status, tooltip);
@@ -658,7 +731,25 @@
     if (shouldOfferUpload(torrent, result.decision.status)) addUploadButton(torrent, result, badge);
   }
 
+  function renderCachedBadges(site, status) {
+    const torrents = parseTorrents(site);
+    let count = 0;
+    torrents.forEach((torrent) => {
+      const result = localCacheGet(torrent);
+      if (!result) return;
+      const badge = makeBadge("loading", "Loading saved Popcorn Queue cache");
+      torrent.badge = badge;
+      torrent.element.after(badge);
+      renderCheckResult(site, status, torrent, result);
+      count += 1;
+    });
+    if (count) setBridgeStatus(status, "Loaded " + count + " cached PTP badge" + (count === 1 ? "" : "s"), "neutral");
+  }
+
   registerSettings();
   const site = detectSite();
-  if (site !== "unknown") installControls(site);
+  if (site !== "unknown") {
+    const status = installControls(site);
+    renderCachedBadges(site, status);
+  }
 })();

@@ -28,7 +28,11 @@ export class BrowserCheckService {
   async checkBatch(candidates: TorrentCandidate[], options: { bypassCache?: boolean } = {}): Promise<BrowserCheckResult[]> {
     const results: BrowserCheckResult[] = [];
     for (const candidate of candidates) {
-      results.push(await this.check(candidate, options));
+      try {
+        results.push(await this.check(candidate, options));
+      } catch (error) {
+        results.push(this.errorResult(candidate, error));
+      }
     }
     return results;
   }
@@ -36,21 +40,31 @@ export class BrowserCheckService {
   async check(candidate: TorrentCandidate, options: { bypassCache?: boolean } = {}): Promise<BrowserCheckResult> {
     const parsed = parseTorrentTitle(candidate.title, candidate.resolution);
     const normalizedImdbId = normalizeImdbId(candidate.imdbId);
-    const cacheKey = makePtpCacheKey({ ...candidate, imdbId: normalizedImdbId });
-    let hit = false;
-    let cachedAt: string | undefined;
-    let data: NormalizedPtpResponse | null = null;
+    const normalizedCandidate = { ...candidate, imdbId: normalizedImdbId };
+    const cacheKey = makePtpCacheKey(normalizedCandidate);
+    const cacheEntry = await this.cache.get(cacheKey);
 
-    if (!options.bypassCache) {
-      const cacheEntry = await this.cache.get(cacheKey);
-      if (cacheEntry) {
-        hit = true;
-        cachedAt = new Date(cacheEntry.createdAt).toISOString();
-        data = cacheEntry.data;
+    if (cacheEntry && !options.bypassCache) {
+      let data = cacheEntry.data;
+      let enrichError: string | undefined;
+      try {
+        const enrichedData = await this.enrichMissingMovieDetails(data);
+        if (enrichedData !== data) {
+          data = enrichedData;
+          await this.cache.set(cacheKey, data);
+        }
+      } catch (error) {
+        enrichError = errorMessage(error);
       }
+      return this.resultFromData(normalizedCandidate, parsed, data, {
+        key: cacheKey,
+        hit: true,
+        cachedAt: new Date(cacheEntry.createdAt).toISOString(),
+        ...(enrichError ? { fallback: true, error: enrichError } : {})
+      });
     }
 
-    if (!data) {
+    try {
       await this.waitForRateLimit();
       const searchParams: { title: string; imdbId?: string | null; searchName: string; year?: string } = {
         title: candidate.title,
@@ -58,29 +72,37 @@ export class BrowserCheckService {
         searchName: parsed.searchName
       };
       if (parsed.year) searchParams.year = parsed.year;
-      data = await this.ptp.searchByCandidate(searchParams);
+      let data = await this.ptp.searchByCandidate(searchParams);
       await this.cache.set(cacheKey, data);
+
+      let enrichError: string | undefined;
+      try {
+        const enrichedData = await this.enrichMissingMovieDetails(data);
+        if (enrichedData !== data) {
+          data = enrichedData;
+          await this.cache.set(cacheKey, data);
+        }
+      } catch (error) {
+        enrichError = errorMessage(error);
+      }
+
+      return this.resultFromData(normalizedCandidate, parsed, data, {
+        key: cacheKey,
+        hit: false,
+        ...(enrichError ? { error: enrichError } : {})
+      });
+    } catch (error) {
+      if (cacheEntry) {
+        return this.resultFromData(normalizedCandidate, parsed, cacheEntry.data, {
+          key: cacheKey,
+          hit: true,
+          cachedAt: new Date(cacheEntry.createdAt).toISOString(),
+          fallback: true,
+          error: errorMessage(error)
+        });
+      }
+      return this.errorResult(normalizedCandidate, error);
     }
-
-    const enrichedData = await this.enrichMissingMovieDetails(data);
-    if (enrichedData !== data) {
-      data = enrichedData;
-      await this.cache.set(cacheKey, data);
-    }
-
-    const cacheInfo: BrowserCheckResult["cache"] = {
-      key: cacheKey,
-      hit,
-      policy: "permanent"
-    };
-    if (cachedAt) cacheInfo.cachedAt = cachedAt;
-
-    return {
-      candidate: { ...candidate, imdbId: normalizedImdbId },
-      parsed,
-      decision: evaluatePtpCoexistence(data, parsed, normalizedImdbId),
-      cache: cacheInfo
-    };
   }
 
   async invalidate(candidate: Pick<TorrentCandidate, "title" | "imdbId">): Promise<string> {
@@ -111,6 +133,45 @@ export class BrowserCheckService {
     }
     this.lastRequestAt = Date.now();
   }
+
+  private resultFromData(
+    candidate: TorrentCandidate,
+    parsed: ReturnType<typeof parseTorrentTitle>,
+    data: NormalizedPtpResponse,
+    cache: Omit<BrowserCheckResult["cache"], "policy">
+  ): BrowserCheckResult {
+    return {
+      candidate,
+      parsed,
+      decision: evaluatePtpCoexistence(data, parsed, normalizeImdbId(candidate.imdbId)),
+      cache: {
+        ...cache,
+        policy: "permanent"
+      }
+    };
+  }
+
+  private errorResult(candidate: TorrentCandidate, error: unknown): BrowserCheckResult {
+    const parsed = parseTorrentTitle(candidate.title, candidate.resolution);
+    const normalizedCandidate = { ...candidate, imdbId: normalizeImdbId(candidate.imdbId) };
+    const message = errorMessage(error);
+    return {
+      candidate: normalizedCandidate,
+      parsed,
+      decision: {
+        status: "error",
+        movieFound: false,
+        reason: message,
+        confidence: "low"
+      },
+      cache: {
+        key: makePtpCacheKey(normalizedCandidate),
+        hit: false,
+        policy: "permanent",
+        error: message
+      }
+    };
+  }
 }
 
 function mergeMovieDetails(movie: PtpMovie, detail: PtpMovie): PtpMovie {
@@ -120,4 +181,8 @@ function mergeMovieDetails(movie: PtpMovie, detail: PtpMovie): PtpMovie {
   };
   if (!detail.Torrents?.length && movie.Torrents) merged.Torrents = movie.Torrents;
   return merged;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error || "Unknown PTP check error");
 }

@@ -124,6 +124,8 @@ export interface BrowserCheckResult {
     hit: boolean;
     policy: "permanent";
     cachedAt?: string;
+    fallback?: boolean;
+    error?: string;
   };
 }
 

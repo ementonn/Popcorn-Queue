@@ -38,6 +38,7 @@ export { UPLOAD_PHASES };
 export type { UploadPhase };
 
 type ScreenshotWorkerTool = Extract<WorkerTool, "ffmpeg" | "mpv" | "oxipng" | "xvfb-run">;
+const MIN_HOSTED_SCREENSHOTS = 3;
 
 export type PhaseLogLevel = "debug" | "info" | "warn" | "error";
 export type PhaseExecutionStatus = "completed" | "skipped" | "blocked" | "failed";
@@ -672,6 +673,17 @@ function screenshotFailureDetail(attempts: CommandAttempt[]): string | null {
   return skipped?.skippedReason ?? null;
 }
 
+function hostedPngUploadCount(attempts: ImageUploadAttempt[]): number {
+  return attempts.filter((attempt) => attempt.result?.url && /\.png(?:[?#]|$)/i.test(attempt.result.url)).length;
+}
+
+function imageUploadFailureDetail(attempts: ImageUploadAttempt[]): string | null {
+  const errored = [...attempts].reverse().find((attempt) => attempt.error);
+  if (errored?.error) return errored.error;
+  const skipped = [...attempts].reverse().find((attempt) => attempt.skippedReason);
+  return skipped?.skippedReason ?? null;
+}
+
 function numberFromTrack(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value !== "string") return null;
@@ -1205,8 +1217,17 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
           await mkdir(path.dirname(hostedJsonPath), { recursive: true });
           await writeFile(hostedJsonPath, `${JSON.stringify(hostedUploads, null, 2)}\n`, "utf8");
         }
+        const hostedPngs = hostedPngUploadCount(uploads);
+        const requiredHostedPngs = Math.min(MIN_HOSTED_SCREENSHOTS, screenshots.files.length);
+        const missingRequiredHostedPngs = context.runExternalTools && requiredHostedPngs > 0 && hostedPngs < requiredHostedPngs;
+        const failureDetail = missingRequiredHostedPngs ? imageUploadFailureDetail(uploads) : null;
         return {
-          ...base("completed", "Image host upload results collected from screenshot phase."),
+          ...base(
+            missingRequiredHostedPngs ? "failed" : "completed",
+            missingRequiredHostedPngs
+              ? `Image host upload failed: ${hostedPngs} of ${requiredHostedPngs} required hosted PNG screenshot(s) available${failureDetail ? `: ${failureDetail}` : "."}`
+              : "Image host upload results collected from screenshot phase."
+          ),
           files: screenshots.files,
           hostedJsonPath,
           uploads

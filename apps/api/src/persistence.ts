@@ -17,6 +17,8 @@ import {
 } from "./jobs.js";
 
 const DEFAULT_DATABASE_URL = "file:./popcorn-queue.db";
+const SQLITE_BUSY_TIMEOUT_MS = 10_000;
+const TRANSIENT_PERSISTENCE_RETRY_DELAYS_MS = [100, 250, 500];
 
 interface JobRow {
   id: string;
@@ -56,6 +58,28 @@ function parseOptionalJson<T>(value: string | null): T | undefined {
 
 function stringifyOptional(value: unknown): string | null {
   return value === undefined ? null : JSON.stringify(value);
+}
+
+function isTransientPersistenceError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Socket timeout|database is locked|database failed to respond|Timed out fetching a new connection/i.test(message);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withTransientPersistenceRetry<T>(operation: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; attempt <= TRANSIENT_PERSISTENCE_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      const retryDelay = TRANSIENT_PERSISTENCE_RETRY_DELAYS_MS[attempt];
+      if (retryDelay === undefined || !isTransientPersistenceError(error)) throw error;
+      await delay(retryDelay);
+    }
+  }
+  return operation();
 }
 
 export function normalizeLegacyJobState(state: string, phase: string): JobState {
@@ -154,8 +178,13 @@ export class PrismaPersistence {
     await this.prisma.$disconnect();
   }
 
+  async query<T>(operation: () => Promise<T>): Promise<T> {
+    return withTransientPersistenceRetry(operation);
+  }
+
   private async createTables(): Promise<void> {
-    await this.prisma.$executeRawUnsafe(`
+    await this.configureSqlite();
+    await this.query(() => this.prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS "Job" (
         "id" TEXT NOT NULL PRIMARY KEY,
         "state" TEXT NOT NULL,
@@ -176,30 +205,36 @@ export class PrismaPersistence {
         "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updatedAt" DATETIME NOT NULL
       )
-    `);
+    `));
     await this.addColumnIfMissing("Job", "upload_readiness", "TEXT NOT NULL DEFAULT 'missing_evidence'");
     await this.addColumnIfMissing("Job", "human_step", "TEXT NOT NULL DEFAULT 'Preparing upload package'");
     await this.addColumnIfMissing("Job", "artifacts", "TEXT NOT NULL DEFAULT '{}'");
     await this.addColumnIfMissing("Job", "review_draft", "TEXT");
     await this.addColumnIfMissing("Job", "workspace", "TEXT");
     await this.addColumnIfMissing("Job", "download_status", "TEXT");
-    await this.prisma.$executeRawUnsafe(`
+    await this.query(() => this.prisma.$executeRawUnsafe(`
       CREATE INDEX IF NOT EXISTS "Job_createdAt_idx" ON "Job"("createdAt")
-    `);
-    await this.prisma.$executeRawUnsafe(`
+    `));
+    await this.query(() => this.prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS "PtpCacheEntry" (
         "key" TEXT NOT NULL PRIMARY KEY,
         "data" TEXT NOT NULL,
         "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updatedAt" DATETIME NOT NULL
       )
-    `);
+    `));
+  }
+
+  private async configureSqlite(): Promise<void> {
+    await this.query(() => this.prisma.$queryRawUnsafe(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`));
+    await this.query(() => this.prisma.$queryRawUnsafe(`PRAGMA journal_mode = WAL`));
+    await this.query(() => this.prisma.$queryRawUnsafe(`PRAGMA synchronous = NORMAL`));
   }
 
   private async addColumnIfMissing(table: string, column: string, definition: string): Promise<void> {
-    const columns = await this.prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info("${table}")`);
+    const columns = await this.query(() => this.prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info("${table}")`));
     if (columns.some((item) => item.name === column)) return;
-    await this.prisma.$executeRawUnsafe(`ALTER TABLE "${table}" ADD COLUMN "${column}" ${definition}`);
+    await this.query(() => this.prisma.$executeRawUnsafe(`ALTER TABLE "${table}" ADD COLUMN "${column}" ${definition}`));
   }
 }
 
@@ -224,13 +259,13 @@ export class PrismaJobRepository {
 
   async list(): Promise<Job[]> {
     await this.persistence.ensure();
-    const rows = await this.persistence.prisma.job.findMany({ orderBy: { createdAt: "desc" } });
+    const rows = await this.persistence.query(() => this.persistence.prisma.job.findMany({ orderBy: { createdAt: "desc" } }));
     return rows.map((row) => deserializeJob(row)).filter((job) => !job.artifacts.removedFromQueueAt);
   }
 
   async get(id: string): Promise<Job | null> {
     await this.persistence.ensure();
-    const row = await this.persistence.prisma.job.findUnique({ where: { id } });
+    const row = await this.persistence.query(() => this.persistence.prisma.job.findUnique({ where: { id } }));
     return row ? deserializeJob(row) : null;
   }
 
@@ -337,7 +372,7 @@ export class PrismaJobRepository {
     await this.persistence.ensure();
     const job = await this.get(id);
     if (!job) return null;
-    await this.persistence.prisma.job.deleteMany({ where: { id } });
+    await this.persistence.query(() => this.persistence.prisma.job.deleteMany({ where: { id } }));
     return job;
   }
 
@@ -364,11 +399,11 @@ export class PrismaJobRepository {
   private async save(job: Job): Promise<void> {
     await this.persistence.ensure();
     const data = serializeJob(job);
-    await this.persistence.prisma.job.upsert({
+    await this.persistence.query(() => this.persistence.prisma.job.upsert({
       where: { id: job.id },
       create: data,
       update: data
-    });
+    }));
   }
 }
 
@@ -377,7 +412,7 @@ export class PrismaPtpCacheStore<T> implements CacheStore<T> {
 
   async get(key: string): Promise<CacheEntry<T> | null> {
     await this.persistence.ensure();
-    const row = await this.persistence.prisma.ptpCacheEntry.findUnique({ where: { key } });
+    const row = await this.persistence.query(() => this.persistence.prisma.ptpCacheEntry.findUnique({ where: { key } }));
     return row ? this.deserialize(row) : null;
   }
 
@@ -385,22 +420,22 @@ export class PrismaPtpCacheStore<T> implements CacheStore<T> {
     await this.persistence.ensure();
     const now = new Date();
     const dataJson = JSON.stringify(data);
-    const row = await this.persistence.prisma.ptpCacheEntry.upsert({
+    const row = await this.persistence.query(() => this.persistence.prisma.ptpCacheEntry.upsert({
       where: { key },
       create: { key, dataJson, createdAt: now, updatedAt: now },
       update: { dataJson, updatedAt: now }
-    });
+    }));
     return this.deserialize(row);
   }
 
   async delete(key: string): Promise<void> {
     await this.persistence.ensure();
-    await this.persistence.prisma.ptpCacheEntry.deleteMany({ where: { key } });
+    await this.persistence.query(() => this.persistence.prisma.ptpCacheEntry.deleteMany({ where: { key } }));
   }
 
   async count(): Promise<number> {
     await this.persistence.ensure();
-    return this.persistence.prisma.ptpCacheEntry.count();
+    return this.persistence.query(() => this.persistence.prisma.ptpCacheEntry.count());
   }
 
   private deserialize(row: PtpCacheRow): CacheEntry<T> {

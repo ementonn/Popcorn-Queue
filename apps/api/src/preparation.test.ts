@@ -447,6 +447,102 @@ describe("PreparationService", () => {
     expect(downloadLines).toHaveLength(4);
   });
 
+  it("does not fail a download when a progress snapshot cannot be persisted", async () => {
+    const dataRoot = await mkdtemp(path.join(os.tmpdir(), "popcorn-prep-qb-persist-timeout-"));
+    const repo = new JobRepository();
+    const job = repo.create({
+      candidate: {
+        site: "pter",
+        title: "Progress.Timeout.2024.1080p.WEB-DL.x265-GROUP",
+        imdbId: "tt1234567"
+      },
+      torrent: {
+        filename: "source.torrent",
+        bytes: 13,
+        filePath: path.join(dataRoot, "jobs", "job-source.torrent")
+      }
+    });
+    const paths = buildJobWorkspacePaths(dataRoot, job.id);
+    const downloadDir = path.join(paths.sourceDownloadDir, "Progress.Timeout.2024.1080p.WEB-DL.x265-GROUP");
+    const downloadedMedia = path.join(downloadDir, "Progress.Timeout.2024.1080p.WEB-DL.x265-GROUP.mkv");
+    await mkdir(downloadDir, { recursive: true });
+    await mkdir(path.dirname(job.torrent!.filePath!), { recursive: true });
+    await writeFile(job.torrent!.filePath!, "source torrent");
+    await writeFile(downloadedMedia, "movie");
+
+    let firstStatusWrite = true;
+    const jobs = {
+      get: (id: string) => repo.get(id),
+      updateDownloadStatus: (id: string, status: Parameters<JobRepository["updateDownloadStatus"]>[1]) => {
+        if (firstStatusWrite) {
+          firstStatusWrite = false;
+          throw new Error("Socket timeout (the database failed to respond to a query within the configured timeout).");
+        }
+        return repo.updateDownloadStatus(id, status);
+      },
+      markPreparedForReview: (id: string, input: Parameters<JobRepository["markPreparedForReview"]>[1]) => repo.markPreparedForReview(id, input),
+      markPreparationPhaseStarted: (id: string, phase: JobPhase) => repo.markPreparationPhaseStarted(id, phase),
+      markPreparationPhaseFinished: (id: string, input: Parameters<JobRepository["markPreparationPhaseFinished"]>[1]) => repo.markPreparationPhaseFinished(id, input),
+      markPreparationResult: (id: string, input: Parameters<JobRepository["markPreparationResult"]>[1]) => repo.markPreparationResult(id, input),
+      retryCompletedPhase: (id: string, phase: JobPhase) => repo.retryCompletedPhase(id, phase)
+    };
+
+    let statusIndex = 0;
+    const service = new PreparationService({
+      dataRoot,
+      jobs,
+      runExternalTools: false,
+      toolCommands: { ffmpeg: "ffmpeg", mediainfo: "mediainfo", oxipng: "oxipng" },
+      torrentClientOptions: {
+        waitTimeoutMs: 1000,
+        waitIntervalMs: 1
+      },
+      torrentClient: {
+        name: "mock-qb",
+        async addTorrent() {
+          return { infoHash: "TIMEOUT" };
+        },
+        async getStatus(infoHash) {
+          const progress = statusIndex === 0 ? 0.5 : 1;
+          statusIndex += 1;
+          return {
+            client: "mock-qb",
+            infoHash,
+            state: progress === 1 ? "uploading" : "downloading",
+            progress,
+            downloaded: Math.round(10_000 * progress),
+            size: 10_000,
+            amountLeft: Math.round(10_000 * (1 - progress)),
+            downloadSpeed: progress === 1 ? 0 : 8_388_608,
+            uploadSpeed: 0,
+            eta: progress === 1 ? 0 : 720,
+            seeds: 12,
+            peers: 3,
+            savePath: paths.sourceDownloadDir,
+            contentPath: downloadedMedia,
+            lastUpdatedAt: "2026-05-08T00:00:00.000Z",
+            error: null
+          };
+        },
+        async isComplete() {
+          return false;
+        },
+        async listFiles() {
+          return [{ name: "Progress.Timeout.2024.1080p.WEB-DL.x265-GROUP/Progress.Timeout.2024.1080p.WEB-DL.x265-GROUP.mkv", size: 10_000 }];
+        }
+      }
+    });
+
+    await service.runJob(job.id);
+    const prepared = repo.get(job.id)!;
+    const jobLog = await readFile(paths.logs.jobLog, "utf8");
+
+    expect(prepared.state).toBe("review");
+    expect(prepared.downloadStatus).toMatchObject({ infoHash: "TIMEOUT", progress: 1, state: "uploading" });
+    expect(jobLog).toContain("Download status persistence failed.");
+    expect(jobLog).toContain("Download complete.");
+  });
+
   it("persists preparation phase progress while the runner advances", async () => {
     const dataRoot = await mkdtemp(path.join(os.tmpdir(), "popcorn-prep-phase-progress-"));
     const repo = new JobRepository();
@@ -623,5 +719,91 @@ describe("PreparationService", () => {
     expect(manifest.uploadFiles).toEqual(prepared.artifacts.mediaFiles);
     expect(manifest.torrentFile).toBe("torrent/upload.torrent");
     expect(prepared.events.some((event) => event.message.includes("uploaded to PTP"))).toBe(false);
+  });
+
+  it("stops before review when generated screenshots cannot be hosted", async () => {
+    const dataRoot = await mkdtemp(path.join(os.tmpdir(), "popcorn-prep-image-host-fail-"));
+    const sourceFixture = path.resolve("apps/worker/fixtures/shock-wave-2-sample.mp4");
+    const jobs = new JobRepository();
+    const sourceTorrentPath = path.join(dataRoot, "jobs", "source.torrent");
+    await mkdir(path.dirname(sourceTorrentPath), { recursive: true });
+    await writeFile(sourceTorrentPath, "d4:infod6:lengthi5e4:name9:movie.mp4ee");
+    const job = jobs.create({
+      candidate: {
+        site: "pter",
+        title: "Shock.Wave.2.2020.1080p.WEB-DL.HEVC.HDR.DDP5.1-HVAC",
+        imdbId: "tt9597838",
+        resolution: "1080p"
+      },
+      torrent: {
+        filename: "source.torrent",
+        bytes: 36,
+        filePath: sourceTorrentPath
+      }
+    });
+    const service = new PreparationService({
+      dataRoot,
+      jobs,
+      runExternalTools: true,
+      toolCommands: { ffmpeg: "ffmpeg", mediainfo: "mediainfo", oxipng: "oxipng" },
+      commandExecutor: fixturePreparationCommandExecutor(),
+      ptpAnnounceUrl: "https://please.passthepopcorn.me/passkey/announce",
+      imageUploader: {
+        name: "imgbb",
+        async uploadImage() {
+          throw new Error("Rate limit reached.");
+        }
+      },
+      torrentClient: {
+        name: "mock-qb",
+        async addTorrent(options) {
+          await copyFile(sourceFixture, path.join(options.downloadPath, path.basename(sourceFixture)));
+          return { infoHash: "FIXTURE" };
+        },
+        async getStatus(infoHash) {
+          return {
+            client: "mock-qb",
+            infoHash,
+            state: "uploading",
+            progress: 1,
+            downloaded: 26_535,
+            size: 26_535,
+            amountLeft: 0,
+            downloadSpeed: 0,
+            uploadSpeed: 0,
+            eta: 0,
+            seeds: 1,
+            peers: 0,
+            savePath: null,
+            contentPath: null,
+            lastUpdatedAt: "2026-05-08T00:00:00.000Z",
+            error: null
+          };
+        },
+        async isComplete(infoHash) {
+          return infoHash === "FIXTURE";
+        },
+        async listFiles() {
+          return [{ name: path.basename(sourceFixture), size: 26_535, progress: 1 }];
+        }
+      }
+    });
+
+    await service.runJob(job.id);
+    const prepared = jobs.get(job.id)!;
+    const jobLog = await readFile(path.join(dataRoot, "jobs", job.id, "logs", "job.log"), "utf8");
+
+    expect(prepared.state).toBe("failed");
+    expect(prepared.phase).toBe("image-host-upload");
+    expect(prepared.uploadReadiness).toBe("missing_evidence");
+    expect(prepared.artifacts.screenshots).toBeUndefined();
+    expect(prepared.phases.find((phase) => phase.phase === "screenshots")).toMatchObject({ state: "done" });
+    expect(prepared.phases.find((phase) => phase.phase === "image-host-upload")).toMatchObject({
+      state: "failed",
+      message: expect.stringContaining("Rate limit reached.")
+    });
+    expect(prepared.phases.find((phase) => phase.phase === "review")).toMatchObject({ state: "pending" });
+    expect(jobLog).toContain("Image host upload failed");
+    expect(jobLog).toContain("Rate limit reached.");
   });
 });

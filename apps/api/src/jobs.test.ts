@@ -197,6 +197,38 @@ describe("JobRepository pre-upload state machine", () => {
     expect(failed.phases[0]).toMatchObject({ state: "pending", retryCount: 1, message: "Retry queued." });
   });
 
+  it("clears stale download status when retrying a failed download", () => {
+    const repo = new JobRepository();
+    let job = repo.create({ candidate });
+    job.phase = "download-or-locate";
+    job.state = "failed";
+    job.phases.find((phase) => phase.phase === "download-or-locate")!.state = "failed";
+    job = repo.updateDownloadStatus(job.id, {
+      client: "qbittorrent",
+      infoHash: null,
+      state: "error",
+      progress: null,
+      downloaded: null,
+      size: null,
+      amountLeft: null,
+      downloadSpeed: null,
+      uploadSpeed: null,
+      eta: null,
+      seeds: null,
+      peers: null,
+      savePath: null,
+      contentPath: null,
+      lastUpdatedAt: "2026-05-18T00:00:00.000Z",
+      error: "Socket timeout"
+    })!;
+
+    job = repo.retryFailed(job.id)!;
+
+    expect(job.state).toBe("preparing");
+    expect(job.phase).toBe("download-or-locate");
+    expect(job.downloadStatus).toBeUndefined();
+  });
+
   it("returns failed uploads to review so they can be uploaded again", () => {
     const repo = new JobRepository();
     let job = repo.markPreparedForReview(repo.create({ candidate }).id, { uploadReadiness: "ready", artifacts: {} })!;
