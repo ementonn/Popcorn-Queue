@@ -21,23 +21,12 @@ const titleSearchResult: NormalizedPtpResponse = {
   ]
 };
 
-const groupDetails: NormalizedPtpResponse = {
-  page: "Details",
-  movies: [
-    {
-      GroupId: "323547",
-      Title: "Xiao long nv AKA Little Dragon Maiden",
-      Year: "2022",
-      ImdbId: "tt1234567",
-      Torrents: []
-    }
-  ]
-};
-
 function mockPtpClient() {
   return {
     searchByCandidate: vi.fn(async () => titleSearchResult),
-    getGroup: vi.fn(async () => groupDetails)
+    getGroup: vi.fn(async () => {
+      throw new Error("getGroup should not be called");
+    })
   } as unknown as PtpClient & {
     searchByCandidate: ReturnType<typeof vi.fn>;
     getGroup: ReturnType<typeof vi.fn>;
@@ -45,29 +34,31 @@ function mockPtpClient() {
 }
 
 describe("BrowserCheckService", () => {
-  it("enriches title-search matches with group details when IMDb is missing", async () => {
+  it("does not fetch group details just to enrich title-search matches with IMDb", async () => {
     const ptp = mockPtpClient();
     const service = new BrowserCheckService(ptp, new MemoryCacheStore<NormalizedPtpResponse>(), { requestDelayMs: 0 });
 
     const result = await service.check(candidate);
 
-    expect(ptp.getGroup).toHaveBeenCalledWith("323547");
-    expect(result.decision.movie?.ImdbId).toBe("tt1234567");
+    expect(ptp.getGroup).not.toHaveBeenCalled();
+    expect(result.decision.movie?.GroupId).toBe("323547");
+    expect(result.decision.movie?.ImdbId).toBeUndefined();
+    expect(result.cache.error).toBeUndefined();
   });
 
-  it("repairs cached title-search matches that were stored without IMDb", async () => {
+  it("uses cached title-search matches without repairing missing IMDb", async () => {
     const ptp = mockPtpClient();
     const cache = new MemoryCacheStore<NormalizedPtpResponse>();
     await cache.set("ptp:search:little dragon maiden|2022", titleSearchResult);
     const service = new BrowserCheckService(ptp, cache, { requestDelayMs: 0 });
 
     const first = await service.check(candidate);
-    ptp.getGroup.mockClear();
     const second = await service.check(candidate);
 
     expect(first.cache.hit).toBe(true);
-    expect(first.decision.movie?.ImdbId).toBe("tt1234567");
-    expect(second.decision.movie?.ImdbId).toBe("tt1234567");
+    expect(first.decision.movie?.GroupId).toBe("323547");
+    expect(first.decision.movie?.ImdbId).toBeUndefined();
+    expect(second.decision.movie?.ImdbId).toBeUndefined();
     expect(ptp.getGroup).not.toHaveBeenCalled();
   });
 
@@ -88,7 +79,7 @@ describe("BrowserCheckService", () => {
     expect(result.decision.status).toBe("no_torrents");
   });
 
-  it("keeps cached browser check results usable when detail enrichment is rate limited", async () => {
+  it("does not surface rate limits from skipped detail enrichment on cache hits", async () => {
     const ptp = mockPtpClient();
     ptp.getGroup.mockRejectedValue(new Error("PTP rate limit"));
     const cache = new MemoryCacheStore<NormalizedPtpResponse>();
@@ -98,11 +89,12 @@ describe("BrowserCheckService", () => {
     const result = await service.check(candidate);
 
     expect(result.cache).toMatchObject({
-      hit: true,
-      fallback: true,
-      error: "PTP rate limit"
+      hit: true
     });
+    expect(result.cache.fallback).toBeUndefined();
+    expect(result.cache.error).toBeUndefined();
     expect(result.decision.status).toBe("no_torrents");
+    expect(ptp.getGroup).not.toHaveBeenCalled();
   });
 
   it("returns per-candidate errors in batch checks instead of failing the whole batch", async () => {

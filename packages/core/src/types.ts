@@ -1,4 +1,4 @@
-export type SourceSite = "tjupt" | "pter" | "mteam" | "hdb" | "hhclub" | "unknown";
+export type SourceSite = "tjupt" | "pter" | "zmweb" | "mteam" | "hdb" | "hhclub" | "unknown";
 
 export type Resolution =
   | "NTSC"
@@ -16,11 +16,17 @@ export type Resolution =
 export type CandidateQuality = "Encode" | "WEB-DL" | "Remux" | "Untouched";
 export type HdrType = "dv+hdr" | "dv" | "hdr" | "10bit" | "sdr";
 
+export interface SourceSubtitleInfo {
+  languages: string[];
+  hasSubtitles: boolean;
+}
+
 export interface TorrentCandidate {
   id?: string;
   site: SourceSite;
   title: string;
   subtitle?: string | null;
+  subtitleInfo?: SourceSubtitleInfo | null;
   imdbId?: string | null;
   resolution?: string | null;
   sourceUrl?: string | null;

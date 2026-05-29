@@ -22,7 +22,7 @@ function userscriptText(): string {
 function userscriptInternals(overrides: Record<string, unknown> = {}) {
   const text = userscriptText().replace(
     "  registerSettings();",
-    "  globalThis.__pqTest = { LOCAL_CACHE_TTL_MS, hasUnsupportedFrameRate, shouldOfferUpload, localCacheKey, localCacheStorageKey, localCacheSet, extractSourceSubtitle };\n  registerSettings();"
+    "  globalThis.__pqTest = { LOCAL_CACHE_TTL_MS, detectSite, parseTorrents, hasUnsupportedFrameRate, shouldOfferUpload, localCacheKey, localCacheStorageKey, localCacheSet, extractSourceSubtitle, extractSubtitleInfo };\n  registerSettings();"
   );
   const sandbox = {
     GM_registerMenuCommand: () => undefined,
@@ -37,6 +37,16 @@ function userscriptInternals(overrides: Record<string, unknown> = {}) {
   return (sandbox as {
     __pqTest: {
       LOCAL_CACHE_TTL_MS: number;
+      detectSite(): string;
+      parseTorrents(site: string): Array<{
+        site: string;
+        title: string;
+        subtitle?: string | null;
+        subtitleInfo?: { languages: string[]; hasSubtitles: boolean } | null;
+        sourceUrl?: string | null;
+        downloadUrl?: string | null;
+        resolution?: string | null;
+      }>;
       hasUnsupportedFrameRate(name: string): boolean;
       shouldOfferUpload(torrent: { title?: string }, status: string): boolean;
       localCacheKey(torrent: { title: string; imdbId?: string | null }): string;
@@ -47,6 +57,15 @@ function userscriptInternals(overrides: Record<string, unknown> = {}) {
         scope: { querySelector(selector: string): { textContent?: string | null } | null },
         title: string
       ): string | null;
+      extractSubtitleInfo(
+        site: string,
+        link: { closest(selector: string): unknown; textContent?: string | null },
+        scope: { querySelector(selector: string): { textContent?: string | null } | null; textContent?: string | null },
+        title: string
+      ): {
+        languages: string[];
+        hasSubtitles: boolean;
+      } | null;
     };
   }).__pqTest;
 }
@@ -67,6 +86,10 @@ describe("Popcorn Queue userscript metadata", () => {
     expect(text).not.toContain("Set Popcorn Queue Web URL");
     expect(text).not.toContain("GM_setValue(\"serviceUrl\"");
     expect(text).not.toContain("GM_setValue(\"webUrl\"");
+  });
+
+  it("matches ZmWeb torrent pages", () => {
+    expect(userscriptMetadata()).toMatch(/^\/\/ @match\s+https:\/\/zmpt\.cc\/torrents\.php\*$/m);
   });
 });
 
@@ -110,6 +133,64 @@ describe("Popcorn Queue userscript checks", () => {
 
     expect(writes).toHaveLength(1);
     expect(writes[0]?.key).toBe("pq:browser-check:ptp:imdb:tt0816692");
+  });
+
+  it("detects ZmWeb pages", () => {
+    const windowObject = { location: { hostname: "example.test" } };
+    const internals = userscriptInternals({ window: windowObject });
+
+    windowObject.location.hostname = "zmpt.cc";
+
+    expect(internals.detectSite()).toBe("zmweb");
+  });
+
+  it("parses ZmWeb NexusPHP torrent rows with source subtitle info", () => {
+    const title = "Fat and Fame 2018 2160p EDR WEB-DL HEVC DDP5.1-ZmWeb";
+    const subtitle = "人怕出名猪怕壮 / Fat and Fame | 导演：彭建伟 / 主演：沈伐 / 岳红 / 方清平 | 类型：喜剧 | 汉语普通话";
+    const link = {
+      href: "https://zmpt.cc/details.php?id=473940&hit=1",
+      textContent: title,
+      getAttribute: (name: string) => (name === "title" ? title : null),
+      closest: (selector: string) => (selector === "td" ? titleCell : null)
+    };
+    const titleCell = {
+      childNodes: [
+        link,
+        { nodeType: 1, tagName: "B", textContent: " [热门]" },
+        { nodeType: 1, tagName: "BR", textContent: "" },
+        { nodeType: 1, tagName: "SPAN", textContent: "中字" },
+        { nodeType: 3, textContent: subtitle }
+      ]
+    };
+    const nameTable = {
+      textContent: `中字 ${subtitle}`,
+      querySelector: (selector: string) => selector.includes('a[href*="details.php"]') ? link : null,
+      querySelectorAll: () => []
+    };
+    const row = {
+      querySelector: (selector: string) => {
+        if (selector === "table.torrentname") return nameTable;
+        if (selector.includes('a[href*="download.php?id="]')) return { href: "https://zmpt.cc/download.php?id=473940" };
+        return null;
+      }
+    };
+    const internals = userscriptInternals({
+      document: {
+        querySelectorAll: (selector: string) => (selector === "table.torrents > tbody > tr" ? [row] : [])
+      }
+    });
+
+    expect(internals.parseTorrents("zmweb")).toEqual([
+      expect.objectContaining({
+        site: "zmweb",
+        title,
+        subtitle,
+        subtitleInfo: { languages: ["Chinese"], hasSubtitles: true },
+        resolution: "2160p",
+        sourceUrl: "https://zmpt.cc/details.php?id=473940&hit=1",
+        downloadUrl: "https://zmpt.cc/download.php?id=473940"
+      })
+    ]);
   });
 
   it("extracts PTerClub subtitles from the sibling line span without including the release title", () => {
@@ -159,6 +240,90 @@ describe("Popcorn Queue userscript checks", () => {
         title
       )
     ).toBe(subtitle);
+  });
+
+  it("extracts Chinese and no-English subtitle info from PTerClub subtitle tags", () => {
+    const internals = userscriptInternals();
+    const title = "Movie.2026.1080p.WEB-DL.H264-GROUP";
+    const tag = { textContent: "中字" };
+    const subtitleLine = {
+      children: [{ tagName: "A", className: "chs_tag-sub", textContent: "中字" }],
+      querySelector: () => tag
+    };
+    const titleLine = { nextElementSibling: subtitleLine };
+    const link = {
+      textContent: title,
+      closest: (selector: string) => (selector === "div" ? titleLine : null)
+    };
+
+    const info = internals.extractSubtitleInfo("pter", link, { querySelector: () => null, textContent: "" }, title);
+
+    expect(info).toMatchObject({
+      languages: ["Chinese"],
+      hasSubtitles: true
+    });
+    expect(info).not.toHaveProperty("noEnglishLikely");
+    expect(info).not.toHaveProperty("hardcodedLikely");
+  });
+
+  it("extracts English subtitle info from PTerClub English subtitle tags", () => {
+    const internals = userscriptInternals();
+    const title = "Movie.2026.1080p.WEB-DL.H264-GROUP";
+    const tag = { textContent: "英字" };
+    const subtitleLine = {
+      children: [{ tagName: "A", className: "chs_tag-ensub", textContent: "英字" }],
+      querySelector: () => tag
+    };
+    const titleLine = { nextElementSibling: subtitleLine };
+    const link = {
+      textContent: title,
+      closest: (selector: string) => (selector === "div" ? titleLine : null)
+    };
+
+    expect(internals.extractSubtitleInfo("pter", link, { querySelector: () => null, textContent: "" }, title)).toMatchObject({
+      languages: ["English"],
+      hasSubtitles: true
+    });
+  });
+
+  it("extracts M-Team soft multilingual subtitle info from source subtitles", () => {
+    const internals = userscriptInternals();
+    const title = "Havoc.2025.1080p.WEB-DL.H264-GROUP";
+    const subtitle = "毒劫 | [英语] | [简繁中/英/韩] 软字幕";
+    const row = {
+      textContent: subtitle,
+      querySelector: () => ({ textContent: subtitle })
+    };
+    const link = { textContent: title, closest: () => null };
+
+    expect(internals.extractSubtitleInfo("mteam", link, row, title)).toMatchObject({
+      languages: ["Chinese", "English"],
+      hasSubtitles: true
+    });
+  });
+
+  it("extracts subtitle languages from NexusPHP hardcoded subtitle text without deciding trumpability", () => {
+    const internals = userscriptInternals();
+    const title = "Movie.2026.1080p.WEB-DL.H264-GROUP";
+    const subtitle = "古董局中局之国画密码 [国语/中英硬字幕]";
+    const link = { textContent: title, closest: () => null };
+
+    expect(internals.extractSubtitleInfo("tjupt", link, { querySelector: () => ({ textContent: subtitle }), textContent: subtitle }, title)).toMatchObject({
+      languages: ["Chinese", "English"],
+      hasSubtitles: true
+    });
+  });
+
+  it("extracts no-subtitle hints without inventing subtitle languages", () => {
+    const internals = userscriptInternals();
+    const title = "Movie.2026.1080p.WEB-DL.H264-GROUP";
+    const subtitle = "[日语/无字幕]";
+    const link = { textContent: title, closest: () => null };
+
+    expect(internals.extractSubtitleInfo("pter", link, { querySelector: () => ({ textContent: subtitle }), textContent: subtitle }, title)).toMatchObject({
+      languages: [],
+      hasSubtitles: false
+    });
   });
 });
 

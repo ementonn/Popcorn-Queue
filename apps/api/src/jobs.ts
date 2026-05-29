@@ -228,6 +228,7 @@ function buildJobReviewDraft(job: Pick<Job, "candidate" | "uploadPlan" | "artifa
   if (job.artifacts.releaseName !== undefined) artifacts.releaseName = job.artifacts.releaseName;
   if (job.artifacts.description !== undefined) artifacts.description = job.artifacts.description;
   if (job.artifacts.mediainfo !== undefined) artifacts.mediainfo = job.artifacts.mediainfo;
+  if (job.artifacts.mediaInfoJson !== undefined) artifacts.mediaInfoJson = job.artifacts.mediaInfoJson;
   if (job.artifacts.mediaFeatureSuggestions !== undefined) artifacts.mediaFeatureSuggestions = job.artifacts.mediaFeatureSuggestions;
   const input: Parameters<typeof buildReviewDraft>[0] = {
     candidate: job.candidate,
@@ -246,6 +247,10 @@ function reviewDraftFieldWasEdited(job: Job, field: keyof ReviewDraft): boolean 
   });
 }
 
+function mergeStringList(left: string[], right: string[]): string[] {
+  return [...new Set([...left, ...right].filter(Boolean))];
+}
+
 function ensureReviewDraft(job: Job, options: { forceDescriptionRefresh?: boolean } = {}): void {
   const draft = buildJobReviewDraft(job);
   if (!draft) return;
@@ -256,6 +261,7 @@ function ensureReviewDraft(job: Job, options: { forceDescriptionRefresh?: boolea
   const draftWasEdited = job.events.some((event) => event.message === "Review draft updated.");
   const shouldMergeEditionSuggestions = !draftWasEdited || job.reviewDraft.remaster || Boolean(job.reviewDraft.remasterTitle);
   const shouldRefreshGeneratedDescription = (options.forceDescriptionRefresh || !reviewDraftFieldWasEdited(job, "description")) && Boolean(draft.description);
+  const shouldMergeGeneratedTrumpables = !reviewDraftFieldWasEdited(job, "trumpable");
   job.reviewDraft = {
     ...draft,
     ...job.reviewDraft,
@@ -273,7 +279,7 @@ function ensureReviewDraft(job: Job, options: { forceDescriptionRefresh?: boolea
     remaster: shouldMergeEditionSuggestions ? job.reviewDraft.remaster || Boolean(draft.remasterTitle) : Boolean(job.reviewDraft.remaster),
     remasterTitle: shouldMergeEditionSuggestions ? mergeSlashSeparated(job.reviewDraft.remasterTitle, draft.remasterTitle) : job.reviewDraft.remasterTitle,
     subtitles: job.reviewDraft.subtitles.length ? job.reviewDraft.subtitles : draft.subtitles,
-    trumpable: job.reviewDraft.trumpable.length ? job.reviewDraft.trumpable : draft.trumpable,
+    trumpable: shouldMergeGeneratedTrumpables ? mergeStringList(job.reviewDraft.trumpable, draft.trumpable) : job.reviewDraft.trumpable,
     artists: job.reviewDraft.artists?.length ? job.reviewDraft.artists : draft.artists ?? []
   };
 }

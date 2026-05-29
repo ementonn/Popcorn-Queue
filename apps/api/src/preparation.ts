@@ -508,8 +508,23 @@ export class PreparationService {
           : { invocation: jsonInvocation, skippedReason: "No stored MediaInfo JSON is available." },
         summary: mediaInfoJson ? parseMediaInfoSummary(mediaInfoJson) : null,
         features: mediaInfoJson
-          ? detectMediaFeatures({ mediaInfoJson, releaseName: job.artifacts.releaseName ?? job.uploadPlan.releaseName.generated })
-          : { hdrFormats: [], editionFeatures: job.artifacts.mediaFeatureSuggestions ?? [] }
+          ? detectMediaFeatures({
+            mediaInfoJson,
+            releaseName: job.artifacts.releaseName ?? job.uploadPlan.releaseName.generated,
+            sourceSubtitleInfo: job.candidate?.subtitleInfo,
+            sourceSubtitle: job.candidate?.subtitle
+          })
+          : {
+            hdrFormats: [],
+            editionFeatures: job.artifacts.mediaFeatureSuggestions ?? [],
+            subtitleFeatures: {
+              languages: job.candidate?.subtitleInfo?.languages ?? [],
+              hasSubtitles: job.candidate?.subtitleInfo?.hasSubtitles ?? null,
+              hasTextTracks: false,
+              hardcodedLikely: false,
+              noEnglishLikely: Boolean(job.candidate?.subtitleInfo?.hasSubtitles === false)
+            }
+          }
       };
     }
 
@@ -670,6 +685,7 @@ function reviewDraftForStatus(job: Pick<Job, "candidate" | "uploadPlan" | "artif
   const draftArtifacts: Parameters<typeof buildReviewDraft>[0]["artifacts"] = {};
   if (artifacts.releaseName !== undefined) draftArtifacts.releaseName = artifacts.releaseName;
   if (artifacts.description !== undefined) draftArtifacts.description = artifacts.description;
+  if (artifacts.mediaInfoJson !== undefined) draftArtifacts.mediaInfoJson = artifacts.mediaInfoJson;
   if (artifacts.mediaInfoText !== undefined) draftArtifacts.mediainfo = artifacts.mediaInfoText;
   else if (artifacts.mediainfo !== undefined) draftArtifacts.mediainfo = artifacts.mediainfo;
   if (artifacts.mediaFeatureSuggestions !== undefined) draftArtifacts.mediaFeatureSuggestions = artifacts.mediaFeatureSuggestions;

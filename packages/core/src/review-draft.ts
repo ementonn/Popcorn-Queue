@@ -1,5 +1,6 @@
 import type { UploadPlan } from "./upload-plan.js";
 import type { BrowserCheckResult, TorrentCandidate } from "./types.js";
+import { detectMediaFeatures } from "./media-features.js";
 import { PTP_SUBTITLE_OPTIONS } from "./ptp-options.js";
 
 export interface PtpArtistDraft {
@@ -56,6 +57,7 @@ export interface BuildReviewDraftInput {
     releaseName?: string;
     description?: string;
     mediainfo?: string;
+    mediaInfoJson?: string;
     mediaFeatureSuggestions?: string[];
   };
   checkResult?: BrowserCheckResult;
@@ -297,6 +299,16 @@ export function buildReviewDraft(input: BuildReviewDraftInput): ReviewDraft {
   const parsed = input.uploadPlan.parsed;
   const movie = input.checkResult?.decision.movie;
   const remasterTitle = mergeSlashSeparated("", (input.artifacts.mediaFeatureSuggestions ?? []).join(" / "));
+  const subtitleFeatures = detectMediaFeatures({
+    mediaInfoJson: input.artifacts.mediaInfoJson,
+    releaseName: input.artifacts.releaseName ?? input.uploadPlan.releaseName.generated,
+    sourceSubtitleInfo: input.candidate.subtitleInfo,
+    sourceSubtitle: input.candidate.subtitle
+  }).subtitleFeatures;
+  const trumpable = [
+    subtitleFeatures.noEnglishLikely ? "14" : "",
+    subtitleFeatures.hardcodedLikely ? "4" : ""
+  ].filter(Boolean);
   return {
     releaseName: input.artifacts.releaseName ?? input.uploadPlan.releaseName.generated,
     description: input.artifacts.description ?? "",
@@ -318,7 +330,7 @@ export function buildReviewDraft(input: BuildReviewDraftInput): ReviewDraft {
     remasterTitle,
     special: "",
     subtitles: stringList(input.uploadPlan.media.subtitles.languages, SUBTITLE_LABEL_TO_ID) ?? [],
-    trumpable: [],
+    trumpable,
     scene: input.uploadPlan.scene.status === "likely_scene",
     personalRip: false,
     internal: false,

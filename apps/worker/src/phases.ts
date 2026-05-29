@@ -1052,7 +1052,9 @@ export function createDefaultPhaseHandlers(): PhaseHandler[] {
           summary,
           features: detectMediaFeatures({
             mediaInfoJson: mediaInfoJson.result?.stdout ?? null,
-            releaseName: plan.releaseName.generated || context.job.candidate.title
+            releaseName: plan.releaseName.generated || context.job.candidate.title,
+            sourceSubtitleInfo: context.job.candidate.subtitleInfo,
+            sourceSubtitle: context.job.candidate.subtitle
           })
         };
       }

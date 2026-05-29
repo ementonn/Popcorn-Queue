@@ -129,6 +129,10 @@ export interface ApiJob {
     site: string;
     title: string;
     subtitle?: string | null;
+    subtitleInfo?: {
+      languages: string[];
+      hasSubtitles: boolean;
+    } | null;
     imdbId?: string | null;
     sourceTorrentId?: string | null;
   };

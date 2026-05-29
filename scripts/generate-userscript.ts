@@ -6,6 +6,7 @@ import { loadConfig } from "../apps/api/src/config.js";
 export const SOURCE_CONNECT_HOSTS = [
   "tjupt.org",
   "pterclub.net",
+  "zmpt.cc",
   "hdbits.org",
   "hhanclub.net",
   "hhan.club",

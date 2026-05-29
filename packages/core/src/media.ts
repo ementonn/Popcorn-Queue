@@ -50,6 +50,7 @@ function inferDiscType(parsed: ParsedTorrentCandidate): MediaInspectionPlan["dis
 export function buildMediaInspectionPlan(candidate: TorrentCandidate, parsed: ParsedTorrentCandidate): MediaInspectionPlan {
   const audioCodecs = inferAudioCodecs(candidate.title);
   const languages = inferLanguages(candidate.title);
+  const sourceSubtitleLanguages = candidate.subtitleInfo?.hasSubtitles === true ? candidate.subtitleInfo.languages : undefined;
   const container = extractContainer(candidate.title);
   const trumpableChecks = [
     "Verify audio language metadata.",
@@ -70,8 +71,8 @@ export function buildMediaInspectionPlan(candidate: TorrentCandidate, parsed: Pa
       commentaryLikely: /\bCOMMENTARY\b/i.test(candidate.title)
     },
     subtitles: {
-      languages: /\bSUBS?\b|\bMULTISUB\b|\bCHS\b|\bCHT\b/i.test(candidate.title) ? languages : [],
-      embeddedLikely: container === "MKV"
+      languages: sourceSubtitleLanguages ?? (candidate.subtitleInfo?.hasSubtitles === false ? [] : /\bSUBS?\b|\bMULTISUB\b|\bCHS\b|\bCHT\b/i.test(candidate.title) ? languages : []),
+      embeddedLikely: candidate.subtitleInfo?.hasSubtitles === false ? false : container === "MKV"
     },
     trumpableChecks
   };

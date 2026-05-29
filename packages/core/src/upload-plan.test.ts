@@ -132,4 +132,17 @@ describe("upload plan review gates", () => {
 
     expect(plan.screenshots.imageHosts).toEqual(["imgbb", "ptpimg"]);
   });
+
+  it("uses source subtitle info for subtitle languages", () => {
+    const plan = buildUploadPlan({
+      candidate: {
+        site: "mteam",
+        title: "Movie.2024.1080p.WEB-DL.H264-GROUP",
+        subtitle: "国语中字",
+        subtitleInfo: { languages: ["Chinese"], hasSubtitles: true }
+      }
+    });
+
+    expect(plan.media.subtitles.languages).toEqual(["Chinese"]);
+  });
 });

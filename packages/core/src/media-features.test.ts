@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { detectMediaFeatures } from "./media-features.js";
 
-function mediaInfoJson(video: Record<string, unknown>, audio: Array<Record<string, unknown>> = []): string {
+function mediaInfoJson(video: Record<string, unknown>, audio: Array<Record<string, unknown>> = [], text: Array<Record<string, unknown>> = []): string {
   return JSON.stringify({
     media: {
       track: [
         { "@type": "General", Duration: "7200" },
         { "@type": "Video", ...video },
-        ...audio.map((track) => ({ "@type": "Audio", ...track }))
+        ...audio.map((track) => ({ "@type": "Audio", ...track })),
+        ...text.map((track) => ({ "@type": "Text", ...track }))
       ]
     }
   });
@@ -64,5 +65,32 @@ describe("media feature detection", () => {
     expect(detectMediaFeatures({ releaseName: "Movie.2024.1080p.BluRay.HOU.x264-GROUP" }).editionFeatures).toContain("3D Half OU");
     expect(detectMediaFeatures({ releaseName: "Movie.2024.1080p.BluRay.Anaglyph.x264-GROUP" }).editionFeatures).toContain("3D Anaglyph");
     expect(detectMediaFeatures({ releaseName: "Movie.2024.1080p.BluRay.2D3D.x264-GROUP" }).editionFeatures).toContain("2D/3D Edition");
+  });
+
+  it("marks hardcoded subtitles when source subtitles are present but MediaInfo has no text tracks", () => {
+    const result = detectMediaFeatures({
+      mediaInfoJson: mediaInfoJson({}),
+      sourceSubtitleInfo: { languages: ["Chinese"], hasSubtitles: true }
+    });
+
+    expect(result.subtitleFeatures).toMatchObject({
+      languages: ["Chinese"],
+      hasTextTracks: false,
+      hardcodedLikely: true,
+      noEnglishLikely: true
+    });
+  });
+
+  it("does not mark hardcoded subtitles when MediaInfo exposes text tracks", () => {
+    const result = detectMediaFeatures({
+      mediaInfoJson: mediaInfoJson({}, [], [{ Language: "zh" }]),
+      sourceSubtitleInfo: { languages: ["Chinese"], hasSubtitles: true }
+    });
+
+    expect(result.subtitleFeatures).toMatchObject({
+      languages: ["Chinese"],
+      hasTextTracks: true,
+      hardcodedLikely: false
+    });
   });
 });

@@ -33,6 +33,7 @@ describe("local userscript generation", () => {
 
     expect(connectHosts(text)).toContain("queue.example.test");
     expect(connectHosts(text)).toContain("tjupt.org");
+    expect(connectHosts(text)).toContain("zmpt.cc");
     expect(connectHosts(text)).toContain("api.m-team.io");
     expect(connectHosts(text)).not.toContain("*");
     expect(text).toContain('const DEFAULT_SERVICE_URL = "http://queue.example.test:3500";');

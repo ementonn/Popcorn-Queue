@@ -341,6 +341,61 @@ describe("JobRepository pre-upload state machine", () => {
     expect(job.reviewDraft?.remasterTitle).toBe("");
   });
 
+  it("adds hardcoded subtitles after MediaInfo misses source-advertised subtitles without dropping no-English", () => {
+    const repo = new JobRepository();
+    const subtitleCandidate = {
+      ...candidate,
+      subtitle: "国语中字",
+      subtitleInfo: { languages: ["Chinese"], hasSubtitles: true }
+    };
+    let job = repo.create({ candidate: subtitleCandidate });
+
+    expect(job.reviewDraft?.subtitles).toContain("14");
+    expect(job.reviewDraft?.trumpable).toContain("14");
+    expect(job.reviewDraft?.trumpable).not.toContain("4");
+
+    job = repo.markPreparationResult(job.id, {
+      state: "review",
+      phase: "review",
+      uploadReadiness: "ready",
+      humanStep: "Review upload package",
+      artifacts: {
+        mediaInfoJson: JSON.stringify({ media: { track: [{ "@type": "General" }, { "@type": "Video" }] } })
+      },
+      phases: job.phases,
+      eventLevel: "info",
+      eventMessage: "Upload package ready for review."
+    })!;
+
+    expect(job.reviewDraft?.trumpable).toEqual(expect.arrayContaining(["14", "4"]));
+  });
+
+  it("does not override manually edited trumpable subtitle flags", () => {
+    const repo = new JobRepository();
+    const subtitleCandidate = {
+      ...candidate,
+      subtitle: "国语中字",
+      subtitleInfo: { languages: ["Chinese"], hasSubtitles: true }
+    };
+    let job = repo.create({ candidate: subtitleCandidate });
+
+    job = repo.updateReviewDraft(job.id, { trumpable: [] })!;
+    job = repo.markPreparationResult(job.id, {
+      state: "review",
+      phase: "review",
+      uploadReadiness: "ready",
+      humanStep: "Review upload package",
+      artifacts: {
+        mediaInfoJson: JSON.stringify({ media: { track: [{ "@type": "General" }, { "@type": "Video" }] } })
+      },
+      phases: job.phases,
+      eventLevel: "info",
+      eventMessage: "Upload package ready for review."
+    })!;
+
+    expect(job.reviewDraft?.trumpable).toEqual([]);
+  });
+
   it("refreshes generated draft descriptions after evidence retries when the draft was not edited", () => {
     const repo = new JobRepository();
     const oldDescription = "General\nFormat                                   : Matroska\n";

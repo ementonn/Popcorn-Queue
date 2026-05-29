@@ -7,7 +7,6 @@ import {
   type BrowserCheckResult,
   type CacheStore,
   type NormalizedPtpResponse,
-  type PtpMovie,
   type TorrentCandidate
 } from "@popcorn-queue/core";
 import type { PtpClient } from "./ptp/client.js";
@@ -45,22 +44,10 @@ export class BrowserCheckService {
     const cacheEntry = await this.cache.get(cacheKey);
 
     if (cacheEntry && !options.bypassCache) {
-      let data = cacheEntry.data;
-      let enrichError: string | undefined;
-      try {
-        const enrichedData = await this.enrichMissingMovieDetails(data);
-        if (enrichedData !== data) {
-          data = enrichedData;
-          await this.cache.set(cacheKey, data);
-        }
-      } catch (error) {
-        enrichError = errorMessage(error);
-      }
-      return this.resultFromData(normalizedCandidate, parsed, data, {
+      return this.resultFromData(normalizedCandidate, parsed, cacheEntry.data, {
         key: cacheKey,
         hit: true,
-        cachedAt: new Date(cacheEntry.createdAt).toISOString(),
-        ...(enrichError ? { fallback: true, error: enrichError } : {})
+        cachedAt: new Date(cacheEntry.createdAt).toISOString()
       });
     }
 
@@ -72,24 +59,12 @@ export class BrowserCheckService {
         searchName: parsed.searchName
       };
       if (parsed.year) searchParams.year = parsed.year;
-      let data = await this.ptp.searchByCandidate(searchParams);
+      const data = await this.ptp.searchByCandidate(searchParams);
       await this.cache.set(cacheKey, data);
-
-      let enrichError: string | undefined;
-      try {
-        const enrichedData = await this.enrichMissingMovieDetails(data);
-        if (enrichedData !== data) {
-          data = enrichedData;
-          await this.cache.set(cacheKey, data);
-        }
-      } catch (error) {
-        enrichError = errorMessage(error);
-      }
 
       return this.resultFromData(normalizedCandidate, parsed, data, {
         key: cacheKey,
-        hit: false,
-        ...(enrichError ? { error: enrichError } : {})
+        hit: false
       });
     } catch (error) {
       if (cacheEntry) {
@@ -109,20 +84,6 @@ export class BrowserCheckService {
     const key = makePtpCacheKey(candidate);
     await this.cache.delete(key);
     return key;
-  }
-
-  private async enrichMissingMovieDetails(data: NormalizedPtpResponse): Promise<NormalizedPtpResponse> {
-    const movie = data.movies[0];
-    if (!movie?.GroupId || movie.ImdbId) return data;
-
-    await this.waitForRateLimit();
-    const details = await this.ptp.getGroup(movie.GroupId);
-    const detail = details.movies.find((item) => item.GroupId === movie.GroupId) ?? details.movies[0];
-    if (!detail?.ImdbId) return data;
-
-    const movies = [...data.movies];
-    movies[0] = mergeMovieDetails(movie, detail);
-    return { ...data, movies };
   }
 
   private async waitForRateLimit(): Promise<void> {
@@ -172,15 +133,6 @@ export class BrowserCheckService {
       }
     };
   }
-}
-
-function mergeMovieDetails(movie: PtpMovie, detail: PtpMovie): PtpMovie {
-  const merged: PtpMovie = {
-    ...movie,
-    ...detail
-  };
-  if (!detail.Torrents?.length && movie.Torrents) merged.Torrents = movie.Torrents;
-  return merged;
 }
 
 function errorMessage(error: unknown): string {

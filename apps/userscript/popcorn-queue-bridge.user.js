@@ -6,6 +6,7 @@
 // @author       emt
 // @match        https://tjupt.org/torrents.php*
 // @match        https://pterclub.net/torrents.php*
+// @match        https://zmpt.cc/torrents.php*
 // @match        https://kp.m-team.cc/browse*
 // @match        https://kp.m-team.cc/torrents*
 // @match        https://hdbits.org/browse*
@@ -150,6 +151,10 @@
     return cleanSourceSubtitle(text.slice(cleanTitle.length).replace(/^[-:|/\\()[\]\s]+/, ""));
   }
 
+  function stripLeadingSourceTags(value) {
+    return cleanSourceSubtitle(value).replace(/^(?:(?:官方|驻站|禁转|国语|粤语|中字|英字|完结|原盘|DIY|杜比|HDR|无损|首发|短剧|汉化|原创|分集|纯享版)\s+)+/, "");
+  }
+
   function isSourceSubtitleNoise(value, title) {
     const text = normalizeSourceSubtitle(value);
     if (!text) return true;
@@ -159,7 +164,7 @@
   }
 
   function sourceSubtitleCandidate(value, title) {
-    const text = stripSourceSubtitleTitlePrefix(value, title);
+    const text = stripLeadingSourceTags(stripSourceSubtitleTitlePrefix(value, title));
     return isSourceSubtitleNoise(text, title) ? null : text;
   }
 
@@ -226,6 +231,98 @@
     return explicitSourceSubtitle(scope, title) || sourceSubtitleFromSiblingLine(link, title) || sourceSubtitleFromTitleCellBreak(link, title);
   }
 
+  function uniqueValues(values) {
+    return [...new Set(values.filter(Boolean))];
+  }
+
+  function subtitleInfoFromText(value) {
+    const text = cleanSourceSubtitle(value);
+    if (!text) return null;
+    if (/无字幕|無字幕|无字|無字|no\s+subtitles?|without\s+subtitles?/i.test(text)) {
+      return { languages: [], hasSubtitles: false };
+    }
+
+    const languages = [];
+    if (/中字|中文字幕|中文|简体|簡體|繁体|繁體|简中|簡中|繁中|\bCHS\b|\bCHT\b|中英|中\/英|简英|簡英|简繁英|簡繁英|简繁中|簡繁中|Chinese\s*(?:SRT|subtitles?|subs?)/i.test(text)) {
+      languages.push("Chinese");
+    }
+    if (/英字|英字幕|英文字幕|英语字幕|英語字幕|English\s*(?:SRT|subtitles?|subs?)|中英|中\/英|\/英|简英|簡英|简繁英|簡繁英|英\/韩|英\/韓|英多国字|英多國字/i.test(text)) {
+      languages.push("English");
+    }
+    if (/日字|日文字幕|日语字幕|日語字幕|Japanese\s*(?:SRT|subtitles?|subs?)/i.test(text)) {
+      languages.push("Japanese");
+    }
+    if (/韩字|韓字|韩文字幕|韓文字幕|韩语字幕|韓語字幕|Korean\s*(?:SRT|subtitles?|subs?)/i.test(text)) {
+      languages.push("Korean");
+    }
+
+    const hasSubtitleSignal = languages.length > 0 || /字幕|\bSRT\b|subtitles?|subs?|内封|內封|内嵌|內嵌|软字幕|軟字幕|多字幕|多国字|多國字|外挂|外掛/i.test(text);
+    if (!hasSubtitleSignal) return null;
+    return { languages: uniqueValues(languages), hasSubtitles: true };
+  }
+
+  function mergeSubtitleInfos(infos) {
+    const found = infos.filter(Boolean);
+    if (!found.length) return null;
+    if (found.some((info) => info.hasSubtitles === false)) return { languages: [], hasSubtitles: false };
+    return {
+      languages: uniqueValues(found.flatMap((info) => info.languages || [])),
+      hasSubtitles: true
+    };
+  }
+
+  function nodeSignalText(node) {
+    if (!node) return "";
+    return [
+      node.textContent,
+      node.getAttribute && node.getAttribute("title"),
+      node.getAttribute && node.getAttribute("alt"),
+      node.getAttribute && node.getAttribute("class")
+    ].filter(Boolean).join(" ");
+  }
+
+  function scopedSubtitleSignalText(scope) {
+    if (!scope) return "";
+    const selectors = [
+      ".chs_tag-sub",
+      ".chs_tag-ensub",
+      ".tag_chinesesub",
+      ".tag_englishsub",
+      "[class*='tag-sub']",
+      "[class*='tag-ensub']",
+      "[class*='chinesesub']",
+      "[class*='englishsub']",
+      "[title*='字幕']",
+      "[title*='sub']",
+      "[alt*='字幕']",
+      "[alt*='sub']"
+    ];
+    const parts = [scope.textContent];
+    if (scope.querySelectorAll) {
+      for (const selector of selectors) {
+        Array.from(scope.querySelectorAll(selector) || []).forEach((node) => parts.push(nodeSignalText(node)));
+      }
+    } else if (scope.querySelector) {
+      for (const selector of selectors) {
+        parts.push(nodeSignalText(scope.querySelector(selector)));
+      }
+    }
+    return parts.filter(Boolean).join(" ");
+  }
+
+  function extractSubtitleInfo(site, link, scope, title) {
+    const texts = [
+      extractSourceSubtitle(link, scope, title),
+      scopedSubtitleSignalText(scope)
+    ];
+    if (site === "pter" || site === "tjupt" || site === "hhclub") {
+      const titleLine = link && link.closest && link.closest("div");
+      texts.push(scopedSubtitleSignalText(titleLine && titleLine.nextElementSibling));
+    }
+    const infos = texts.map(subtitleInfoFromText);
+    return mergeSubtitleInfos(infos);
+  }
+
   function extractNexusSubtitle(link, nameTable, title) {
     return extractSourceSubtitle(link, nameTable, title);
   }
@@ -279,6 +376,7 @@
     const host = window.location.hostname;
     if (host.includes("tjupt.org")) return "tjupt";
     if (host.includes("pterclub.net")) return "pter";
+    if (host.includes("zmpt.cc")) return "zmweb";
     if (host.includes("m-team")) return "mteam";
     if (host.includes("hdbits.org")) return "hdb";
     if (host.includes("hhanclub.net") || host.includes("hhan.club")) return "hhclub";
@@ -304,6 +402,7 @@
         site,
         title,
         subtitle: extractSourceSubtitle(link, nameTable, title),
+        subtitleInfo: extractSubtitleInfo(site, link, nameTable, title),
         imdbId: imdbLink ? extractImdbId(imdbLink.href) : null,
         resolution: (title.match(RESOLUTION_REGEX) || [])[1] || null,
         sourceUrl: link.href,
@@ -329,6 +428,7 @@
         site,
         title,
         subtitle: extractSourceSubtitle(link, nameTable, title),
+        subtitleInfo: extractSubtitleInfo(site, link, nameTable, title),
         imdbId: extractImdbId(rawImdb) || (rawImdb && /^\d+$/.test(rawImdb) ? "tt" + rawImdb : null),
         resolution: (title.match(RESOLUTION_REGEX) || [])[1] || null,
         sourceUrl: link.href,
@@ -355,6 +455,8 @@
       torrents.push({
         site,
         title,
+        subtitle: extractSourceSubtitle(link, row, title),
+        subtitleInfo: extractSubtitleInfo(site, link, row, title),
         imdbId,
         resolution: (title.match(RESOLUTION_REGEX) || [])[1] || null,
         sourceUrl: link.href,
@@ -384,6 +486,7 @@
       torrents.push({
         site,
         title,
+        subtitleInfo: extractSubtitleInfo(site, link, row, title),
         imdbId,
         resolution: (title.match(RESOLUTION_REGEX) || [])[1] || null,
         sourceUrl: link.href,
@@ -406,6 +509,7 @@
         site,
         title,
         subtitle: extractSourceSubtitle(link, row, title),
+        subtitleInfo: extractSubtitleInfo(site, link, row, title),
         imdbId: imdbLink ? extractImdbId(decodeURIComponent(imdbLink.href)) : null,
         resolution: (title.match(RESOLUTION_REGEX) || [])[1] || null,
         sourceUrl: link.href,
@@ -419,6 +523,7 @@
   function parseTorrents(site) {
     if (site === "tjupt") return parseTJUPT(site);
     if (site === "pter") return parsePTer(site);
+    if (site === "zmweb") return parseTJUPT(site);
     if (site === "mteam") return parseMTeam(site);
     if (site === "hdb") return parseHDB(site);
     if (site === "hhclub") return parseHHClub(site);

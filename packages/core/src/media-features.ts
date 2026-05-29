@@ -1,6 +1,17 @@
+import type { SourceSubtitleInfo } from "./types.js";
+
+export interface SubtitleFeatureDetection {
+  languages: string[];
+  hasSubtitles: boolean | null;
+  hasTextTracks: boolean;
+  hardcodedLikely: boolean;
+  noEnglishLikely: boolean;
+}
+
 export interface MediaFeatureDetection {
   hdrFormats: string[];
   editionFeatures: string[];
+  subtitleFeatures: SubtitleFeatureDetection;
 }
 
 interface MediaInfoTrack {
@@ -27,13 +38,14 @@ function field(track: MediaInfoTrack | undefined, ...keys: string[]): string {
   return "";
 }
 
-function parseTracks(mediaInfoJson: string | null | undefined): MediaInfoTrack[] {
-  if (!mediaInfoJson?.trim()) return [];
+function parseTracks(mediaInfoJson: string | null | undefined): { tracks: MediaInfoTrack[]; parsed: boolean } {
+  if (!mediaInfoJson?.trim()) return { tracks: [], parsed: false };
   try {
     const parsed = JSON.parse(mediaInfoJson) as { media?: { track?: unknown[] } };
-    return Array.isArray(parsed.media?.track) ? parsed.media.track.filter((track): track is MediaInfoTrack => Boolean(track) && typeof track === "object") : [];
+    const tracks = Array.isArray(parsed.media?.track) ? parsed.media.track.filter((track): track is MediaInfoTrack => Boolean(track) && typeof track === "object") : [];
+    return { tracks, parsed: true };
   } catch {
-    return [];
+    return { tracks: [], parsed: false };
   }
 }
 
@@ -91,12 +103,46 @@ function detectAudioFeatures(audioTracks: MediaInfoTrack[]): string[] {
   return features;
 }
 
-export function detectMediaFeatures(input: { mediaInfoJson?: string | null; releaseName?: string | null }): MediaFeatureDetection {
+function looksExternalSubtitle(value: string | null | undefined): boolean {
+  return /外挂|外掛|external|\b(?:srt|ass|ssa|sup|idx)\b/i.test(value ?? "");
+}
+
+function detectSubtitleFeatures(input: {
+  sourceSubtitleInfo?: SourceSubtitleInfo | null | undefined;
+  sourceSubtitle?: string | null | undefined;
+  tracks: MediaInfoTrack[];
+  mediaInfoParsed: boolean;
+}): SubtitleFeatureDetection {
+  const languages = [...new Set(input.sourceSubtitleInfo?.languages ?? [])];
+  const hasSubtitles = input.sourceSubtitleInfo?.hasSubtitles ?? null;
+  const hasTextTracks = input.tracks.some((track) => track["@type"] === "Text" || track["@type"] === "Menu");
+  const hasEnglish = languages.some((language) => /^english$/i.test(language));
+  return {
+    languages,
+    hasSubtitles,
+    hasTextTracks,
+    hardcodedLikely: Boolean(input.mediaInfoParsed && hasSubtitles === true && !hasTextTracks && !looksExternalSubtitle(input.sourceSubtitle)),
+    noEnglishLikely: Boolean(hasSubtitles === false || (hasSubtitles === true && languages.length > 0 && !hasEnglish))
+  };
+}
+
+export function detectMediaFeatures(input: {
+  mediaInfoJson?: string | null | undefined;
+  releaseName?: string | null | undefined;
+  sourceSubtitleInfo?: SourceSubtitleInfo | null | undefined;
+  sourceSubtitle?: string | null | undefined;
+}): MediaFeatureDetection {
   const releaseName = input.releaseName ?? "";
-  const tracks = parseTracks(input.mediaInfoJson);
+  const { tracks, parsed: mediaInfoParsed } = parseTracks(input.mediaInfoJson);
   const video = tracks.find((track) => track["@type"] === "Video");
   const audioTracks = tracks.filter((track) => track["@type"] === "Audio");
   const hdrFormats = detectHdrFormats(video, releaseName);
+  const subtitleFeatures = detectSubtitleFeatures({
+    sourceSubtitleInfo: input.sourceSubtitleInfo,
+    sourceSubtitle: input.sourceSubtitle,
+    tracks,
+    mediaInfoParsed
+  });
   const editionFeatures: string[] = [];
 
   if (hdrFormats.includes("DV")) editionFeatures.push("Dolby Vision");
@@ -111,6 +157,7 @@ export function detectMediaFeatures(input: { mediaInfoJson?: string | null; rele
 
   return {
     hdrFormats,
-    editionFeatures: [...new Set(editionFeatures)]
+    editionFeatures: [...new Set(editionFeatures)],
+    subtitleFeatures
   };
 }
