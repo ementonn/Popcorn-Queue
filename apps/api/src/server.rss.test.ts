@@ -74,6 +74,29 @@ describe("API RSS routes", () => {
     });
   });
 
+  it("deletes subscriptions from JSON DELETE requests", async () => {
+    await withConfiguredServer(testConfig(), { autoPrepare: false }, async (app) => {
+      const created = await app.inject({
+        method: "POST",
+        url: "/api/rss/subscriptions",
+        payload: { name: "ZMPT", site: "zmweb", feedUrl: "https://zmpt.cc/rss?passkey=secret", enabled: true, filter: {} }
+      });
+      const subscriptionId = created.json<{ subscription: { id: string } }>().subscription.id;
+
+      const deleted = await app.inject({
+        method: "DELETE",
+        url: `/api/rss/subscriptions/${subscriptionId}`,
+        headers: { "content-type": "application/json" },
+        payload: {}
+      });
+
+      expect(deleted.statusCode).toBe(200);
+      expect(deleted.json()).toEqual({ deleted: true });
+      const listed = await app.inject({ method: "GET", url: "/api/rss/subscriptions" });
+      expect(listed.json()).toEqual({ subscriptions: [] });
+    });
+  });
+
   it("accepts a proposal and returns the created job", async () => {
     const config = testConfig();
     const rssXml = `<?xml version="1.0"?><rss><channel><item>

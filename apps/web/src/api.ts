@@ -237,7 +237,7 @@ export function updateRssSubscription(id: string, input: Partial<RssSubscription
 }
 
 export function deleteRssSubscription(id: string): Promise<{ deleted: true }> {
-  return fetchJson<{ deleted: true }>(`/api/rss/subscriptions/${id}`, { method: "DELETE" });
+  return fetchJson<{ deleted: true }>(`/api/rss/subscriptions/${id}`, { method: "DELETE", body: "{}" });
 }
 
 export function refreshRssSubscription(id: string): Promise<{ result: RssRefreshResult }> {
