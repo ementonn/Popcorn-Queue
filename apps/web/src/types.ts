@@ -346,3 +346,88 @@ export interface JobLogResponse {
 export interface GlobalLogResponse {
   api: string[];
 }
+
+export type RssItemStatus = "proposal" | "filtered" | "duplicate_full" | "duplicate_skip" | "check_error" | "ignored" | "accepted";
+export type RssSourceSite = "zmweb" | "ptp" | "ptpimg" | "unknown" | string;
+
+export interface RssFilterConfig {
+  includeKeywords?: string[];
+  excludeKeywords?: string[];
+  allowedResolutions?: string[];
+  allowedCodecs?: string[];
+  allowedGroups?: string[];
+  blockedGroups?: string[];
+  minSize?: number | null;
+  maxSize?: number | null;
+}
+
+export interface RssSettings {
+  id: string;
+  updateIntervalMs: number;
+  updatedAt: string;
+}
+
+export interface RssSubscription {
+  id: string;
+  name: string;
+  site: RssSourceSite;
+  feedUrlDisplay: string;
+  enabled: boolean;
+  filter: RssFilterConfig;
+  lastFetchedAt: string | null;
+  lastRunStatus: string | null;
+  lastRunMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RssPtpTarget extends ManualIntakePtpTarget {
+  resolvedFrom: "imdb" | "title_year";
+}
+
+export interface RssItem {
+  id: string;
+  subscriptionId: string;
+  guid: string | null;
+  sourceUrl: string | null;
+  sourceUrlDisplay: string | null;
+  downloadUrlDisplay: string | null;
+  title: string;
+  subtitle: string | null;
+  size: number | null;
+  publishedAt: string | null;
+  status: RssItemStatus;
+  filterReason: string | null;
+  checkResult: {
+    candidate?: unknown;
+    decision?: {
+      status: string;
+      reason: string;
+      movie?: PtpMovieSummary;
+      ptpUrl?: string | null;
+    };
+  } | null;
+  ptpTarget: RssPtpTarget | null;
+  acceptedJobId: string | null;
+  lastError: string | null;
+  raw: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RssRefreshResult {
+  subscriptionId: string;
+  fetched: number;
+  proposals: number;
+  filtered: number;
+  duplicates: number;
+  errors: number;
+}
+
+export interface RssSubscriptionInput {
+  name: string;
+  site: RssSourceSite;
+  feedUrl: string;
+  enabled: boolean;
+  filter: RssFilterConfig;
+}

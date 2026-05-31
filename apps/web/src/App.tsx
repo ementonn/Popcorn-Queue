@@ -1,4 +1,4 @@
-import { Activity, FilePlus2, LoaderCircle, LockKeyhole, LogOut, Pause, Play, RefreshCcw, Search, Settings as SettingsIcon, SlidersHorizontal, Trash2 } from "lucide-react";
+import { Activity, FilePlus2, LoaderCircle, LockKeyhole, LogOut, Pause, Play, RefreshCcw, Rss as RssIcon, Search, Settings as SettingsIcon, SlidersHorizontal, Trash2 } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   loadDashboard,
@@ -22,6 +22,7 @@ import { JobDrawer } from "./components/JobDrawer.js";
 import { NewJobPage } from "./components/NewJobPage.js";
 import { QueueTable } from "./components/QueueTable.js";
 import { ReviewPanel } from "./components/ReviewPanel.js";
+import { RssPage } from "./components/RssPage.js";
 import { SettingsPage } from "./components/SettingsPage.js";
 import type {
   ApiJob,
@@ -36,7 +37,7 @@ import type {
   ReviewDraft
 } from "./types.js";
 
-type ActiveView = "jobs" | "new-job" | "diagnostics" | "settings";
+type ActiveView = "jobs" | "new-job" | "rss" | "diagnostics" | "settings";
 type PendingJobAction = { jobId: string; label: string; kind: "upload" | "pause" | "resume" | "retry" | "delete" };
 
 function updateJob(jobs: ApiJob[], updated: ApiJob): ApiJob[] {
@@ -443,6 +444,12 @@ export function App() {
     setStatus({ tone: "success", text: `Created job: ${next.id}` });
   }, [withLocalDraft]);
 
+  const handleRssJobCreated = useCallback((job: ApiJob) => {
+    const next = withLocalDraft(job);
+    setJobs((current) => [next, ...current.filter((item) => item.id !== next.id)]);
+    setSelectedJobId(next.id);
+  }, [withLocalDraft]);
+
   const handleLogin = useCallback(
     async (username: string, password: string) => {
       const session = await login(username, password);
@@ -507,6 +514,17 @@ export function App() {
           >
             <SlidersHorizontal size={16} />
             Diagnostics
+          </a>
+          <a
+            href="/rss"
+            className={activeView === "rss" ? "active" : undefined}
+            onClick={(event) => {
+              event.preventDefault();
+              setActiveView("rss");
+            }}
+          >
+            <RssIcon size={16} />
+            RSS
           </a>
           <a
             href="/new-job"
@@ -577,6 +595,16 @@ export function App() {
               }}
             >
               Diagnostics
+            </a>
+            <a
+              href="/rss"
+              className={activeView === "rss" ? "active" : undefined}
+              onClick={(event) => {
+                event.preventDefault();
+                setActiveView("rss");
+              }}
+            >
+              RSS
             </a>
             <a
               href="/new-job"
@@ -653,6 +681,8 @@ export function App() {
           />
         ) : activeView === "new-job" ? (
           <NewJobPage onCreated={handleManualJobCreated} onStatus={setStatus} />
+        ) : activeView === "rss" ? (
+          <RssPage onStatus={setStatus} onJobCreated={handleRssJobCreated} />
         ) : activeView === "settings" ? (
           <SettingsPage onStatus={setStatus} />
         ) : (

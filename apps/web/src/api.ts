@@ -13,6 +13,11 @@ import type {
   MediaPathValidationResult,
   PtpMovieSearchResponse,
   ReviewDraftPatch,
+  RssItem,
+  RssRefreshResult,
+  RssSettings,
+  RssSubscription,
+  RssSubscriptionInput,
   SettingsResponse,
   SaveSettingsResponse
 } from "./types.js";
@@ -200,4 +205,53 @@ export function deleteJob(jobId: string, mode: DeleteJobMode): Promise<DeleteJob
     method: "POST",
     body: JSON.stringify({ mode, confirm: true })
   });
+}
+
+export function loadRssSettings(): Promise<{ settings: RssSettings }> {
+  return fetchJson<{ settings: RssSettings }>("/api/rss/settings");
+}
+
+export function saveRssSettings(updateIntervalMs: number): Promise<{ settings: RssSettings }> {
+  return fetchJson<{ settings: RssSettings }>("/api/rss/settings", {
+    method: "PATCH",
+    body: JSON.stringify({ updateIntervalMs })
+  });
+}
+
+export function loadRssSubscriptions(): Promise<{ subscriptions: RssSubscription[] }> {
+  return fetchJson<{ subscriptions: RssSubscription[] }>("/api/rss/subscriptions");
+}
+
+export function createRssSubscription(input: RssSubscriptionInput): Promise<{ subscription: RssSubscription }> {
+  return fetchJson<{ subscription: RssSubscription }>("/api/rss/subscriptions", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function updateRssSubscription(id: string, input: Partial<RssSubscriptionInput>): Promise<{ subscription: RssSubscription }> {
+  return fetchJson<{ subscription: RssSubscription }>(`/api/rss/subscriptions/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
+  });
+}
+
+export function deleteRssSubscription(id: string): Promise<{ deleted: true }> {
+  return fetchJson<{ deleted: true }>(`/api/rss/subscriptions/${id}`, { method: "DELETE" });
+}
+
+export function refreshRssSubscription(id: string): Promise<{ result: RssRefreshResult }> {
+  return fetchJson<{ result: RssRefreshResult }>(`/api/rss/subscriptions/${id}/refresh`, { method: "POST", body: "{}" });
+}
+
+export function loadRssItems(id: string, view: "proposals" | "all"): Promise<{ items: RssItem[] }> {
+  return fetchJson<{ items: RssItem[] }>(`/api/rss/subscriptions/${id}/items?view=${view}`);
+}
+
+export function acceptRssItem(id: string): Promise<{ item: RssItem; job: ApiJob }> {
+  return fetchJson<{ item: RssItem; job: ApiJob }>(`/api/rss/items/${id}/accept`, { method: "POST", body: "{}" });
+}
+
+export function ignoreRssItem(id: string): Promise<{ item: RssItem }> {
+  return fetchJson<{ item: RssItem }>(`/api/rss/items/${id}/ignore`, { method: "POST", body: "{}" });
 }

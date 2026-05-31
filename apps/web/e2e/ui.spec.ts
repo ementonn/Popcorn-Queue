@@ -130,6 +130,122 @@ test.describe("Popcorn Queue UI", () => {
     await page.route("**/api/jobs/*/start-upload", async (route) => {
       await route.fulfill({ json: { job: { ...apiJobs[0], state: "uploading", phase: "upload" } } });
     });
+    const rssSubscription = {
+      id: "rss-zmpt",
+      name: "ZMPT Movies",
+      site: "zmweb",
+      feedUrlDisplay: "https://zmpt.cc/torrentrss.php?passkey=%5Bredacted%5D&rows=10",
+      enabled: true,
+      filter: { excludeKeywords: ["60Fps"] },
+      lastFetchedAt: "2026-05-31T04:00:00.000Z",
+      lastRunStatus: "ok",
+      lastRunMessage: "Fetched 2 item(s).",
+      createdAt: "2026-05-31T03:00:00.000Z",
+      updatedAt: "2026-05-31T04:00:00.000Z"
+    };
+    let rssItems = [
+      {
+        id: "rss-proposal",
+        subscriptionId: "rss-zmpt",
+        guid: "rss-guid-1",
+        sourceUrl: "https://zmpt.cc/details.php?id=123",
+        sourceUrlDisplay: "https://zmpt.cc/details.php?id=123",
+        downloadUrlDisplay: "https://zmpt.cc/download.php?downhash=%5Bredacted%5D",
+        title: "Movie.2026.1080p.WEB-DL.x265-GROUP",
+        subtitle: "中字 / Movie",
+        size: 7_516_192_768,
+        publishedAt: "2026-05-31T04:00:00.000Z",
+        status: "proposal",
+        filterReason: null,
+        checkResult: { decision: { status: "no_torrents", reason: "PTP movie has no torrents." } },
+        ptpTarget: {
+          groupId: "123",
+          displayTitle: "Movie [2026]",
+          year: "2026",
+          imdbId: "tt1234567",
+          ptpUrl: "https://passthepopcorn.me/torrents.php?id=123",
+          resolvedFrom: "imdb"
+        },
+        acceptedJobId: null,
+        lastError: null,
+        raw: {},
+        createdAt: "2026-05-31T04:00:00.000Z",
+        updatedAt: "2026-05-31T04:00:00.000Z"
+      },
+      {
+        id: "rss-filtered",
+        subscriptionId: "rss-zmpt",
+        guid: "rss-guid-2",
+        sourceUrl: "https://zmpt.cc/details.php?id=124",
+        sourceUrlDisplay: "https://zmpt.cc/details.php?id=124",
+        downloadUrlDisplay: "https://zmpt.cc/download.php?downhash=%5Bredacted%5D",
+        title: "Filtered.Movie.2026.1080p.WEB-DL.60Fps-GROUP",
+        subtitle: null,
+        size: 4_294_967_296,
+        publishedAt: "2026-05-31T03:00:00.000Z",
+        status: "filtered",
+        filterReason: "Title matched excluded keyword: 60Fps",
+        checkResult: null,
+        ptpTarget: null,
+        acceptedJobId: null,
+        lastError: null,
+        raw: {},
+        createdAt: "2026-05-31T03:00:00.000Z",
+        updatedAt: "2026-05-31T03:00:00.000Z"
+      }
+    ];
+    await page.route("**/api/rss/settings", async (route) => {
+      if (route.request().method() === "PATCH") {
+        const body = route.request().postDataJSON() as { updateIntervalMs: number };
+        await route.fulfill({ json: { settings: { id: "default", updateIntervalMs: body.updateIntervalMs, updatedAt: "2026-05-31T04:00:00.000Z" } } });
+        return;
+      }
+      await route.fulfill({ json: { settings: { id: "default", updateIntervalMs: 600000, updatedAt: "2026-05-31T04:00:00.000Z" } } });
+    });
+    await page.route("**/api/rss/subscriptions", async (route) => {
+      if (route.request().method() === "POST") {
+        const body = route.request().postDataJSON() as Record<string, unknown>;
+        await route.fulfill({ status: 201, json: { subscription: { ...rssSubscription, id: "rss-new", name: body.name, site: body.site, feedUrlDisplay: "https://zmpt.cc/rss?passkey=%5Bredacted%5D" } } });
+        return;
+      }
+      await route.fulfill({ json: { subscriptions: [rssSubscription] } });
+    });
+    await page.route("**/api/rss/subscriptions/rss-zmpt/items?*", async (route) => {
+      const url = new URL(route.request().url());
+      const view = url.searchParams.get("view");
+      await route.fulfill({ json: { items: view === "proposals" ? rssItems.filter((item) => item.status === "proposal") : rssItems } });
+    });
+    await page.route("**/api/rss/subscriptions/rss-zmpt/refresh", async (route) => {
+      await route.fulfill({ json: { result: { subscriptionId: "rss-zmpt", fetched: 2, proposals: 1, filtered: 1, duplicates: 0, errors: 0 } } });
+    });
+    await page.route("**/api/rss/subscriptions/rss-zmpt", async (route) => {
+      if (route.request().method() === "PATCH") {
+        await route.fulfill({ json: { subscription: { ...rssSubscription, enabled: false } } });
+        return;
+      }
+      await route.fulfill({ json: { deleted: true } });
+    });
+    await page.route("**/api/rss/items/rss-proposal/accept", async (route) => {
+      const acceptedItem = { ...rssItems[0], status: "accepted", acceptedJobId: "job-rss" };
+      rssItems = [acceptedItem, rssItems[1]];
+      await route.fulfill({
+        json: {
+          item: acceptedItem,
+          job: {
+            ...apiJobs[1],
+            id: "job-rss",
+            state: "preparing",
+            source: { site: "rss", title: "Movie.2026.1080p.WEB-DL.x265-GROUP", url: "https://zmpt.cc/details.php?id=123" },
+            candidate: { site: "unknown", title: "Movie.2026.1080p.WEB-DL.x265-GROUP" }
+          }
+        }
+      });
+    });
+    await page.route("**/api/rss/items/rss-proposal/ignore", async (route) => {
+      const ignoredItem = { ...rssItems[0], status: "ignored" };
+      rssItems = [ignoredItem, rssItems[1]];
+      await route.fulfill({ json: { item: ignoredItem } });
+    });
   });
 
   test("renders the desktop review workspace without development status noise", async ({ page }, testInfo) => {
@@ -331,6 +447,28 @@ test.describe("Popcorn Queue UI", () => {
     );
     const createRequest = requests.find((request) => request.url.includes("/api/intake/jobs") && request.method === "POST");
     expect(createRequest?.body).not.toContain('name="releaseName"');
+  });
+
+  test("shows RSS proposals and accepts one into the queue", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "chromium-desktop", "Desktop-only RSS assertion.");
+    await page.goto("/");
+    await page.getByRole("link", { name: /RSS/i }).click();
+
+    await expect(page.getByTestId("rss-page")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "ZMPT Movies" })).toBeVisible();
+    await expect(page.locator(".rss-source-link")).toHaveAttribute("href", "https://zmpt.cc/details.php?id=123");
+    await expect(page.getByRole("link", { name: "Movie [2026]" })).toHaveAttribute("href", "https://passthepopcorn.me/torrents.php?id=123");
+    await expect(page.getByText("No torrents", { exact: true })).toBeVisible();
+    await expect(page.getByText("secret")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "All items" }).click();
+    await expect(page.getByText("Filtered.Movie.2026.1080p.WEB-DL.60Fps-GROUP")).toBeVisible();
+    await expect(page.getByText("Filtered", { exact: true })).toBeVisible();
+    await expect(page.getByText("Title matched excluded keyword: 60Fps")).toBeVisible();
+
+    await page.getByRole("button", { name: "Proposals" }).click();
+    await page.getByRole("button", { name: "Accept" }).click();
+    await expect(page.locator(".status-banner.success")).toContainText("job-rss");
   });
 
   test("warns when a manual media path is a directory", async ({ page }, testInfo) => {

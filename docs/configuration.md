@@ -85,6 +85,22 @@ Run `npm run ptp:login` after setting `PTP_USERNAME`, `PTP_PASSWORD`, and
 | `QBITTORRENT_DOWNLOAD_WAIT_MS` | `21600000` | Max wait for source download. |
 | `QBITTORRENT_DOWNLOAD_POLL_MS` | `15000` | qBittorrent polling interval. |
 
+## RSS Proposals
+
+RSS subscriptions are configured in the Web RSS page and stored in SQLite, not
+`.env`. Feed URLs may contain passkeys; API responses and logs use redacted
+display URLs for query parameters such as `passkey`, `downhash`, `token`, and
+`api_key`.
+
+The RSS refresh interval is hot-editable from the Web RSS page. The minimum is
+one minute. Refresh imports feed items, applies the subscription filter, and
+runs the same duplicate-check logic used by browser checks. It stores proposals,
+filtered items, full/skip duplicate results, and check errors so the All Items
+view can show the complete feed history.
+
+RSS refresh never creates jobs or downloads torrents by itself. A normal
+Popcorn Queue job is created only when a proposal is accepted from the RSS page.
+
 ## Worker Tools
 
 | Key | Default | Purpose |
