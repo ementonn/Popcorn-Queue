@@ -160,9 +160,15 @@ function statusFromOccupied(relevant: ClassifiedPtpTorrent[], slotType: string, 
   });
 }
 
+function sameResolutionSlot(existing: ClassifiedPtpTorrent, candidateResolution: string | null): boolean {
+  if (!candidateResolution) return false;
+  if (existing.res === candidateResolution) return true;
+  return (candidateResolution === "1080p" || candidateResolution === "1080i") && (existing.res === "1080p" || existing.res === "1080i");
+}
+
 function checkEncodeSlots(existing: ClassifiedPtpTorrent[], candidate: ParsedTorrentCandidate): RuleDecision {
   const res = candidate.resolution;
-  const sameRes = existing.filter((item) => item.res === res && (item.isEncode || item.isWebDL));
+  const sameRes = existing.filter((item) => sameResolutionSlot(item, res) && (item.isEncode || item.isWebDL));
 
   if (res === "2160p") {
     const candHdrType = getHdrType(candidate.hdr, candidate.title);
@@ -215,7 +221,7 @@ function checkEncodeSlots(existing: ClassifiedPtpTorrent[], candidate: ParsedTor
 
   if (res === "1080p" && candIsHDR && (codec === "x265" || codec === "AV1") && !candHasDV) {
     const hdrX265 = existing.filter(
-      (item) => item.res === "1080p" && item.hasHDR && (item.codec.includes("265") || item.codec.includes("hevc") || item.codec.includes("av1")) && !item.isRemux && !item.isUntouched
+      (item) => sameResolutionSlot(item, res) && item.hasHDR && (item.codec.includes("265") || item.codec.includes("hevc") || item.codec.includes("av1")) && !item.isRemux && !item.isUntouched
     );
     if (hdrX265.length) return statusFromOccupied(hdrX265, "1080p HDR x265", 1);
     return makeDecision({ status: "open", movieFound: true, slotType: "1080p HDR x265", used: 0, max: 1, reason: "1080p HDR x265 slot is open." });

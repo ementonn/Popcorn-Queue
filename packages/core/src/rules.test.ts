@@ -90,6 +90,27 @@ describe("PTP coexisting rules", () => {
     expect(decision.status).toBe("full");
   });
 
+  it("treats existing 1080i encodes as occupying the 1080p encode slot", () => {
+    const data = normalizePtpResponse({
+      Page: "Details",
+      GroupId: "202148",
+      Name: "Test",
+      Year: "2024",
+      Torrents: [
+        {
+          Quality: "Encode",
+          Source: "HDTV",
+          Codec: "x264",
+          Resolution: "1080i",
+          ReleaseName: "Test.2024.1080i.HDTV.x264-GRP"
+        }
+      ]
+    });
+    const decision = evaluatePtpCoexistence(data, parseTorrentTitle("Test.2024.1080p.WEB-DL.x264", "1080p"), "tt1234567");
+    expect(decision.status).toBe("full");
+    expect(decision.existing?.[0]?.res).toBe("1080i");
+  });
+
   it("opens a distinct 1080p HDR x265 slot", () => {
     const data = normalizePtpResponse({
       Page: "Details",
