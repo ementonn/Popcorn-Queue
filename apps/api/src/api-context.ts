@@ -5,6 +5,7 @@ import type { WebSessionAuth, makeBrowserAuthHook } from "./auth.js";
 import type { ApiConfig } from "./config.js";
 import type { PrismaPersistence } from "./persistence.js";
 import type { PreparationService } from "./preparation.js";
+import type { RssService } from "./rss-service.js";
 
 export interface BuildServerOptions {
   autoPrepare?: boolean;
@@ -21,8 +22,12 @@ export interface ApiRouteContext {
   cache: CacheStore<NormalizedPtpResponse>;
   options: BuildServerOptions;
   settingsEnvPath: string;
+  rssSettings: PrismaPersistence["rssSettings"];
+  rssSubscriptions: PrismaPersistence["rssSubscriptions"];
+  rssItems: PrismaPersistence["rssItems"];
   getPtpClient(): PtpClient;
   getBrowserChecks(): BrowserCheckService;
+  getRssService(): RssService;
   getTorrentClient(): TorrentDownloadClient | null;
   getPtpSubmitter(): PtpSubmitter | undefined;
   getPreparation(): PreparationService;

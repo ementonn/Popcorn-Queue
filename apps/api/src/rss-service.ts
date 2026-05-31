@@ -4,6 +4,7 @@ import {
   buildJobWorkspacePaths,
   evaluateRssFilter,
   parseRssFeed,
+  redactSecretUrl,
   rssItemStatusFromDecision,
   rssItemToTorrentCandidate,
   type BrowserCheckResult,
@@ -303,7 +304,7 @@ export class MemoryRssSubscriptionRepository implements RssSubscriptionStore {
     const subscription: RssSubscriptionRecord = {
       id: randomUUID(),
       ...input,
-      feedUrlDisplay: input.feedUrl,
+      feedUrlDisplay: redactSecretUrl(input.feedUrl),
       lastFetchedAt: null,
       lastRunStatus: null,
       lastRunMessage: null,
@@ -348,8 +349,8 @@ export class MemoryRssItemRepository implements RssItemStore {
     const next: RssItemRecord = {
       id: existing?.id ?? randomUUID(),
       ...input,
-      sourceUrlDisplay: input.sourceUrl,
-      downloadUrlDisplay: input.downloadUrl,
+      sourceUrlDisplay: input.sourceUrl ? redactSecretUrl(input.sourceUrl) : null,
+      downloadUrlDisplay: input.downloadUrl ? redactSecretUrl(input.downloadUrl) : null,
       acceptedJobId: existing?.acceptedJobId ?? null,
       lastError: null,
       createdAt: existing?.createdAt ?? now,

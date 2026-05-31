@@ -18,6 +18,7 @@ export const persistenceState = hoistedState;
 vi.mock("./persistence.js", async () => {
   const { MemoryCacheStore } = await import("@popcorn-queue/core");
   const { JobRepository } = await import("./jobs.js");
+  const { MemoryRssItemRepository, MemoryRssSettingsRepository, MemoryRssSubscriptionRepository } = await import("./rss-service.js");
 
   class CountingMemoryCacheStore<T> extends MemoryCacheStore<T> {
     countValue = 0;
@@ -42,6 +43,10 @@ vi.mock("./persistence.js", async () => {
       constructor(options: { jobs?: ConstructorParameters<typeof JobRepository>[1] } = {}) {
         this.jobs = new JobRepository(persistenceState.initialJobs, options.jobs);
       }
+
+      readonly rssSettings = new MemoryRssSettingsRepository();
+      readonly rssSubscriptions = new MemoryRssSubscriptionRepository();
+      readonly rssItems = new MemoryRssItemRepository();
 
       async disconnect(): Promise<void> {}
     }

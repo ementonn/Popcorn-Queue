@@ -13,6 +13,7 @@ import { createApiLogger } from "./logger.js";
 import { PrismaPersistence } from "./persistence.js";
 import { PreparationService } from "./preparation.js";
 import { registerApiRoutes } from "./routes/index.js";
+import { RssService } from "./rss-service.js";
 import { toolCommandMap } from "./services/diagnostics.js";
 import { defaultSettingsEnvPath } from "./settings.js";
 
@@ -105,6 +106,7 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
   let browserAuthHook: ReturnType<typeof makeBrowserAuthHook>;
   let webAuth: WebSessionAuth;
   let preparation: PreparationService;
+  let rssService: RssService;
 
   function applyRuntimeConfig(nextConfig: ApiConfig): void {
     config = nextConfig;
@@ -154,6 +156,16 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
         waitIntervalMs: config.integrations.qbittorrentDownloadPollMs
       }
     });
+    rssService = new RssService({
+      settings: persistence.rssSettings,
+      subscriptions: persistence.rssSubscriptions,
+      items: persistence.rssItems,
+      duplicateChecks: browserChecks,
+      jobRepository,
+      dataRoot: config.paths.dataRoot,
+      fetchImpl: options.fetchImpl ?? fetch,
+      enqueuePreparation
+    });
   }
 
   applyRuntimeConfig(config);
@@ -178,8 +190,12 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
     cache,
     options,
     settingsEnvPath,
+    rssSettings: persistence.rssSettings,
+    rssSubscriptions: persistence.rssSubscriptions,
+    rssItems: persistence.rssItems,
     getPtpClient: () => ptpClient,
     getBrowserChecks: () => browserChecks,
+    getRssService: () => rssService,
     getTorrentClient: () => torrentClient,
     getPtpSubmitter: () => ptpSubmitter,
     getPreparation: () => preparation,
@@ -190,10 +206,14 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
   };
 
   app.addHook("onClose", async () => {
+    await rssService.stopPolling();
     await persistence.disconnect();
   });
 
-  app.addHook("onReady", resumeInterruptedPreparation);
+  app.addHook("onReady", async () => {
+    await resumeInterruptedPreparation();
+    if (autoPrepare) await rssService.startPolling();
+  });
 
   app.register(cors, {
     delegator(request, callback) {
@@ -201,7 +221,7 @@ export function buildServer(config: ApiConfig, options: BuildServerOptions = {})
       const host = typeof request.headers.host === "string" ? request.headers.host : undefined;
       callback(null, {
         credentials: true,
-        methods: ["GET", "HEAD", "POST", "PATCH", "OPTIONS"],
+        methods: ["GET", "HEAD", "POST", "PATCH", "DELETE", "OPTIONS"],
         origin: isCorsOriginAllowed(config, origin, host)
       });
     }
