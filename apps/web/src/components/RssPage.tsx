@@ -162,9 +162,10 @@ export function RssPage({
   const [view, setView] = useState<RssView>("proposals");
   const [loading, setLoading] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
-  const [creating, setCreating] = useState(false);
+  const [savingSubscription, setSavingSubscription] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<RssSubscriptionInput>({
     name: "",
     site: "zmweb",
@@ -178,6 +179,11 @@ export function RssPage({
     () => subscriptions.find((subscription) => subscription.id === selectedId) ?? null,
     [selectedId, subscriptions]
   );
+  const editingSubscription = useMemo(
+    () => subscriptions.find((subscription) => subscription.id === editingId) ?? null,
+    [editingId, subscriptions]
+  );
+  const isEditing = Boolean(editingSubscription);
 
   const loadSubscriptions = useCallback(async () => {
     const response = await loadRssSubscriptions();
@@ -243,6 +249,26 @@ export function RssPage({
     setFilterDraft((current) => ({ ...current, [key]: value }));
   };
 
+  function resetSubscriptionForm(nextSite = form.site) {
+    setEditingId(null);
+    setForm({ name: "", site: nextSite, feedUrl: "", enabled: true, filter: {} });
+    setFilterDraft(EMPTY_FILTER_DRAFT);
+  }
+
+  function startEditSubscription(subscription: RssSubscription) {
+    setSelectedId(subscription.id);
+    setEditingId(subscription.id);
+    setError(null);
+    setForm({
+      name: subscription.name,
+      site: subscription.site,
+      feedUrl: "",
+      enabled: subscription.enabled,
+      filter: subscription.filter
+    });
+    setFilterDraft(draftFromFilter(subscription.filter));
+  }
+
   async function handleSaveSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const minutes = Number(settingsMinutes);
@@ -264,30 +290,45 @@ export function RssPage({
     }
   }
 
-  async function handleCreate(event: FormEvent<HTMLFormElement>) {
+  async function handleSaveSubscription(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!form.name.trim() || !form.feedUrl.trim() || creating) return;
-    setCreating(true);
+    if (!form.name.trim() || savingSubscription) return;
+    if (!isEditing && !form.feedUrl.trim()) return;
+    setSavingSubscription(true);
     setError(null);
     try {
-      const response = await createRssSubscription({
-        ...form,
-        name: form.name.trim(),
-        feedUrl: form.feedUrl.trim(),
-        filter: filterFromDraft(filterDraft)
-      });
-      await loadSubscriptions();
-      setSelectedId(response.subscription.id);
-      setForm({ name: "", site: form.site, feedUrl: "", enabled: true, filter: {} });
-      setFilterDraft(EMPTY_FILTER_DRAFT);
-      setItems([]);
-      onStatus?.({ tone: "success", text: `RSS subscription added: ${response.subscription.name}` });
-    } catch (createError) {
-      const message = createError instanceof Error ? createError.message : "RSS subscription create failed";
+      const filter = filterFromDraft(filterDraft);
+      if (editingSubscription) {
+        const feedUrl = form.feedUrl.trim();
+        const response = await updateRssSubscription(editingSubscription.id, {
+          name: form.name.trim(),
+          site: form.site,
+          enabled: form.enabled,
+          filter,
+          ...(feedUrl ? { feedUrl } : {})
+        });
+        setSubscriptions((current) => current.map((item) => (item.id === response.subscription.id ? response.subscription : item)));
+        resetSubscriptionForm(response.subscription.site);
+        onStatus?.({ tone: "success", text: `RSS subscription saved: ${response.subscription.name}` });
+      } else {
+        const response = await createRssSubscription({
+          ...form,
+          name: form.name.trim(),
+          feedUrl: form.feedUrl.trim(),
+          filter
+        });
+        await loadSubscriptions();
+        setSelectedId(response.subscription.id);
+        resetSubscriptionForm(form.site);
+        setItems([]);
+        onStatus?.({ tone: "success", text: `RSS subscription added: ${response.subscription.name}` });
+      }
+    } catch (saveError) {
+      const message = saveError instanceof Error ? saveError.message : "RSS subscription save failed";
       setError(message);
       onStatus?.({ tone: "error", text: message });
     } finally {
-      setCreating(false);
+      setSavingSubscription(false);
     }
   }
 
@@ -380,8 +421,15 @@ export function RssPage({
 
       <div className="rss-layout">
         <aside className="rss-side">
-          <form className="rss-form" onSubmit={handleCreate}>
-            <h3>Add Subscription</h3>
+          <form className="rss-form" onSubmit={handleSaveSubscription}>
+            <div className="rss-form-head">
+              <h3>{isEditing ? "Edit Subscription" : "Add Subscription"}</h3>
+              {isEditing ? (
+                <button type="button" onClick={() => resetSubscriptionForm()} disabled={savingSubscription}>
+                  Cancel
+                </button>
+              ) : null}
+            </div>
             <div className="settings-grid">
               <label className="settings-field">
                 <span>Name</span>
@@ -399,7 +447,15 @@ export function RssPage({
               </label>
               <label className="settings-field rss-field-wide">
                 <span>Feed URL</span>
-                <input value={form.feedUrl} onChange={(event) => updateForm("feedUrl", event.currentTarget.value)} placeholder="https://tracker/torrentrss.php?..." />
+                <input
+                  value={form.feedUrl}
+                  onChange={(event) => updateForm("feedUrl", event.currentTarget.value)}
+                  placeholder={isEditing ? "Leave blank to keep current URL" : "https://tracker/torrentrss.php?..."}
+                />
+              </label>
+              <label className="settings-field rss-enabled-field">
+                <span>Enabled</span>
+                <input type="checkbox" checked={form.enabled} onChange={(event) => updateForm("enabled", event.currentTarget.checked)} />
               </label>
               <label className="settings-field">
                 <span>Exclude keywords</span>
@@ -434,9 +490,9 @@ export function RssPage({
                 <input value={filterDraft.maxSizeGb} onChange={(event) => updateFilterDraft("maxSizeGb", event.currentTarget.value)} inputMode="decimal" />
               </label>
             </div>
-            <button type="submit" className="primary" disabled={creating || !form.name.trim() || !form.feedUrl.trim()}>
-              {creating ? <LoaderCircle className="spin-icon" size={15} /> : <Check size={15} />}
-              Add
+            <button type="submit" className="primary" disabled={savingSubscription || !form.name.trim() || (!isEditing && !form.feedUrl.trim())}>
+              {savingSubscription ? <LoaderCircle className="spin-icon" size={15} /> : <Check size={15} />}
+              {isEditing ? "Save" : "Add"}
             </button>
           </form>
 
@@ -450,7 +506,6 @@ export function RssPage({
                   <div className={`rss-subscription ${selected ? "selected" : ""}`} key={subscription.id}>
                     <button type="button" className="rss-subscription-main" onClick={() => setSelectedId(subscription.id)}>
                       <strong>{subscription.name}</strong>
-                      <span>{subscription.feedUrlDisplay}</span>
                     </button>
                     <div className="rss-subscription-meta">
                       <span className={`state-pill ${subscription.enabled ? "done" : "paused"}`}>{subscription.enabled ? "Enabled" : "Paused"}</span>
@@ -467,6 +522,9 @@ export function RssPage({
                         <button type="button" onClick={() => void runSubscriptionAction("toggle", subscription)} disabled={Boolean(pending)}>
                           {subscription.enabled ? <X size={14} /> : <Check size={14} />}
                           {subscription.enabled ? "Pause" : "Enable"}
+                        </button>
+                        <button type="button" onClick={() => startEditSubscription(subscription)} disabled={Boolean(pending) || savingSubscription} aria-label={`Edit ${subscription.name}`}>
+                          Edit
                         </button>
                         <button type="button" className="danger" onClick={() => void runSubscriptionAction("delete", subscription)} disabled={Boolean(pending)}>
                           <Trash2 size={14} />
@@ -487,7 +545,7 @@ export function RssPage({
           <div className="rss-items-header">
             <div>
               <h3>{selectedSubscription ? selectedSubscription.name : "Items"}</h3>
-              <span>{selectedSubscription ? selectedSubscription.feedUrlDisplay : "Add a subscription to start checking releases."}</span>
+              <span>{selectedSubscription ? `${selectedSubscription.site} · Last: ${displayDate(selectedSubscription.lastFetchedAt)}` : "Add a subscription to start checking releases."}</span>
             </div>
             <div className="segmented">
               <button type="button" className={view === "proposals" ? "active" : undefined} onClick={() => setView("proposals")}>

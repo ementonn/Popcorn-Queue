@@ -3,7 +3,10 @@ import { expect, test } from "@playwright/test";
 const longMediaInfo = Array.from({ length: 24 }, (_, index) => (index === 0 ? "General" : `MediaInfo line ${index}`)).join("\n");
 
 test.describe("Popcorn Queue UI", () => {
+  let rssSubscriptionPatchBodies: Array<Record<string, unknown>>;
+
   test.beforeEach(async ({ page }) => {
+    rssSubscriptionPatchBodies = [];
     await page.route("**/api/auth/session", async (route) => {
       await route.fulfill({ json: { authRequired: false, authenticated: true, username: null } });
     });
@@ -220,7 +223,9 @@ test.describe("Popcorn Queue UI", () => {
     });
     await page.route("**/api/rss/subscriptions/rss-zmpt", async (route) => {
       if (route.request().method() === "PATCH") {
-        await route.fulfill({ json: { subscription: { ...rssSubscription, enabled: false } } });
+        const body = route.request().postDataJSON() as Record<string, unknown>;
+        rssSubscriptionPatchBodies.push(body);
+        await route.fulfill({ json: { subscription: { ...rssSubscription, ...body } } });
         return;
       }
       await route.fulfill({ json: { deleted: true } });
@@ -460,6 +465,16 @@ test.describe("Popcorn Queue UI", () => {
     await expect(page.getByRole("link", { name: "Movie [2026]" })).toHaveAttribute("href", "https://passthepopcorn.me/torrents.php?id=123");
     await expect(page.getByText("No torrents", { exact: true })).toBeVisible();
     await expect(page.getByText("secret")).toHaveCount(0);
+    await expect(page.getByText("torrentrss.php")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Edit ZMPT Movies" }).click();
+    await expect(page.getByRole("heading", { name: "Edit Subscription" })).toBeVisible();
+    await expect(page.getByLabel("Feed URL")).toHaveValue("");
+    await expect(page.getByLabel("Feed URL")).toHaveAttribute("placeholder", "Leave blank to keep current URL");
+    await page.getByLabel("Name").fill("ZMPT Edited");
+    await page.locator(".rss-form").getByRole("button", { name: "Save" }).click();
+    expect(rssSubscriptionPatchBodies.at(-1)).toMatchObject({ name: "ZMPT Edited", site: "zmweb", enabled: true });
+    expect(rssSubscriptionPatchBodies.at(-1)).not.toHaveProperty("feedUrl");
 
     await page.getByRole("button", { name: "All items" }).click();
     await expect(page.getByText("Filtered.Movie.2026.1080p.WEB-DL.60Fps-GROUP")).toBeVisible();

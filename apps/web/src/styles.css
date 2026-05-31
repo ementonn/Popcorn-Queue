@@ -1474,12 +1474,27 @@ pre {
   padding: 12px;
 }
 
+.rss-form-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rss-form-head button {
+  min-height: 28px;
+}
+
 .rss-form button[type="submit"] {
   justify-self: end;
 }
 
 .rss-field-wide {
   grid-column: 1 / -1;
+}
+
+.rss-enabled-field {
+  align-content: end;
 }
 
 .rss-subscriptions h3,
@@ -1526,7 +1541,6 @@ pre {
   white-space: nowrap;
 }
 
-.rss-subscription-main span,
 .rss-subscription p,
 .rss-subscription-footer span {
   min-width: 0;
