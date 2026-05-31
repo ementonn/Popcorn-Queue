@@ -36,3 +36,51 @@ model PtpCacheEntry {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+model RssSettings {
+  id               String   @id
+  updateIntervalMs BigInt   @map("update_interval_ms")
+  updatedAt        DateTime @updatedAt
+}
+
+model RssSubscription {
+  id             String    @id
+  name           String
+  site           String
+  feedUrl        String    @map("feed_url")
+  enabled        Boolean   @default(true)
+  filterJson     String    @default("{}") @map("filter_json")
+  lastFetchedAt  DateTime? @map("last_fetched_at")
+  lastRunStatus  String?   @map("last_run_status")
+  lastRunMessage String?   @map("last_run_message")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([createdAt])
+}
+
+model RssItem {
+  id              String    @id
+  subscriptionId  String    @map("subscription_id")
+  guid            String?
+  sourceUrl       String?   @map("source_url")
+  downloadUrl     String?   @map("download_url")
+  title           String
+  subtitle        String?
+  size            BigInt?
+  publishedAt     DateTime? @map("published_at")
+  status          String
+  filterReason    String?   @map("filter_reason")
+  checkResultJson String?   @map("check_result_json")
+  ptpTargetJson   String?   @map("ptp_target_json")
+  acceptedJobId   String?   @map("accepted_job_id")
+  lastError       String?   @map("last_error")
+  rawJson         String    @default("{}") @map("raw_json")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([subscriptionId, createdAt])
+  @@index([subscriptionId, guid])
+  @@index([subscriptionId, sourceUrl])
+  @@index([status])
+}

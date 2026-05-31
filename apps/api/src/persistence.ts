@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import type { CacheEntry, CacheStore, DownloadStatus, NormalizedPtpResponse, UploadReadiness } from "@popcorn-queue/core";
 import { repairUtf8Mojibake } from "./filenames.js";
+import { PrismaRssItemRepository, PrismaRssSettingsRepository, PrismaRssSubscriptionRepository } from "./rss-repository.js";
 import {
   JobRepository,
   repairJobRuntimeState,
@@ -166,6 +167,9 @@ export class PrismaPersistence {
 
   readonly jobs = new PrismaJobRepository(this);
   readonly ptpCache = new PrismaPtpCacheStore<NormalizedPtpResponse>(this);
+  readonly rssSettings = new PrismaRssSettingsRepository(this);
+  readonly rssSubscriptions = new PrismaRssSubscriptionRepository(this);
+  readonly rssItems = new PrismaRssItemRepository(this);
 
   constructor(readonly options: { jobs?: JobRepositoryOptions } = {}) {}
 
@@ -223,6 +227,55 @@ export class PrismaPersistence {
         "updatedAt" DATETIME NOT NULL
       )
     `));
+    await this.query(() => this.prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "RssSettings" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "update_interval_ms" INTEGER NOT NULL,
+        "updatedAt" DATETIME NOT NULL
+      )
+    `));
+    await this.query(() => this.prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "RssSubscription" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "name" TEXT NOT NULL,
+        "site" TEXT NOT NULL,
+        "feed_url" TEXT NOT NULL,
+        "enabled" BOOLEAN NOT NULL DEFAULT true,
+        "filter_json" TEXT NOT NULL DEFAULT '{}',
+        "last_fetched_at" DATETIME,
+        "last_run_status" TEXT,
+        "last_run_message" TEXT,
+        "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" DATETIME NOT NULL
+      )
+    `));
+    await this.query(() => this.prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "RssItem" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "subscription_id" TEXT NOT NULL,
+        "guid" TEXT,
+        "source_url" TEXT,
+        "download_url" TEXT,
+        "title" TEXT NOT NULL,
+        "subtitle" TEXT,
+        "size" INTEGER,
+        "published_at" DATETIME,
+        "status" TEXT NOT NULL,
+        "filter_reason" TEXT,
+        "check_result_json" TEXT,
+        "ptp_target_json" TEXT,
+        "accepted_job_id" TEXT,
+        "last_error" TEXT,
+        "raw_json" TEXT NOT NULL DEFAULT '{}',
+        "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" DATETIME NOT NULL
+      )
+    `));
+    await this.query(() => this.prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "RssSubscription_createdAt_idx" ON "RssSubscription"("createdAt")`));
+    await this.query(() => this.prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "RssItem_subscription_createdAt_idx" ON "RssItem"("subscription_id", "createdAt")`));
+    await this.query(() => this.prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "RssItem_subscription_guid_idx" ON "RssItem"("subscription_id", "guid")`));
+    await this.query(() => this.prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "RssItem_subscription_source_idx" ON "RssItem"("subscription_id", "source_url")`));
+    await this.query(() => this.prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "RssItem_status_idx" ON "RssItem"("status")`));
   }
 
   private async configureSqlite(): Promise<void> {
