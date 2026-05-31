@@ -258,7 +258,7 @@ export class PrismaPersistence {
         "download_url" TEXT,
         "title" TEXT NOT NULL,
         "subtitle" TEXT,
-        "size" INTEGER,
+        "size" BIGINT,
         "published_at" DATETIME,
         "status" TEXT NOT NULL,
         "filter_reason" TEXT,
@@ -271,6 +271,7 @@ export class PrismaPersistence {
         "updatedAt" DATETIME NOT NULL
       )
     `));
+    await this.migrateRssItemSizeToBigInt();
     await this.query(() => this.prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "RssSubscription_createdAt_idx" ON "RssSubscription"("createdAt")`));
     await this.query(() => this.prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "RssItem_subscription_createdAt_idx" ON "RssItem"("subscription_id", "createdAt")`));
     await this.query(() => this.prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "RssItem_subscription_guid_idx" ON "RssItem"("subscription_id", "guid")`));
@@ -288,6 +289,80 @@ export class PrismaPersistence {
     const columns = await this.query(() => this.prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info("${table}")`));
     if (columns.some((item) => item.name === column)) return;
     await this.query(() => this.prisma.$executeRawUnsafe(`ALTER TABLE "${table}" ADD COLUMN "${column}" ${definition}`));
+  }
+
+  private async migrateRssItemSizeToBigInt(): Promise<void> {
+    const columns = await this.query(() => this.prisma.$queryRawUnsafe<Array<{ name: string; type: string }>>(`PRAGMA table_info("RssItem")`));
+    const sizeColumn = columns.find((item) => item.name === "size");
+    if (sizeColumn?.type.toUpperCase() === "BIGINT") return;
+
+    await this.query(() => this.prisma.$executeRawUnsafe(`DROP TABLE IF EXISTS "RssItem_bigint_migration"`));
+    await this.query(() => this.prisma.$executeRawUnsafe(`
+      CREATE TABLE "RssItem_bigint_migration" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "subscription_id" TEXT NOT NULL,
+        "guid" TEXT,
+        "source_url" TEXT,
+        "download_url" TEXT,
+        "title" TEXT NOT NULL,
+        "subtitle" TEXT,
+        "size" BIGINT,
+        "published_at" DATETIME,
+        "status" TEXT NOT NULL,
+        "filter_reason" TEXT,
+        "check_result_json" TEXT,
+        "ptp_target_json" TEXT,
+        "accepted_job_id" TEXT,
+        "last_error" TEXT,
+        "raw_json" TEXT NOT NULL DEFAULT '{}',
+        "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" DATETIME NOT NULL
+      )
+    `));
+    await this.query(() => this.prisma.$executeRawUnsafe(`
+      INSERT INTO "RssItem_bigint_migration" (
+        "id",
+        "subscription_id",
+        "guid",
+        "source_url",
+        "download_url",
+        "title",
+        "subtitle",
+        "size",
+        "published_at",
+        "status",
+        "filter_reason",
+        "check_result_json",
+        "ptp_target_json",
+        "accepted_job_id",
+        "last_error",
+        "raw_json",
+        "createdAt",
+        "updatedAt"
+      )
+      SELECT
+        "id",
+        "subscription_id",
+        "guid",
+        "source_url",
+        "download_url",
+        "title",
+        "subtitle",
+        "size",
+        "published_at",
+        "status",
+        "filter_reason",
+        "check_result_json",
+        "ptp_target_json",
+        "accepted_job_id",
+        "last_error",
+        "raw_json",
+        "createdAt",
+        "updatedAt"
+      FROM "RssItem"
+    `));
+    await this.query(() => this.prisma.$executeRawUnsafe(`DROP TABLE "RssItem"`));
+    await this.query(() => this.prisma.$executeRawUnsafe(`ALTER TABLE "RssItem_bigint_migration" RENAME TO "RssItem"`));
   }
 }
 

@@ -101,4 +101,64 @@ describe("RSS persistence", () => {
     expect(list.items).toHaveLength(1);
     expect(list.items[0]).toMatchObject({ status: "duplicate_full", size: 456 });
   });
+
+  it("stores RSS item sizes larger than 32-bit integers", async () => {
+    await persistence.ensure();
+    const subscription = await persistence.rssSubscriptions.create({
+      name: "ZMPT Movies",
+      site: "zmweb",
+      feedUrl: "https://zmpt.cc/rss",
+      enabled: true,
+      filter: {}
+    });
+
+    const item = await persistence.rssItems.upsertFromRefresh({
+      subscriptionId: subscription.id,
+      guid: "large-size",
+      sourceUrl: "https://zmpt.cc/details.php?id=2",
+      downloadUrl: "https://zmpt.cc/download.php?downhash=large",
+      title: "Large.Movie.2026.2160p.WEB-DL.x265-GROUP",
+      subtitle: null,
+      size: 9_788_381_427,
+      publishedAt: null,
+      status: "proposal",
+      filterReason: null,
+      checkResult: null,
+      ptpTarget: null,
+      raw: {}
+    });
+
+    expect(item.size).toBe(9_788_381_427);
+    expect((await persistence.rssItems.list(subscription.id, {})).items[0]?.size).toBe(9_788_381_427);
+  });
+
+  it("migrates legacy RSS item size columns to BigInt", async () => {
+    await persistence.prisma.$executeRawUnsafe(`
+      CREATE TABLE "RssItem" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "subscription_id" TEXT NOT NULL,
+        "guid" TEXT,
+        "source_url" TEXT,
+        "download_url" TEXT,
+        "title" TEXT NOT NULL,
+        "subtitle" TEXT,
+        "size" INTEGER,
+        "published_at" DATETIME,
+        "status" TEXT NOT NULL,
+        "filter_reason" TEXT,
+        "check_result_json" TEXT,
+        "ptp_target_json" TEXT,
+        "accepted_job_id" TEXT,
+        "last_error" TEXT,
+        "raw_json" TEXT NOT NULL DEFAULT '{}',
+        "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" DATETIME NOT NULL
+      )
+    `);
+
+    await persistence.ensure();
+    const columns = await persistence.prisma.$queryRawUnsafe<Array<{ name: string; type: string }>>(`PRAGMA table_info("RssItem")`);
+
+    expect(columns.find((column) => column.name === "size")?.type).toBe("BIGINT");
+  });
 });
