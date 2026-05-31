@@ -84,14 +84,14 @@ describe("API RSS routes", () => {
       <guid>guid-1</guid>
     </item></channel></rss>`;
     let servedTorrent = false;
-    const fetchImpl = vi.fn(async (url: string | URL) => {
-      const value = String(url);
+    const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
+      const value = url instanceof Request ? url.url : String(url);
       if (value.includes("download.php")) {
         servedTorrent = true;
         return new Response("d4:infod6:lengthi1eee", { status: 200, headers: { "content-type": "application/x-bittorrent" } });
       }
       return new Response(rssXml, { status: 200 });
-    });
+    }) as unknown as typeof fetch;
     vi.spyOn(PtpClient.prototype, "searchByCandidate").mockResolvedValue({
       movies: [{ GroupId: "123", Title: "Movie", Year: "2026", ImdbId: "tt1234567", Torrents: [] }]
     });

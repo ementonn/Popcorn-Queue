@@ -105,10 +105,11 @@ export function registerRssRoutes(app: FastifyInstance, context: ApiRouteContext
   });
 
   app.get<{ Params: { id: string }; Querystring: { view?: "proposals" | "all"; status?: RssItemStatus } }>("/api/rss/subscriptions/:id/items", async (request) => {
-    const result = await context.rssItems.list(request.params.id, {
+    const options: { view?: "proposals" | "all"; status?: RssItemStatus } = {
       view: request.query.view === "proposals" ? "proposals" : "all",
-      status: request.query.status
-    });
+      ...(request.query.status ? { status: request.query.status } : {})
+    };
+    const result = await context.rssItems.list(request.params.id, options);
     return { items: result.items.map(publicItem) };
   });
 

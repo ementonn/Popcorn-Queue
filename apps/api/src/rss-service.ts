@@ -200,7 +200,7 @@ export class RssService {
         candidate,
         ...(checkResult ? { checkResult } : {}),
         torrent: { filename: torrent.filename, bytes: torrent.bytes.byteLength, ...(torrent.contentType ? { contentType: torrent.contentType } : {}) },
-        sourceUrl: item.sourceUrl ?? undefined,
+        ...(item.sourceUrl ? { sourceUrl: item.sourceUrl } : {}),
         sourceSite: "rss",
         title: item.title
       });
