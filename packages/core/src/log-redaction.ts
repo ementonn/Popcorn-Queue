@@ -1,3 +1,5 @@
+import { redactSecretUrl } from "./rss.js";
+
 export const REDACTED_TEXT = "[redacted]";
 
 const SECRET_KEYS = new Set([
@@ -28,6 +30,7 @@ function isSecretKey(key: string): boolean {
 }
 
 export function redactForLog<T>(value: T): T {
+  if (typeof value === "string") return redactSecretUrl(value) as T;
   if (Array.isArray(value)) return value.map((item) => redactForLog(item)) as T;
   if (!value || typeof value !== "object") return value;
 

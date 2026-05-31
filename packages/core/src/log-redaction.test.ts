@@ -80,4 +80,22 @@ describe("log redaction", () => {
       nested: [{ Authorization: "Bearer browser-secret" }]
     });
   });
+
+  it("redacts secret query parameters inside URL strings", () => {
+    const redacted = redactForLog({
+      feedUrl: "https://zmpt.cc/torrentrss.php?passkey=feed-secret&rows=10",
+      nested: {
+        downloadUrl: "https://zmpt.cc/download.php?downhash=download-secret"
+      }
+    });
+
+    expect(JSON.stringify(redacted)).not.toContain("feed-secret");
+    expect(JSON.stringify(redacted)).not.toContain("download-secret");
+    expect(redacted).toMatchObject({
+      feedUrl: "https://zmpt.cc/torrentrss.php?passkey=%5Bredacted%5D&rows=10",
+      nested: {
+        downloadUrl: "https://zmpt.cc/download.php?downhash=%5Bredacted%5D"
+      }
+    });
+  });
 });
