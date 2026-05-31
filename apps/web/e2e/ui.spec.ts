@@ -176,6 +176,34 @@ test.describe("Popcorn Queue UI", () => {
         updatedAt: "2026-05-31T04:00:00.000Z"
       },
       {
+        id: "rss-imdb-only",
+        subscriptionId: "rss-zmpt",
+        guid: "rss-guid-imdb",
+        sourceUrl: "https://zmpt.cc/details.php?id=125",
+        sourceUrlDisplay: "https://zmpt.cc/details.php?id=125",
+        downloadUrlDisplay: "https://zmpt.cc/download.php?downhash=%5Bredacted%5D",
+        title: "Missing.Target.2026.1080p.WEB-DL.x265-GROUP",
+        subtitle: null,
+        size: 5_368_709_120,
+        publishedAt: "2026-05-31T03:30:00.000Z",
+        status: "proposal",
+        filterReason: null,
+        checkResult: {
+          candidate: { imdbId: "tt7654321" },
+          decision: {
+            status: "not_found",
+            reason: "Movie was not found on PTP.",
+            ptpUrl: "https://www.imdb.com/title/tt7654321"
+          }
+        },
+        ptpTarget: null,
+        acceptedJobId: null,
+        lastError: null,
+        raw: {},
+        createdAt: "2026-05-31T03:30:00.000Z",
+        updatedAt: "2026-05-31T03:30:00.000Z"
+      },
+      {
         id: "rss-filtered",
         subscriptionId: "rss-zmpt",
         guid: "rss-guid-2",
@@ -461,8 +489,9 @@ test.describe("Popcorn Queue UI", () => {
 
     await expect(page.getByTestId("rss-page")).toBeVisible();
     await expect(page.getByRole("heading", { name: "ZMPT Movies" })).toBeVisible();
-    await expect(page.locator(".rss-source-link")).toHaveAttribute("href", "https://zmpt.cc/details.php?id=123");
+    await expect(page.getByRole("row", { name: /Movie\.2026\.1080p\.WEB-DL\.x265-GROUP/ }).getByRole("link", { name: "Source" })).toHaveAttribute("href", "https://zmpt.cc/details.php?id=123");
     await expect(page.getByRole("link", { name: "Movie [2026]" })).toHaveAttribute("href", "https://passthepopcorn.me/torrents.php?id=123");
+    await expect(page.getByRole("link", { name: "IMDb tt7654321" })).toHaveAttribute("href", "https://www.imdb.com/title/tt7654321");
     await expect(page.getByText("No torrents", { exact: true })).toBeVisible();
     await expect(page.getByText("secret")).toHaveCount(0);
     await expect(page.getByText("torrentrss.php")).toHaveCount(0);
@@ -482,7 +511,7 @@ test.describe("Popcorn Queue UI", () => {
     await expect(page.getByText("Title matched excluded keyword: 60Fps")).toBeVisible();
 
     await page.getByRole("button", { name: "Proposals" }).click();
-    await page.getByRole("button", { name: "Accept" }).click();
+    await page.getByRole("row", { name: /Movie\.2026\.1080p\.WEB-DL\.x265-GROUP/ }).getByRole("button", { name: "Accept" }).click();
     await expect(page.locator(".status-banner.success")).toContainText("job-rss");
   });
 

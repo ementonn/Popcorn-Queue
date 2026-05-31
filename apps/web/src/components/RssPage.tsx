@@ -148,6 +148,23 @@ function itemDetail(item: RssItem): string {
   return item.checkResult?.decision?.reason ?? "";
 }
 
+function imdbIdFromUnknown(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const imdbId = (value as { imdbId?: unknown }).imdbId;
+  if (typeof imdbId !== "string") return null;
+  return imdbId.match(/tt\d{7,9}/i)?.[0].toLowerCase() ?? null;
+}
+
+function imdbTarget(item: RssItem): { url: string; label: string } | null {
+  const decisionUrl = item.checkResult?.decision?.ptpUrl ?? null;
+  const imdbIdFromUrl = decisionUrl?.match(/tt\d{7,9}/i)?.[0].toLowerCase() ?? null;
+  if (decisionUrl && imdbIdFromUrl && /imdb\.com/i.test(decisionUrl)) {
+    return { url: decisionUrl, label: `IMDb ${imdbIdFromUrl}` };
+  }
+  const imdbId = imdbIdFromUnknown(item.checkResult?.candidate);
+  return imdbId ? { url: `https://www.imdb.com/title/${imdbId}`, label: `IMDb ${imdbId}` } : null;
+}
+
 export function RssPage({
   onStatus,
   onJobCreated
@@ -574,6 +591,7 @@ export function RssPage({
               <tbody>
                 {items.map((item) => {
                   const pending = pendingAction?.id === item.id ? pendingAction : null;
+                  const imdb = imdbTarget(item);
                   return (
                     <tr key={item.id}>
                       <td data-label="Status">
@@ -596,6 +614,10 @@ export function RssPage({
                         {item.ptpTarget ? (
                           <a className="rss-target-link" href={item.ptpTarget.ptpUrl} target="_blank" rel="noreferrer">
                             {item.ptpTarget.displayTitle}
+                          </a>
+                        ) : imdb ? (
+                          <a className="rss-target-link" href={imdb.url} target="_blank" rel="noreferrer">
+                            {imdb.label}
                           </a>
                         ) : (
                           "None"
